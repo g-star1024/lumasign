@@ -1,0 +1,48 @@
+{
+  "name": "lumasign",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "灵屏 LumaSign · 局域网数字标牌管理系统（零依赖 Node 服务端 + macOS 风格管理端 + 免构建 HTML5 播放引擎 + Electron 桌面端）",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "node server/server.js",
+    "dist:mac": "electron-builder --mac --x64 --arm64",
+    "dist:win": "electron-builder --win --x64",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.lumasign.desktop",
+    "productName": "灵屏 LumaSign",
+    "directories": {
+      "output": "dist",
+      "buildResources": "desktop/build"
+    },
+    "files": [
+      "server/**/*",
+      "admin/**/*",
+      "player/**/*",
+      "desktop/**/*",
+      "package.json",
+      "docs/**/*"
+    ],
+    "extraResources": [
+      { "from": "desktop/adb", "to": "adb" }
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.business",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}

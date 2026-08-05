@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+
+# Runtime data (user-specific, contains secrets/tokens)
+server/data/
+server/data/db/
+server/data/logs/
+server/data/media/
+server/data/shots/
+server/data/thumbs/
+server/data/tmp/
+server/data/apk/
+
+# Preview files (development-only)
+admin/preview-*.html
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+out/
+build/
+*.dmg
+*.exe
+*.msi
+*.zip
+
+# Android build artifacts (gradle builds locally)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/*.apk
+android/*.aab
+
+# Electron
+desktop/node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
