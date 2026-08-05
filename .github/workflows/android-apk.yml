@@ -1,0 +1,134 @@
+# 灵屏 LumaSign · Android APK CI/CD
+# 触发：push to main / PR / tag / 手动触发
+# 产物：debug APK + release APK (signed with debug key)
+
+name: Android APK Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'player/**'
+      - '.github/workflows/android-apk.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'player/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17 (Android requirement)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Gradle wrapper
+        run: |
+          cd android
+          if [ ! -f gradlew ]; then
+            # Download Gradle wrapper if missing (binary not in repo)
+            curl -sL https://services.gradle.org/distributions/gradle-8.6-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/gradle
+            /tmp/gradle/gradle-8.6/bin/gradle wrapper --gradle-version 8.6
+          fi
+          chmod +x gradlew
+
+      - name: Validate Gradle wrapper
+        run: |
+          cd android
+          ./gradlew --version
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug
+        env:
+          JAVA_HOME: ${{ setup-java.outputs.java-home }}
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumasign-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      # Release build requires signing key; this uses debug key for CI
+      # For production, configure secrets: KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
+      - name: Build Release APK (debug-signed)
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd android
+          # Create a temporary keystore for CI signing (NOT for production!)
+          keytool -genkeypair \
+            -v \
+            -keystore /tmp/ci-keystore.jks \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -alias ci-debug \
+            -storepass android \
+            -keypass android \
+            -dname "CN=LumaSign CI, OU=CI, O=LumaSign, L=CI, ST=CI, C=US"
+          
+          cat > local.properties <<EOF
+          storePassword=android
+          keyPassword=android
+          keyAlias=ci-debug
+          storeFile=/tmp/ci-keystore.jks
+          EOF
+          
+          ./gradlew assembleRelease
+        env:
+          JAVA_HOME: ${{ setup-java.outputs.java-home }}
+
+      - name: Upload Release APK
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumasign-android-release
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+  # Tag push → 自动发布到 GitHub Releases
+  release:
+    name: Publish to Releases
+    needs: build-apk
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
