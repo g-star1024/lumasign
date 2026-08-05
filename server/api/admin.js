@@ -815,7 +815,7 @@ export function registerAdminApi(router, ctx) {
     ok(res);
   }));
 
-  router.post('/api/schedules/:id/publish', guard('schedule:publish', async (req, res, { id }, u, user) => {
+  router.post('/api/schedules/:id/publish', guard('schedule:publish', async (req, res, { id }, p, user) => {
     const s = S('schedules').byId(id);
     if (!s) return fail(res, '排期不存在', 404);
     const l = S('layouts').byId(s.layoutId);
@@ -828,10 +828,25 @@ export function registerAdminApi(router, ctx) {
       if (!mod.ok) return blockedResponse(res, mod, '排期发布');
     }
 
+    const b = await readJson(req).catch(() => ({}));
+    const pilotIds = Array.isArray(b.pilotTerminalIds) ? b.pilotTerminalIds.filter(Boolean) : [];
+
     S('schedules').update(id, { enabled: true, publishedAt: Date.now(), publishedBy: user.id });
-    const n = pushToTargets(s);
-    logger.audit({ action: 'schedule_publish', userId: user.id, username: user.username, target: id, terminals: n });
-    ok(res, { pushed: n });
+    const sch = S('schedules').byId(id);
+    // 灰度试点：只推 pilot 子集；否则全量推目标集
+    const targets = pilotIds.length ? pilotIds : targetTerminalIds(sch);
+    const n = pushToTargets(sch, targets);
+
+    // 落一条不可变版本快照（一键回滚 / 灰度追溯都靠它）
+    const mode = pilotIds.length ? 'pilot' : 'full';
+    const version = ctx.deploy?.record({
+      schedule: sch, layout: l, targets,
+      mode, by: user.username,
+      note: b.note || (mode === 'pilot' ? '灰度试点下发' : '全量下发'),
+    });
+
+    logger.audit({ action: 'schedule_publish', userId: user.id, username: user.username, target: id, terminals: n, mode });
+    ok(res, { pushed: n, mode, targets, versionId: version?.id || null });
   }));
 
   /* ================= 用户 / 角色 ================= */
@@ -1076,11 +1091,11 @@ export function registerAdminApi(router, ctx) {
     });
     return [...set];
   }
-  function pushToTargets(s) {
-    const ids = targetTerminalIds(s);
-    ids.forEach(id => bus.send(id, 'refresh_manifest', {}, { ack: false }));
-    bus.broadcastAdmin('manifest:changed', { scheduleId: s.id, terminals: ids.length });
-    return ids.length;
+  function pushToTargets(s, ids) {
+    const list = (ids && ids.length) ? ids : targetTerminalIds(s);
+    list.forEach(id => bus.send(id, 'refresh_manifest', {}, { ack: false }));
+    bus.broadcastAdmin('manifest:changed', { scheduleId: s.id, terminals: list.length });
+    return list.length;
   }
   function notifyLayoutChanged(layoutId) {
     const affected = S('schedules').find(s => s.layoutId === layoutId);

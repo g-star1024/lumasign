@@ -40,6 +40,8 @@ import { registerFleetApi } from './api/fleet.js';
 import { registerNetscanApi } from './api/netscan.js';
 import { registerSecurityApi } from './api/security.js';
 import { registerLifecycleApi } from './api/lifecycle.js';
+import { createDeploy } from './lib/deploy.js';
+import { registerDeployApi } from './api/deploy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,6 +122,10 @@ async function init(opts = {}) {
   ctx.lifecycle = lifecycle;
   lifecycle.start();
 
+  /* 下发版本管理：一键回滚 + 灰度下发 */
+  const deploy = createDeploy(ctx);
+  ctx.deploy = deploy;
+
   /* ---------------- 路由注册 ---------------- */
   const router = new Router();
   registerAdminApi(router, ctx);
@@ -128,6 +134,7 @@ async function init(opts = {}) {
   registerNetscanApi(router, ctx);
   registerSecurityApi(router, ctx);
   registerLifecycleApi(router, ctx);
+  registerDeployApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {

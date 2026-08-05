@@ -810,12 +810,11 @@ async function renderSchedules() {
           el('td', {}, lcBadge(s.lifecycleState, s.daysLeft, s.validFrom, s.validUntil)),
           el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '已发布' : '草稿' })),
           el('td', {},
-            !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: async () => {
-              try { await api.post(`/api/schedules/${s.id}/publish`); toast('已发布并下发到目标终端', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
-            } }, '发布') : '',
+            !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: () => openPublishModal(s) }, '发布') : '',
             s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: async () => {
               try { await api.put(`/api/schedules/${s.id}`, { enabled: false }); toast('已停用', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
             } }, '停用') : '',
+            can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: () => openDeployHistory(s) }, '版本记录') : '',
             can('schedule:edit') ? el('button', { class: 'btn sm danger', style: { marginLeft: '6px' }, onclick: async () => {
               if (await confirmModal({ title: '删除排期', body: `确认删除「${esc(s.name)}」？`, danger: true })) {
                 try { await api.del(`/api/schedules/${s.id}`); toast('已删除', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
@@ -857,6 +856,89 @@ async function renderSchedules() {
   root.appendChild(cardWrap);
   reload();
   return root;
+}
+
+/* ---------------- 下发版本管理（回滚 + 灰度） ---------------- */
+const DEPLOY_MODE_LABEL = { full: '全量', pilot: '灰度试点', rollback: '回滚', promote: '灰度转全量' };
+const DEPLOY_MODE_TONE = { full: 's', pilot: 'w', rollback: 'd', promote: 's' };
+function deployModeBadge(mode) {
+  return el('span', { class: `t-badge ${DEPLOY_MODE_TONE[mode] || 'off'}`, text: DEPLOY_MODE_LABEL[mode] || mode });
+}
+
+function openPublishModal(s) {
+  const all = el('input', { type: 'radio', name: 'pmode', value: 'full', checked: 'checked' });
+  const pilot = el('input', { type: 'radio', name: 'pmode', value: 'pilot' });
+  const selWrap = el('div', { style: { display: 'none', marginTop: '10px' } });
+  pilot.addEventListener('change', () => { selWrap.style.display = pilot.checked ? 'block' : 'none'; });
+  all.addEventListener('change', () => { selWrap.style.display = 'none'; });
+  const box = el('div', {},
+    el('h2', { text: `发布排期 · ${s.name}` }),
+    el('label', { class: 't-check' }, all, el('span', { text: '全量发布（推送到全部目标终端）' })),
+    el('label', { class: 't-check', style: { marginTop: '8px' } }, pilot, el('span', { text: '灰度试点（先选 1–3 台确认，再推广全量）' })),
+    selWrap,
+    el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
+      el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
+      el('button', { class: 't-btn primary', onclick: async () => {
+        const isPilot = pilot.checked;
+        let pilotIds = [];
+        if (isPilot) {
+          pilotIds = [...selWrap.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value);
+          if (pilotIds.length < 1) { toast('请至少选择 1 台试点终端', 'err'); return; }
+        }
+        try {
+          const d = await api.post(`/api/schedules/${s.id}/publish`, { pilotTerminalIds: pilotIds });
+          toast(isPilot ? `已灰度下发到 ${d.pushed} 台试点，确认无误后可在「版本记录」中推广全量` : `已全量下发到 ${d.pushed} 台终端`, 'ok');
+          document.querySelector('.modal-mask')?._close?.(); reload();
+        } catch (e) { toast(e.message, 'err'); }
+      } }, '发布'),
+    ),
+  );
+  api.get('/api/terminals').then(r => {
+    const ts = (r.items || []).filter(t => t.approved);
+    if (!ts.length) { selWrap.append(el('div', { class: 't-dnote', text: '当前没有已准入的终端，无法灰度试点' })); return; }
+    selWrap.append(el('div', { class: 't-dnote', text: '选择试点终端（建议 1–3 台）：' }));
+    ts.forEach(t => selWrap.append(el('label', { class: 't-check' },
+      el('input', { type: 'checkbox', value: t.id }),
+      el('span', { text: `${t.name || t.code || t.id}${t.net?.ip ? ' · ' + t.net.ip : ''}` }))));
+  }).catch(() => {});
+  openModal(box);
+}
+
+function openDeployHistory(s) {
+  const box = el('div', {}, el('h2', { text: `下发版本记录 · ${s.name}` }),
+    el('div', { class: 't-dnote', text: '每次发布/灰度/回滚都会留痕，可一键回到任意正常版本。' }), spinner());
+  openModal(box);
+  const body = el('div', { style: { marginTop: '12px' } });
+  box.append(body);
+  (async () => {
+    let d;
+    try { d = await api.get(`/api/deploy/versions?scheduleId=${s.id}`); }
+    catch (e) { body.replaceChildren(empty(e.message)); return; }
+    const items = d.items || [];
+    if (!items.length) { body.replaceChildren(empty('暂无下发记录')); return; }
+    const rows = items.map(v => el('div', { class: 'card', style: { padding: '12px', marginBottom: '8px' } },
+      el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+        deployModeBadge(v.mode),
+        el('span', { style: { color: 'var(--c-text-3)', fontSize: '12px' }, text: `${new Date(v.createdAt).toLocaleString()} · ${v.createdBy || ''}` }),
+        el('span', { style: { marginLeft: 'auto', color: 'var(--c-text-3)', fontSize: '12px' }, text: `目标 ${v.targets?.length || 0} 台` }),
+      ),
+      v.note ? el('div', { style: { fontSize: '12px', color: 'var(--c-text-2)', marginTop: '6px' }, text: v.note }) : '',
+      el('div', { style: { marginTop: '10px', display: 'flex', gap: '8px' } },
+        can('schedule:publish') ? el('button', { class: 't-btn ghost', onclick: async () => {
+          if (await confirmModal({ title: '一键回滚', body: '确认回滚到该版本？将还原当时的排期与节目内容并重新推送。', danger: true })) {
+            try { const r = await api.post('/api/deploy/rollback', { versionId: v.id }); toast(`已回滚，重新推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s); reload(); } catch (e) { toast(e.message, 'err'); }
+          }
+        } }, '回滚到此版本') : '',
+        (v.mode === 'pilot' && can('schedule:publish')) ? el('button', { class: 't-btn primary', onclick: async () => {
+          try { const r = await api.post('/api/deploy/promote', { versionId: v.id }); toast(`已推广全量，推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s); reload(); } catch (e) { toast(e.message, 'err'); }
+        } }, '推广全量') : '',
+        can('schedule:publish') ? el('button', { class: 't-btn ghost', onclick: async () => {
+          try { const r = await api.post('/api/deploy/retry', { versionId: v.id }); toast(`已重推 ${r.pushed} 台`, 'ok'); } catch (e) { toast(e.message, 'err'); }
+        } }, '重试') : '',
+      ),
+    ));
+    body.replaceChildren(...rows);
+  })();
 }
 
 /* ---------------- 审批中心 ---------------- */
