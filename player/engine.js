@@ -311,11 +311,14 @@ class Player {
 
   startHeartbeat() {
     const iv = 15;
+    this._hbLatency = null;
     this.hbTimer = setInterval(async () => {
+      if (!this.terminalId) return;
       try {
         const body = {
           terminalId: this.terminalId, token: this.token,
           playing: this.layout?.name || null,
+          latency: this._hbLatency || undefined,
         };
         if (native('getNativeStatus')) {
           try {
@@ -327,13 +330,22 @@ class Player {
               if (info.storageFree != null) { body.storageFree = info.storageFree; body.storageTotal = info.storageTotal; }
               if (info.appVersion) body.appVersion = info.appVersion;
               if (info.cpuTemp != null) body.cpuTemp = info.cpuTemp;
+              if (info.cpu != null) body.cpu = info.cpu;
+              if (info.mem != null) body.mem = info.mem;
+              if (info.uptime != null) body.uptime = info.uptime;
+              if (info.crashCount != null) body.crashCount = info.crashCount;
             }
           } catch {}
+        } else if (typeof performance !== 'undefined') {
+          body.uptime = Math.floor(performance.now() / 1000);
         }
+        const t0 = performance.now();
         await fetch('/api/t/heartbeat', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
           body: JSON.stringify(body),
         });
+        const dt = Math.round(performance.now() - t0);
+        if (dt > 0 && dt < 60000) this._hbLatency = dt;
       } catch {}
     }, Math.max(10, iv) * 1000);
   }
@@ -365,6 +377,10 @@ class Player {
         case 'set_brightness': if (native('setBrightness')) window.LumaBridge.setBrightness(cmd.payload?.level ?? 100); break;
         case 'power_schedule': if (native('setPowerSchedule')) window.LumaBridge.setPowerSchedule(JSON.stringify(cmd.payload?.schedule || [])); break;
         case 'upgrade_apk': if (native('downloadAndInstallApk') && cmd.payload?.url) window.LumaBridge.downloadAndInstallApk(cmd.payload.url); break;
+        case 'clear_cache':
+          try { if (native('clearCache')) window.LumaBridge.clearCache(); } catch {}
+          try { localStorage.removeItem('luma_manifest'); } catch {}
+          break;
         case 'show': case 'play':
           if (cmd.payload?.layoutId) {
             const r = await fetch(`/api/layouts/${encodeURIComponent(cmd.payload.layoutId)}`);

@@ -34,6 +34,14 @@ export const DEFAULT_SETTINGS = {
     autoArchive: true,             // 过期后自动归档（不删除，可恢复）
     archiveGraceDays: 0,
   },
+  health: {                        // 终端健康度阈值（P0-3）
+    storageWarn: 20, storageCrit: 10,   // 剩余空间 %
+    tempWarn: 60, tempCrit: 75,         // CPU 温度 °C
+    cpuWarn: 80, cpuCrit: 95,           // 占用 %
+    memWarn: 80, memCrit: 95,           // 占用 %
+    latWarn: 300, latCrit: 800,         // 心跳 RTT ms
+    crashWarn: 1, crashCrit: 5,         // 累计崩溃次数
+  },
   weather: { city: '深圳', source: 'manual', manual: { temp: 28, text: '晴', humidity: 60 } },
 };
 

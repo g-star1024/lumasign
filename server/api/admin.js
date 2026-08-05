@@ -1139,5 +1139,8 @@ function decorateTerminal(t, threshold, bus) {
     linked: bus.isLinked(t.id),
     offlineSeconds: t.lastHeartbeat ? Math.floor((now - t.lastHeartbeat) / 1000) : null,
     lastShot: shot,
+    healthScore: t.healthScore ?? null,
+    healthLevel: t.healthLevel ?? (online ? 'good' : 'crit'),
+    healthIssues: t.healthIssues || [],
   };
 }

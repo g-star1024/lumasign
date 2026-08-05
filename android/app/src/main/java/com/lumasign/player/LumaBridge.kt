@@ -1,17 +1,22 @@
 package com.lumasign.player
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.media.AudioManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.StatFs
+import android.os.SystemClock
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
+import java.io.FileReader
 
 /**
  * 灵屏播放端 JS 桥：暴露原生能力给 Web 播放引擎（player/engine.js）。
@@ -57,7 +62,7 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         }
     }
 
-    /** 实时状态：音量 / 存储 / 版本 / 温度 */
+    /** 实时状态：音量 / 存储 / 版本 / 温度 / CPU / 内存 / 运行时长 / 崩溃次数 */
     @JavascriptInterface
     fun getNativeStatus(): String {
         return try {
@@ -65,16 +70,47 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
             val cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
             val (total, free) = storageBytes()
             val (ver, _) = appVersion()
+            val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            val memPct = if (mi.totalMem > 0) ((mi.totalMem - mi.availMem) * 100 / mi.totalMem).toInt() else 0
+            val cpuPct = cpuLoadPct()
+            val uptime = SystemClock.elapsedRealtime() / 1000
             JSONObject().apply {
                 put("volume", if (max > 0) (cur * 100 / max) else 0)
                 put("storageTotal", total)
                 put("storageFree", free)
                 put("appVersion", ver)
                 put("cpuTemp", 0)
+                put("cpu", cpuPct)
+                put("mem", memPct)
+                put("uptime", uptime)
+                put("crashCount", MainActivity.crashCount)
             }.toString()
         } catch (e: Exception) {
             JSONObject().put("error", e.message ?: "unknown").toString()
         }
+    }
+
+    /** CPU 负载百分比（loadavg / 核数，仅作健康度参考） */
+    private fun cpuLoadPct(): Int {
+        return try {
+            val reader = BufferedReader(java.io.FileReader("/proc/loadavg"))
+            val line = reader.readLine() ?: return 0
+            reader.close()
+            val load = line.split(" ")[0].toDoubleOrNull() ?: 0.0
+            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+            (load / cores * 100).toInt().coerceIn(0, 100)
+        } catch (e: Exception) { 0 }
+    }
+
+    /** 清理应用缓存（存储严重不足时由服务端下发 clear_cache 触发） */
+    @JavascriptInterface
+    fun clearCache() {
+        try {
+            activity.cacheDir?.listFiles()?.forEach { it.deleteRecursively() }
+            webView.clearCache(true)
+        } catch (_: Exception) { }
     }
 
     /** 截屏：截取 WebView 当前画面（含 DOM），返回 dataURL，再回调 JS */

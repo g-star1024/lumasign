@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
         const val PREFS = "luma_config"
         const val KEY_SERVER = "server_url"
         const val KEY_CODE = "terminal_code"
+        @JvmField var crashCount: Int = 0
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,6 +39,13 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
+
+        // 累计崩溃计数（持久化），供健康度上报
+        crashCount = prefs.getInt("crash_count", 0)
+        Thread.setDefaultUncaughtExceptionHandler { _, _ ->
+            crashCount++
+            prefs.edit().putInt("crash_count", crashCount).apply()
+        }
 
         webView = findViewById(R.id.webview)
         setupWebView()

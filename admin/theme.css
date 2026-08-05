@@ -559,10 +559,40 @@ tbody tr:hover { background: var(--hover); }
 .cat-item .cat-name { font-weight: 600; }
 .cat-item .cat-count { color: var(--text-3); font-size: 12px; }
 
+/* ===== 终端健康看板（P0-3） ===== */
+.page-health .h-overview { display:flex; gap:24px; align-items:center; flex-wrap:wrap; padding:20px; }
+.page-health .h-score { text-align:center; min-width:120px; }
+.page-health .h-score-num { font-size:48px; font-weight:700; font-family:var(--c-mono); color:var(--c-text); line-height:1; }
+.page-health .h-score-lbl { font-size:12px; color:var(--c-text-2); margin-top:6px; }
+.page-health .h-bands { flex:1; min-width:240px; }
+.page-health .h-stack { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--c-surface-2); }
+.page-health .h-seg { height:100%; transition:width .4s ease; }
+.page-health .h-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; }
+.page-health .h-leg { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--c-text-2); }
+.page-health .h-leg i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+.page-health .h-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+.page-health .h-card { background:var(--c-surface); border:1px solid var(--c-border); border-radius:var(--c-radius-lg); box-shadow:var(--c-shadow); padding:16px; cursor:pointer; transition:transform .15s ease, box-shadow .15s ease, border-color .15s; }
+.page-health .h-card:hover { transform:translateY(-2px); border-color:var(--c-primary); box-shadow:var(--c-shadow-lg); }
+.page-health .h-card-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.page-health .h-card-name { font-size:14px; font-weight:600; color:var(--c-text); }
+.page-health .h-card-issues { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; min-height:24px; }
+.page-health .h-card-foot { display:flex; gap:12px; flex-wrap:wrap; }
+.page-health .h-cfg { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; margin-top:8px; }
+.page-health .h-cfg-row { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--c-text-2); }
+
+/* 终端详情健康块 */
+.t-dhealth { background:var(--c-surface-2); border-radius:var(--c-radius-md); padding:12px 14px; margin-top:4px; }
+.t-dhrow { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.t-dhissues { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.t-chip { display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:var(--c-radius-sm); font-size:12px; background:var(--c-surface); border:1px solid var(--c-border); color:var(--c-text-2); }
+.t-chip.d { background:var(--c-danger-soft); color:var(--c-danger); border-color:transparent; }
+.t-chip.w { background:var(--c-warning-soft); color:var(--c-warning); border-color:transparent; }
+
 @media (max-width: 1100px) {
   .grid-2 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .t-stats { grid-template-columns:repeat(2,1fr); }
   .t-dgrid { grid-template-columns:1fr; }
   .page-media .m-grid { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+  .page-health .h-cfg { grid-template-columns:1fr; }
 }

@@ -83,6 +83,20 @@ function statusBadge(st) {
   return el('span', { class: `t-badge ${tone}`, text: txt });
 }
 
+/** 健康度徽标：score 0–100 + 四档配色（good/warn/bad/crit → s/w/d/r） */
+const HEALTH_TONE = { good: 's', warn: 'w', bad: 'd', crit: 'r' };
+const HEALTH_LABEL = { good: '良好', warn: '注意', bad: '告警', crit: '严重' };
+function healthBadge(score, level) {
+  if (score == null || level == null) return el('span', { class: 't-badge off', text: '—' });
+  const tone = HEALTH_TONE[level] || 'off';
+  const lbl = HEALTH_LABEL[level] || level;
+  return el('span', { class: `t-badge ${tone}`, text: `${score} · ${lbl}` });
+}
+/** 终端列表里的「需关注」计数（含离线+crit/warn/bad） */
+function attentionCount(items) {
+  return items.filter(t => (t.healthLevel || 'good') !== 'good').length;
+}
+
 async function renderTerminals() {
   const root = el('div', { class: 'page-terminals' });
   let all = [];
@@ -97,7 +111,8 @@ async function renderTerminals() {
     return el('table', { class: 't-table' },
       el('thead', {}, el('tr', {},
         el('th', { text: '名称' }), el('th', { text: '编号' }), el('th', { text: '状态' }),
-        el('th', { text: 'IP · MAC' }), el('th', { text: '型号' }), el('th', { text: '心跳' }), el('th', { text: '' }),
+        el('th', { text: 'IP · MAC' }), el('th', { text: '型号' }), el('th', { text: '心跳' }),
+        el('th', { text: '健康度' }), el('th', { text: '' }),
       )),
       el('tbody', {}, ...items.map(t => el('tr', { style: { cursor: 'pointer' }, onclick: () => openTerminalDetail(t) },
         el('td', { text: t.name || t.code || t.id }),
@@ -106,12 +121,13 @@ async function renderTerminals() {
         el('td', { class: 'mono', text: `${t.net?.ip || '-'} · ${t.hardware?.mac || '-'}` }),
         el('td', { text: t.hardware?.model || '-' }),
         el('td', { text: fmtAgo(t.lastHeartbeat) }),
+        el('td', {}, healthBadge(t.healthScore, t.healthLevel)),
         el('td', {}, can('terminal:control') ? el('button', { class: 't-btn ghost', onclick: (e) => { e.stopPropagation(); openTerminalDetail(t); } }, '控制') : ''),
       ))),
     );
   };
 
-  const statsRow = el('div', { class: 't-stats' });
+  const statsRow = el('div', { class: 't-stats', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' } });
   const tableWrap = el('div', { class: 't-card' }, spinner());
   const searchInput = el('input', { placeholder: '搜索名称、编号、IP、MAC…', oninput: (e) => paint(e.target.value, statusSel.value) });
   const statusSel = el('select', { class: 't-select', onchange: (e) => paint(searchInput.value, e.target.value) },
@@ -134,6 +150,8 @@ async function renderTerminals() {
     statsRow.appendChild(statCard('终端总数', total, '', ''));
     statsRow.appendChild(statCard('在线', online, '运行正常', 'g'));
     statsRow.appendChild(statCard('离线', offline, offline ? '需关注' : '全部在线', 'd'));
+    const attention = attentionCount(all);
+    statsRow.appendChild(statCard('需关注', attention, attention ? '健康度非良好' : '全部健康', attention ? 'd' : 'g'));
     statsRow.appendChild(statCard('当前筛选', items.length, '条结果', ''));
     tableWrap.innerHTML = '';
     tableWrap.appendChild(buildTable(items));
@@ -179,11 +197,26 @@ function openTerminalDetail(t) {
       cap.root ? el('span', { class: 't-dnote', text: '· 已获取 root' }) : '',
       cap.systemPower ? el('span', { class: 't-dnote', text: '· 系统签名' }) : '',
     ),
+    el('div', { class: 't-dhealth' },
+      el('div', { class: 't-dhrow' },
+        el('span', { class: 't-dlabel', text: '健康度' }),
+        healthBadge(t.healthScore, t.healthLevel),
+      ),
+      (t.healthIssues && t.healthIssues.length)
+        ? el('div', { class: 't-dhissues' },
+            ...t.healthIssues.map(i => el('span', { class: `t-chip ${i.sev === 'crit' ? 'd' : 'w'}` }, i.msg)))
+        : el('div', { class: 't-dnote', text: '无异常项' }),
+      t.healthUpdatedAt ? el('div', { class: 't-dnote', text: `最后评估 ${fmtTime(t.healthUpdatedAt)}` }) : '',
+    ),
     el('div', { class: 't-dactions' },
       cmdBtn('截图', 'screenshot', t),
       cmdBtn('刷新内容', 'reload', t),
       cmdBtn('重启', 'restart', t),
       cmdBtn('关机', 'shutdown', t),
+      can('terminal:upgrade') ? el('button', { class: 't-btn', onclick: async () => {
+        try { const r = await api.post(`/api/admin/health/${t.id}/cleanup`); toast(r.message || '已下发清理缓存指令', 'ok'); }
+        catch (e) { toast(e.message, 'err'); }
+      } }, '清理缓存') : '',
     ),
   );
   openModal(el('div', {}, el('h2', { text: `终端 ${t.name || t.code || t.id}` }), body));
@@ -193,6 +226,137 @@ function cmdBtn(label, type, t) {
     try { await api.post('/api/terminals/command', { terminalIds: [t.id], type, payload: {} }); toast(`已下发「${label}」指令`); }
     catch (e) { toast(e.message, 'err'); }
   } }, label);
+}
+
+/* ---------------- 终端健康看板（P0-3） ---------------- */
+async function renderHealth() {
+  const root = el('div', { class: 'page-health' });
+  const summaryBox = el('div', { class: 't-card' }, spinner());
+  const listWrap = el('div', { class: 'h-grid' }, spinner());
+
+  const BANDS = [
+    { key: 'good', label: '良好', color: 'var(--c-success)' },
+    { key: 'warn', label: '注意', color: 'var(--c-warning)' },
+    { key: 'bad', label: '告警', color: 'var(--c-danger)' },
+    { key: 'crit', label: '严重', color: '#ef4444' },
+    { key: 'offline', label: '离线', color: 'var(--c-text-3)' },
+  ];
+
+  function paintSummary(d) {
+    const bands = d.bands || {};
+    const total = d.total || 0;
+    const seg = (n) => total ? `${Math.round((n / total) * 100)}%` : '0%';
+    summaryBox.innerHTML = '';
+    summaryBox.append(
+      el('div', { class: 'h-overview' },
+        el('div', { class: 'h-score' },
+          el('div', { class: 'h-score-num', text: String(d.avgScore ?? 0) }),
+          el('div', { class: 'h-score-lbl', text: '平均健康度 / 100' }),
+        ),
+        el('div', { class: 'h-bands' },
+          el('div', { class: 'h-stack' },
+            ...BANDS.map(b => bands[b.key] ? el('div', {
+              class: 'h-seg', style: { width: seg(bands[b.key]), background: b.color }, title: `${b.label} ${bands[b.key]}`,
+            }) : ''),
+          ),
+          el('div', { class: 'h-legend' },
+            ...BANDS.map(b => el('span', { class: 'h-leg' },
+              el('i', { style: { background: b.color } }),
+              `${b.label} ${bands[b.key] || 0}`)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  function paintList(terms) {
+    listWrap.innerHTML = '';
+    if (!terms.length) { listWrap.append(el('div', { class: 'empty', text: '暂无终端' })); return; }
+    for (const t of terms) {
+      const issues = (t.issues || []).map(i => el('span', { class: `t-chip ${i.sev === 'crit' ? 'd' : 'w'}` }, i.msg));
+      listWrap.append(el('div', { class: 'h-card', onclick: () => openTerminalDetail(fullMap[t.id] || t) },
+        el('div', { class: 'h-card-top' },
+          el('span', { class: 'h-card-name', text: t.name || t.code || t.id }),
+          healthBadge(t.score, t.level),
+        ),
+        el('div', { class: 'h-card-issues' }, issues.length ? issues : el('span', { class: 't-dnote', text: '无异常项' })),
+        el('div', { class: 'h-card-foot' },
+          el('span', { class: 't-dnote', text: t.offline ? '已失联' : `心跳 ${fmtAgo(t.lastHeartbeat)}` }),
+          t.playing ? el('span', { class: 't-dnote', text: `播放中 ${t.playing}` }) : '',
+        ),
+      ));
+    }
+  }
+
+  async function load() {
+    let d, terms;
+    try { d = await api.get('/api/admin/health/summary'); }
+    catch (e) { summaryBox.replaceWith(empty(e.message)); listWrap.replaceWith(el('div')); return; }
+    try { terms = await api.get('/api/terminals'); } catch { terms = { items: [] }; }
+    fullMap = Object.fromEntries((terms.items || []).map(t => [t.id, t]));
+    last = d.terminals || [];
+    paintSummary(d);
+    paintList(last);
+  }
+
+  async function openHealthConfig() {
+    let cfg;
+    try { cfg = (await api.get('/api/admin/health/config')).config; }
+    catch (e) { toast(e.message, 'err'); return; }
+    const FIELDS = [
+      ['storageWarn', '存储剩余·警告 (%)', 0], ['storageCrit', '存储剩余·严重 (%)', 0],
+      ['tempWarn', 'CPU 温度·警告 (°C)', 0], ['tempCrit', 'CPU 温度·严重 (°C)', 0],
+      ['cpuWarn', 'CPU 占用·警告 (%)', 0], ['cpuCrit', 'CPU 占用·严重 (%)', 0],
+      ['memWarn', '内存占用·警告 (%)', 0], ['memCrit', '内存占用·严重 (%)', 0],
+      ['latWarn', '网络延迟·警告 (ms)', 0], ['latCrit', '网络延迟·严重 (ms)', 0],
+      ['crashWarn', '崩溃次数·警告', 0], ['crashCrit', '崩溃次数·严重', 0],
+    ];
+    const inputs = {};
+    const form = el('div', { class: 'h-cfg' },
+      ...FIELDS.map(([k, label]) => {
+        const inp = el('input', { class: 't-input', type: 'number', value: cfg[k] ?? '' });
+        inputs[k] = inp;
+        return el('label', { class: 'h-cfg-row' }, el('span', { text: label }), inp);
+      }),
+    );
+    const save = async () => {
+      const body = {};
+      for (const [k] of FIELDS) { const v = Number(inputs[k].value); if (!Number.isNaN(v) && v >= 0) body[k] = v; }
+      try { await api.post('/api/admin/health/config', body); toast('健康阈值已保存', 'ok'); load(); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+    openModal(el('div', {}, el('h2', { text: '健康度阈值配置' }), form,
+      el('div', { class: 't-dactions', style: { marginTop: '16px' } },
+        el('button', { class: 't-btn primary', onclick: save }, '保存'))));
+  }
+
+  root.append(
+    el('div', { class: 't-head' },
+      el('div', { class: 't-title', text: '终端健康看板' }),
+      can('system:setting') ? el('button', { class: 't-btn', onclick: openHealthConfig }, '⚙ 阈值配置') : '',
+    ),
+    summaryBox,
+    el('div', { class: 't-toolbar' },
+      el('div', { class: 't-search' }, el('span', { text: '🔍' }),
+        el('input', { placeholder: '搜索终端…', oninput: (e) => filter(e.target.value) })),
+    ),
+    listWrap,
+  );
+
+  let last = [];
+  let fullMap = {};   // id -> 完整终端对象（供详情弹窗）
+  function filter(q) {
+    const txt = (q || '').trim().toLowerCase();
+    paintList(txt ? last.filter(t => (t.name || t.code || '').toLowerCase().includes(txt)) : last);
+  }
+
+  await load();
+  const iv = setInterval(async () => {
+    if (!root.isConnected) { clearInterval(iv); return; }
+    try { const d = await api.get('/api/admin/health/summary'); last = d.terminals || []; paintSummary(d); paintList(last); } catch { /* ignore */ }
+  }, 15000);
+
+  return root;
 }
 
 /* ---------------- 素材库 ---------------- */
@@ -1904,6 +2068,7 @@ export const views = {
   schedules: renderSchedules,
   approvals: renderApprovals,
   monitor: renderMonitor,
+  health: renderHealth,
   users: renderUsers,
   logs: renderLogs,
   settings: renderSettings,

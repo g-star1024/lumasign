@@ -42,6 +42,8 @@ import { registerSecurityApi } from './api/security.js';
 import { registerLifecycleApi } from './api/lifecycle.js';
 import { createDeploy } from './lib/deploy.js';
 import { registerDeployApi } from './api/deploy.js';
+import { registerHealthApi } from './api/health.js';
+import { HealthMonitor } from './lib/health.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,6 +128,11 @@ async function init(opts = {}) {
   const deploy = createDeploy(ctx);
   ctx.deploy = deploy;
 
+  /* 终端健康度：评分 + 异常预警 + 失联侦测 + 存储不足自动清理 */
+  const health = new HealthMonitor(ctx);
+  ctx.health = health;
+  health.start();
+
   /* ---------------- 路由注册 ---------------- */
   const router = new Router();
   registerAdminApi(router, ctx);
@@ -135,6 +142,7 @@ async function init(opts = {}) {
   registerSecurityApi(router, ctx);
   registerLifecycleApi(router, ctx);
   registerDeployApi(router, ctx);
+  registerHealthApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {

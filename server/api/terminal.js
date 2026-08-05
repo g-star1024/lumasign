@@ -94,6 +94,13 @@ export function registerTerminalApi(router, ctx) {
 
     const now = Date.now();
     const gap = t.lastHeartbeat ? Math.min(300, Math.floor((now - t.lastHeartbeat) / 1000)) : 0;
+    const h = { ...(t.health || {}) };
+    if (b.cpu != null) h.cpu = b.cpu;
+    if (b.mem != null) h.mem = b.mem;
+    if (b.latency != null) h.latency = b.latency;
+    if (b.crashCount != null) h.crashCount = b.crashCount;
+    if (b.uptime != null) h.uptime = b.uptime;
+
     const patch = {
       lastHeartbeat: now,
       onlineSeconds: (t.onlineSeconds || 0) + gap,
@@ -101,6 +108,7 @@ export function registerTerminalApi(router, ctx) {
       playing: b.playing || null,
       appVersion: b.appVersion || t.appVersion,
       cpuTemp: b.cpuTemp ?? null,
+      health: h,
     };
     if (b.storageFree != null) patch.hardware = { ...t.hardware, storageFree: b.storageFree, storageTotal: b.storageTotal ?? t.hardware?.storageTotal };
     if (b.volume != null) patch.volume = b.volume;
@@ -110,15 +118,9 @@ export function registerTerminalApi(router, ctx) {
     if (Array.isArray(b.errors) && b.errors.length) {
       logger.system({ event: 'terminal_error', terminalId: t.id, name: t.name, errors: b.errors });
     }
-    // 存储不足告警
-    const lowPct = settings().alert?.storageLowPercent || 10;
-    if (b.storageTotal && b.storageFree != null && (b.storageFree / b.storageTotal) * 100 < lowPct) {
-      raiseAlertThrottled(store, bus, `storage_${t.id}`, {
-        level: 'warn', type: 'storage_low', terminalId: t.id,
-        title: '终端存储空间不足',
-        message: `${t.name} 剩余 ${(b.storageFree / 1073741824).toFixed(2)}GB（低于 ${lowPct}%）`,
-      });
-    }
+
+    // 健康度评分 + 异常告警（失联/温度/CPU/内存/存储/崩溃/延迟），存储严重不足自动下发清理
+    try { ctx.health?.record(S('terminals').byId(t.id), now); } catch { /* ignore */ }
 
     json(res, {
       ok: true,
