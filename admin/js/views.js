@@ -859,8 +859,15 @@ async function renderApprovals() {
           el('td', {}, badge),
           el('td', {},
             can('layout:approve') && st === 'pending' ? el('button', { class: 'btn sm primary', onclick: async () => {
-              try { await api.post(`/api/layouts/${l.id}/approve`, { pass: true, comment: '' }); toast('已批准', 'ok'); reload(); }
-              catch (e) { toast(e.message, 'err'); }
+              try {
+                await api.post(`/api/layouts/${l.id}/approve`, { pass: true, comment: '' });
+                // 审批通过后自动创建排期草稿，方便直接进入下发流程
+                try {
+                  await api.post('/api/schedules', { name: `${l.name}（已审批）`, layoutId: l.id, mode: 'default', target: { all: true }, enabled: false });
+                  toast('已批准，已自动加入排期列表', 'ok');
+                } catch { toast('已批准（加入排期失败，可手动新建）', 'ok'); }
+                reload();
+              } catch (e) { toast(e.message, 'err'); }
             } }, '批准') : '',
             can('layout:approve') && st === 'pending' ? el('button', { class: 'btn sm danger', style: { marginLeft: '4px' }, onclick: async () => {
               try { await api.post(`/api/layouts/${l.id}/approve`, { pass: false, comment: '' }); toast('已驳回', 'ok'); reload(); }
