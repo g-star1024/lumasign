@@ -2058,6 +2058,104 @@ async function renderLifecycle() {
   return root;
 }
 
+/* ---------------- 播放证明与合规存证包（P0-4） ---------------- */
+async function renderPlayProof() {
+  const root = el('div', { class: 'page-health' });
+  const tableWrap = el('div', { class: 't-card' }, spinner());
+
+  const termSel = el('select', { class: 't-select' });
+  const custSel = el('select', { class: 't-select' });
+  const mediaSel = el('select', { class: 't-select' });
+  const fromI = el('input', { class: 't-input', type: 'date', style: { width: '150px' } });
+  const toI = el('input', { class: 't-input', type: 'date', style: { width: '150px' } });
+  const limitI = el('input', { class: 't-input', type: 'number', value: '500', style: { width: '90px' } });
+
+  function fillSel(sel, opts, allLabel) {
+    sel.innerHTML = '';
+    sel.append(el('option', { value: '', text: allLabel }));
+    for (const o of (opts || [])) sel.append(el('option', { value: o, text: o }));
+  }
+
+  async function loadFilters() {
+    try {
+      const f = await api.get('/api/admin/playproof/filters');
+      fillSel(termSel, f.terminals, '全部终端');
+      fillSel(custSel, f.customers, '全部客户');
+      fillSel(mediaSel, f.materials, '全部素材');
+    } catch { /* ignore */ }
+  }
+
+  function buildQuery() {
+    const p = new URLSearchParams();
+    if (termSel.value) p.set('terminalId', termSel.value);
+    if (custSel.value) p.set('customer', custSel.value);
+    if (mediaSel.value) p.set('mediaId', mediaSel.value);
+    if (fromI.value) p.set('from', String(Date.parse(fromI.value + 'T00:00:00')));
+    if (toI.value) p.set('to', String(Date.parse(toI.value + 'T23:59:59')));
+    const lim = Number(limitI.value) || 500; p.set('limit', String(lim));
+    return p.toString();
+  }
+
+  function paint(rows) {
+    if (!rows.length) { tableWrap.innerHTML = ''; tableWrap.append(el('div', { class: 'empty', text: '暂无播放记录。终端开始播放后将自动上报。' })); return; }
+    tableWrap.innerHTML = '';
+    tableWrap.append(el('table', { class: 't-table' },
+      el('thead', {}, el('tr', {},
+        el('th', { text: '终端' }), el('th', { text: '素材' }), el('th', { text: '客户' }),
+        el('th', { text: '开始' }), el('th', { text: '结束' }), el('th', { text: '时长(s)' }),
+      )),
+      el('tbody', {}, ...rows.map(r => el('tr', {},
+        el('td', { text: r.terminalName || r.terminalId }),
+        el('td', { text: r.mediaName || r.mediaId || '-' }),
+        el('td', { text: r.customer || '-' }),
+        el('td', { class: 'mono', text: fmtTime(r.startedAt) }),
+        el('td', { class: 'mono', text: fmtTime(r.endedAt) }),
+        el('td', { class: 'mono', text: String(r.duration) }),
+      ))),
+    ));
+  }
+
+  async function load() {
+    try {
+      const d = await api.get('/api/admin/playproof/query?' + buildQuery());
+      paint(d.items || []);
+    } catch (e) { tableWrap.innerHTML = ''; tableWrap.append(el('div', { class: 'empty', text: e.message })); }
+  }
+
+  const exportUrl = (fmt) => `/api/admin/playproof/export?fmt=${fmt}&` + buildQuery();
+  const doExport = (fmt) => {
+    const a = el('a', { href: exportUrl(fmt), style: { display: 'none' } });
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
+  root.append(
+    el('div', { class: 't-head' },
+      el('div', { class: 't-title', text: '播放证明与合规存证包' }),
+      el('div', { class: 'spacer' }),
+      el('button', { class: 't-btn', onclick: () => doExport('json') }, '⤓ 导出 JSON'),
+      el('button', { class: 't-btn primary', onclick: () => doExport('pdf') }, '⤓ 导出存证 PDF'),
+    ),
+    el('div', { class: 't-card', style: { padding: '16px', marginBottom: '16px' } },
+      el('div', { class: 'pf-filters' },
+        el('label', { class: 'pf-f' }, el('span', { text: '终端' }), termSel),
+        el('label', { class: 'pf-f' }, el('span', { text: '客户' }), custSel),
+        el('label', { class: 'pf-f' }, el('span', { text: '素材' }), mediaSel),
+        el('label', { class: 'pf-f' }, el('span', { text: '起' }), fromI),
+        el('label', { class: 'pf-f' }, el('span', { text: '止' }), toI),
+        el('label', { class: 'pf-f' }, el('span', { text: '条数' }), limitI),
+        el('button', { class: 't-btn', onclick: load }, '查询'),
+      ),
+    ),
+    tableWrap,
+  );
+
+  for (const s of [termSel, custSel, mediaSel]) s.onchange = load;
+  fromI.onchange = load; toI.onchange = load;
+  await loadFilters();
+  await load();
+  return root;
+}
+
 export const views = {
   security: renderSecurity,
   dashboard: renderDashboard,
@@ -2069,6 +2167,7 @@ export const views = {
   approvals: renderApprovals,
   monitor: renderMonitor,
   health: renderHealth,
+  proof: renderPlayProof,
   users: renderUsers,
   logs: renderLogs,
   settings: renderSettings,

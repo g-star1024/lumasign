@@ -596,3 +596,8 @@ tbody tr:hover { background: var(--hover); }
   .page-media .m-grid { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
   .page-health .h-cfg { grid-template-columns:1fr; }
 }
+
+/* ===== 播放证明（P0-4） ===== */
+.pf-filters { display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end; }
+.pf-f { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--c-text-2); }
+.pf-f .t-select, .pf-f .t-input { min-width:140px; }

@@ -16,6 +16,7 @@ const NAV = [
     { id: 'lifecycle', label: '内容生命周期', icon: '⧗', perm: 'media:view', hash: '#/lifecycle' },
     { id: 'monitor', label: '监看墙', icon: '◫', perm: 'terminal:view', hash: '#/monitor' },
     { id: 'health', label: '健康看板', icon: '♥', perm: 'terminal:view', hash: '#/health' },
+    { id: 'proof', label: '播放证明', icon: '▣', perm: 'log:view', hash: '#/proof' },
   ] },
   { group: '系统', items: [
     { id: 'fleet', label: '设备开通', icon: '⚡', perm: 'terminal:view', hash: '#/fleet' },

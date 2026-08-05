@@ -209,7 +209,13 @@ class Player {
         else if (single) ms = -1;                                           // 单图/单文本常驻
         else ms = 8000;
 
+        const startedAt = Date.now();
+        this.reportPlay({ itemId: item.id, mediaId: item.mediaId || null, startedAt, endedAt: startedAt });
+
         await this.wait(ms, () => ended, ctl);
+
+        const endedAt = Date.now();
+        this.reportPlay({ itemId: item.id, mediaId: item.mediaId || null, startedAt, endedAt });
 
         holder.classList.remove('show');
         holder.classList.add('hide');
@@ -306,6 +312,28 @@ class Player {
         body: JSON.stringify(body),
       });
       if (r.ok) { const d = await r.json(); this.terminalId = d.terminalId; this.token = d.token; }
+    } catch {}
+  }
+
+  /** 上报播放证明事件（P0-4）：item 开始/结束各记一次 */
+  reportPlay(ev) {
+    if (!this.terminalId) return;
+    const body = {
+      terminalId: this.terminalId, token: this.token || '',
+      events: [{
+        layoutId: this.layout?.id || null,
+        itemId: ev.itemId || null,
+        mediaId: ev.mediaId || null,
+        customer: this.layout?.customer || null,
+        startedAt: ev.startedAt,
+        endedAt: ev.endedAt,
+      }],
+    };
+    try {
+      fetch('/api/t/playlog', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify(body),
+      }).catch(() => {});
     } catch {}
   }
 

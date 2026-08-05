@@ -44,6 +44,7 @@ import { createDeploy } from './lib/deploy.js';
 import { registerDeployApi } from './api/deploy.js';
 import { registerHealthApi } from './api/health.js';
 import { HealthMonitor } from './lib/health.js';
+import { registerPlayProofApi } from './api/playproof.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,6 +144,7 @@ async function init(opts = {}) {
   registerLifecycleApi(router, ctx);
   registerDeployApi(router, ctx);
   registerHealthApi(router, ctx);
+  registerPlayProofApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {
