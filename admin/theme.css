@@ -159,6 +159,10 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---------------- 通用组件 ---------------- */
 .card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
+.apk-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.apk-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; }
+.apk-name { font-weight: 600; }
+
 .grid { display: grid; gap: 16px; }
 .cols-4 { grid-template-columns: repeat(4, 1fr); }
 .cols-3 { grid-template-columns: repeat(3, 1fr); }

@@ -1120,8 +1120,48 @@ async function renderFleet() {
   const box = el('div', { class: 'page-fleet' }, spinner());
   (async () => {
     let apks = [], adb = { available: false, output: '' };
-    try { apks = (await api.get('/api/apks')).items || []; } catch {}
     try { adb = await api.get('/api/admin/fleet/adb'); } catch {}
+
+    /* APK 升级包管理：上传 / 列表 / 删除（fleet 推送与终端自升级都从这里取） */
+    const apkListEl = el('div', {});
+    const apkFile = el('input', { type: 'file', accept: '.apk,application/vnd.android.package-archive', style: { maxWidth: '240px' } });
+    const apkVer = el('input', { class: 'input', placeholder: '版本名 如 1.0.0', style: { width: '120px' } });
+    const apkCode = el('input', { class: 'input', placeholder: '版本号', style: { width: '90px' } });
+    const apkNote = el('input', { class: 'input', placeholder: '备注（可选）', style: { flex: '1 1 160px' } });
+    const apkUp = el('button', { class: 'btn primary', onclick: async () => {
+      const f = apkFile.files[0];
+      if (!f) return toast('请先选择 APK 文件', 'err');
+      const fd = new FormData();
+      fd.append('file', f); fd.append('versionName', apkVer.value);
+      fd.append('versionCode', apkCode.value); fd.append('note', apkNote.value);
+      apkUp.disabled = true;
+      try { await api.upload('/api/apks', fd); toast('APK 已上传', 'ok'); loadApks(); apkFile.value = ''; apkVer.value = ''; apkCode.value = ''; apkNote.value = ''; }
+      catch (e) { toast(e.message, 'err'); }
+      finally { apkUp.disabled = false; }
+    } }, '上传 APK');
+
+    const apkSel = el('select', { class: 'input', style: { minWidth: '220px' } });
+    function refreshApkSel() {
+      apkSel.replaceChildren(el('option', { value: '' }, apks.length ? '选择播放端 APK' : '（请先上传 APK 升级包）'),
+        ...apks.map(a => el('option', { value: a.id }, a.name + ' | v' + (a.versionName || '?'))));
+    }
+    function renderApkList() {
+      if (!apks.length) { apkListEl.replaceChildren(el('div', { class: 'empty', text: '尚未上传任何播放端 APK' })); return; }
+      apkListEl.replaceChildren(...apks.map(a => el('div', { class: 'apk-row' },
+        el('div', {},
+          el('div', { class: 'apk-name', text: a.name }),
+          el('div', { class: 'sub', text: `v${a.versionName || '?'} · ${((a.size || 0) / 1048576).toFixed(1)}MB · ${(a.createdAt ? new Date(a.createdAt).toLocaleString() : '')}` })),
+        el('div', { class: 'row', style: { gap: '6px' } },
+          el('a', { class: 'btn sm', href: a.url, target: '_blank', rel: 'noopener' }, '下载'),
+          can('terminal:upgrade') ? el('button', { class: 'btn sm danger', onclick: async () => {
+            if (await confirmModal({ title: '删除 APK', body: `确认删除「${esc(a.name)}」？`, danger: true })) {
+              try { await api.del(`/api/apks/${a.id}`); toast('已删除', 'ok'); loadApks(); } catch (e) { toast(e.message, 'err'); }
+            }
+          } }, '删除') : null,
+        ),
+      )));
+    }
+    async function loadApks() { try { apks = (await api.get('/api/apks')).items || []; } catch {} refreshApkSel(); renderApkList(); }
 
     const ipInput = el('textarea', {
       class: 'input', rows: 4,
@@ -1131,13 +1171,6 @@ async function renderFleet() {
     const subnet = el('input', { class: 'input', placeholder: '或填子网 192.168.1', style: { width: '160px' } });
     const start = el('input', { class: 'input', placeholder: '起', style: { width: '64px' } });
     const end = el('input', { class: 'input', placeholder: '止', style: { width: '64px' } });
-
-    const apkHint = apks.length ? '选择播放端 APK' : '（请先到 终端-APK升级包 上传）';
-    const apkOpts = apks.map(function (a) { return el('option', { value: a.id }, a.name + ' | v' + (a.versionName || '?')); });
-    const apkSel = el('select', { class: 'input', style: { minWidth: '220px' } },
-      el('option', { value: '' }, apkHint),
-      ...apkOpts,
-    );
 
     const resultsEl = el('div', {});
     const status = el('div', { class: 'sub', style: { marginBottom: '10px' } });
@@ -1226,6 +1259,13 @@ async function renderFleet() {
           text: '电子屏已嵌墙、无法逐台拆机装 APK，但你知道全部设备 IP。本页可：1 扫描已知 IP，识别设备类型与可开通方式；2 通过「ADB 网络调试(5555)」或「厂商 API」把播放端 APK 远程推送到设备上，全程无需物理接触。设备首次开通后，后续升级由播放端自动完成。' }),
       ),
       el('div', { class: 'card', style: { marginBottom: '14px' } },
+        el('h3', { text: '播放端 APK 升级包' }),
+        el('p', { class: 'sub', style: { marginBottom: '10px' }, text: '远程开通与终端自升级都从这里取 APK。上传后在下方的「播放端 APK」下拉中选择即可推送。' }),
+        el('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          apkFile, apkVer, apkCode, apkNote, apkUp),
+        apkListEl,
+      ),
+      el('div', { class: 'card', style: { marginBottom: '14px' } },
         el('div', { class: 'row', style: { alignItems: 'flex-end', gap: '10px', flexWrap: 'wrap' } },
           el('div', { style: { flex: '1 1 320px' } },
             el('label', { class: 'fld', text: '设备 IP 列表（每行一个）' }), ipInput),
@@ -1244,6 +1284,7 @@ async function renderFleet() {
       resultsEl,
       renderScanSection(),
     );
+    loadApks();
   })();
   return box;
 }

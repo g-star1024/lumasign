@@ -188,6 +188,15 @@ export function csrfGuard(req) {
  *   read   读操作       → 宽松
  * 超限累计到阈值自动封禁一段时间。
  */
+/**
+ * 本机回环地址豁免。
+ * 产品是 LAN-only，管理员从本机浏览器（127.0.0.1）或桌面端（同机 file://）访问。
+ * 若对回环做限速/封禁，管理员自己高频操作（或本地冒烟脚本）会把自己 ban 掉，
+ * 导致整后台 403 自锁、安全中心等页面集体转圈。故回环地址一律放行。
+ */
+const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1']);
+function isLoopback(ip) { return !ip || LOOPBACK.has(String(ip)); }
+
 export class ApiGuard {
   constructor(opts = {}) {
     this.rules = {
@@ -225,6 +234,9 @@ export class ApiGuard {
   check(req, pathname) {
     const ip = clientIp(req);
     const cls = this.classify(pathname, req.method);
+
+    // 回环地址（管理员本机 / 桌面端同机）不受限速与封禁限制，避免自锁
+    if (isLoopback(ip)) return { allowed: true, cls: 'local' };
 
     if (this.isBanned(ip)) {
       return { allowed: false, cls, banned: true, retryAfter: Math.ceil((this.bans.get(ip) - Date.now()) / 1000),
