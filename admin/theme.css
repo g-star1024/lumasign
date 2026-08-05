@@ -531,7 +531,25 @@ tbody tr:hover { background: var(--hover); }
 .page-monitor .mn-meta { font-size:12px; color:var(--c-text-2); line-height:1.5; }
 .page-monitor .mn-playing { color:var(--c-primary); }
 
+/* ===== 安全中心 ===== */
+.sub { font-size: 13px; color: var(--text-3); line-height: 1.6; }
+.prop-row { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.prop-row label { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+.stat-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.stat-card .val { font-size: 22px; font-weight: 700; }
+.stat-card .lab { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+.stat-card.ok .val { color: var(--ok); }
+.stat-card.warn .val { color: var(--warn); }
+.cat-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.cat-item { display: flex; align-items: center; gap: 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; font-size: 13px; }
+.cat-item .cat-name { font-weight: 600; }
+.cat-item .cat-count { color: var(--text-3); font-size: 12px; }
+
 @media (max-width: 1100px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .t-stats { grid-template-columns:repeat(2,1fr); }
   .t-dgrid { grid-template-columns:1fr; }
   .page-media .m-grid { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }

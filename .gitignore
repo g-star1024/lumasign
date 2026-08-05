@@ -60,3 +60,7 @@ npm-debug.log*
 *.tmp
 *.temp
 .cache/
+
+# Smoke test artifacts
+.smoke*/
+smoke-*.mjs

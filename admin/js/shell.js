@@ -19,6 +19,7 @@ const NAV = [
     { id: 'fleet', label: '设备开通', icon: '⚡', perm: 'terminal:view', hash: '#/fleet' },
     { id: 'users', label: '用户与角色', icon: '◍', perm: 'user:view', hash: '#/users' },
     { id: 'logs', label: '日志与播放证明', icon: '≣', perm: 'log:view', hash: '#/logs' },
+    { id: 'security', label: '安全中心', icon: '⛨', perm: 'system:setting', hash: '#/security' },
     { id: 'settings', label: '系统设置', icon: '⚙', perm: 'system:setting', hash: '#/settings' },
   ] },
 ];

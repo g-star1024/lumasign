@@ -28,9 +28,16 @@ import { Bus } from './lib/bus.js';
 import { RateLimiter, Router, safeJoin, sendFile, fail, json } from './lib/http.js';
 import { startDiscovery, primaryIP, lanIPs } from './lib/discovery.js';
 import { seed } from './lib/seed.js';
+import { Inventory } from './lib/inventory.js';
+import { Moderator } from './lib/moderation.js';
+import {
+  applySecurityHeaders, ApiGuard, AuditChain, csrfGuard, lanOnlyGuard, ipListGuard, clientIp,
+} from './lib/security.js';
 import { registerAdminApi } from './api/admin.js';
 import { registerTerminalApi } from './api/terminal.js';
 import { registerFleetApi } from './api/fleet.js';
+import { registerNetscanApi } from './api/netscan.js';
+import { registerSecurityApi } from './api/security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,6 +69,32 @@ async function init(opts = {}) {
   const bus = new Bus(store, logger);
   const limiter = new RateLimiter(0);                       // 全局下发限速（0=不限）
 
+  /* ---------------- 安全组件 ---------------- */
+  // 审计哈希链：每条审计记录带 prev/hash，事后被改会立刻断链（内鬼防线）
+  const auditChain = new AuditChain(DATA);
+  const rawAudit = logger.audit.bind(logger);
+  logger.audit = (o) => {
+    const rec = { ts: Date.now(), ...o };
+    const { prev, hash } = auditChain.seal(rec);
+    return rawAudit({ ...o, chainPrev: prev, hash });
+  };
+  logger.verifyChain = (lines) => auditChain.verify(lines);
+
+  // API 限速 + 自动封禁
+  const apiGuard = new ApiGuard({
+    onViolation: ({ ip, cls, strikes, banned, pathname }) => {
+      logger.audit({
+        userId: 'system', username: 'system',
+        action: banned ? 'security_ip_banned' : 'security_rate_limited',
+        target: `${ip} 触发 ${cls} 类限速（第 ${strikes} 次）${pathname}`,
+        ip, cls, strikes,
+      });
+    },
+  });
+
+  // 内容合规审核
+  const moderator = new Moderator({ dataDir: DATA, logger });
+
   const ctx = {
     store, auth, bus, logger,
     paths: { root: ROOT, data: DATA, media: MEDIA, thumbs: THUMBS, shots: SHOTS, apk: APK, tmp: TMP },
@@ -69,16 +102,24 @@ async function init(opts = {}) {
     scanPorts: [5555, 80, 8080, 8000, 7788, 22, 5000, 8888, 19211],
     limiter,
     secret: crypto.randomBytes(32).toString('hex'),
+    apiGuard, auditChain, moderator,
   };
 
   /* 首次运行初始化默认数据 */
   seed(store, logger);
+
+  /* 设备台账与自动巡检（需在 seed 之后，依赖 settings 集合） */
+  const inventory = new Inventory(ctx);
+  ctx.inventory = inventory;
+  inventory.start();
 
   /* ---------------- 路由注册 ---------------- */
   const router = new Router();
   registerAdminApi(router, ctx);
   registerTerminalApi(router, ctx);
   registerFleetApi(router, ctx);
+  registerNetscanApi(router, ctx);
+  registerSecurityApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {
@@ -109,13 +150,33 @@ async function init(opts = {}) {
     return fail(res, 'Not Found', 404);
   }
 
-  /* ---------------- CORS（LAN 私有工具，便于桌面端/直开） ---------------- */
-  function setCors(res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+  /* ---------------- CORS ----------------
+   * 原来是 Access-Control-Allow-Origin: * ——任何网站的 JS 都能读我们的接口响应。
+   * 现在收紧为「回显同源 + 允许凭证」：只有从本服务自身页面发起的请求才拿得到数据。
+   * 桌面端（Electron）走 file:// 时 Origin 为 null，用 x-terminal-token / 无 Origin 通道，不受影响。
+   */
+  function setCors(req, res) {
+    const origin = req.headers.origin;
+    const host = String(req.headers.host || '').toLowerCase();
+    let allow = '';
+    if (origin) {
+      try { if (new URL(origin).host.toLowerCase() === host) allow = origin; } catch { /* ignore */ }
+    }
+    if (allow) {
+      res.setHeader('Access-Control-Allow-Origin', allow);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers',
       'Content-Type, x-session, x-terminal-id, x-terminal-token, Authorization');
+    res.setHeader('Access-Control-Max-Age', '600');
   }
+
+  const secCfg = () => {
+    const s = store.col('settings').byId('settings') || {};
+    return s.security || {};
+  };
 
   /* ---------------- 主请求处理 ---------------- */
   const server = http.createServer(async (req, res) => {
@@ -123,12 +184,54 @@ async function init(opts = {}) {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = decodeURIComponent(url.pathname);
+      const isPlayer = pathname.startsWith('/player');
 
-      setCors(res);
+      setCors(req, res);
+      applySecurityHeaders(res, { kind: isPlayer ? 'player' : 'admin', https: ctx.https });
       if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
+
+      /* ── 安全闸门（顺序：网络面 → 黑白名单 → 限速 → CSRF） ── */
+      const cfg = secCfg();
+
+      const lan = lanOnlyGuard(req, cfg);
+      if (!lan.allowed) {
+        logger.audit({ userId: 'system', username: 'system', action: 'security_blocked_wan', target: lan.reason });
+        return fail(res, '禁止访问', 403);
+      }
+
+      const ipl = ipListGuard(req, cfg);
+      if (!ipl.allowed) {
+        logger.audit({ userId: 'system', username: 'system', action: 'security_blocked_ip', target: ipl.reason });
+        return fail(res, '禁止访问', 403);
+      }
 
       // 1) API
       if (pathname.startsWith('/api/')) {
+        // SSE 长连接不计入限速（否则每次重连都吃额度）
+        const isStream = pathname === '/api/events' || /\/(events|stream)$/.test(pathname);
+        if (!isStream) {
+          const rl = apiGuard.check(req, pathname);
+          if (!rl.allowed) {
+            res.setHeader('Retry-After', String(rl.retryAfter || 60));
+            return fail(res, rl.reason, 429);
+          }
+        }
+
+        const csrf = csrfGuard(req);
+        if (!csrf.allowed) {
+          logger.audit({
+            userId: 'system', username: 'system', action: 'security_csrf_blocked',
+            target: `${req.method} ${pathname} — ${csrf.reason}`, ip: clientIp(req),
+          });
+          return fail(res, '跨站请求被拒绝', 403);
+        }
+        if (csrf.suspicious && req.method !== 'GET') {
+          logger.audit({
+            userId: 'system', username: 'system', action: 'security_headless_write',
+            target: `${req.method} ${pathname}（无 Origin/Referer，疑似脚本调用）`, ip: clientIp(req),
+          });
+        }
+
         const m = router.match(req.method, pathname);
         if (m) { await m.handler(req, res, m.params, url); return; }
         return fail(res, '接口不存在', 404);
@@ -200,8 +303,10 @@ async function init(opts = {}) {
     try { server.close(() => {}); } catch { /* ignore */ }
     try { disc.close(); } catch { /* ignore */ }
     try { clearInterval(refreshTimer); } catch { /* ignore */ }
+    try { inventory.stop(); } catch { /* ignore */ }
     store.flushAll();
     logger.flush();
+    try { auditChain.flush(); } catch { /* ignore */ }
   }
 
   return { server, ctx, shutdown, ready, paths: ctx.paths };

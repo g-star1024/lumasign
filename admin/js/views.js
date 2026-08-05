@@ -1140,9 +1140,93 @@ async function renderFleet() {
         ),
       ),
       resultsEl,
+      renderScanSection(),
     );
   })();
   return box;
+}
+
+/* ================= 局域网扫描与设备台账 ================= */
+async function renderScanSection() {
+  const root = el('div', { class: 'card', style: { marginTop: '14px' } }, spinner());
+  (async () => {
+    let nets = [], cfg = {};
+    try { const d = await api.get('/api/admin/scan/networks'); nets = d.networks || []; } catch {}
+    try { const d = await api.get('/api/admin/scan/config'); cfg = d.config || {}; } catch {}
+
+    const subnetSel = el('select', { class: 'input', style: { minWidth: '200px' } },
+      el('option', { value: '' }, '自动（本机主网段）'),
+      ...nets.map(n => el('option', { value: n.subnet || '' }, (n.subnet || '') + ' · ' + (n.interface || ''))));
+    if (cfg.subnet) subnetSel.value = cfg.subnet;
+    const manualIps = el('textarea', { class: 'input', rows: 2, placeholder: '或手动填 IP，每行一个（如 192.168.1.21）', style: { width: '100%', resize: 'vertical' } });
+    const progress = el('div', { class: 'sub', text: '尚未扫描' });
+    const devWrap = el('div', {});
+
+    const loadDevices = async () => {
+      try {
+        const d = await api.get('/api/admin/scan/devices');
+        const items = d.items || [];
+        if (!items.length) { devWrap.replaceChildren(empty('暂无设备台账，点击「开始扫描」建立')); return; }
+        devWrap.replaceChildren(el('table', { class: 'tbl' },
+          el('thead', {}, el('tr', {},
+            el('th', { text: 'IP' }), el('th', { text: '类型' }), el('th', { text: '名称/厂商' }),
+            el('th', { text: '状态' }), el('th', { text: '最后发现' }), el('th', { text: '操作' }))),
+          el('tbody', {}, ...items.map(it => el('tr', {},
+            el('td', { text: it.ip }),
+            el('td', {}, el('span', { class: 'badge ' + (it.kind === 'android' ? 'warn' : (it.kind === 'screen' || it.kind === 'chuto' || it.kind === 'luma') ? 'ok' : '') }, it.kindLabel || it.kind || '未知')),
+            el('td', { text: ((it.name || '') + ' ' + (it.vendor || '')).trim() || '-' }),
+            el('td', {}, el('span', { class: 'badge ' + (it.status === 'online' ? 'ok' : 'off'), text: it.status === 'online' ? '在线' : (it.status === 'gone' ? '失联' : '未知') })),
+            el('td', { text: fmtAgo(it.lastSeen) }),
+            el('td', {}, el('button', { class: 'btn sm', onclick: async () => { try { await api.post('/api/admin/scan/ack', { ids: [it.id] }); toast('已确认', 'ok'); loadDevices(); } catch (e) { toast(e.message, 'err'); } } }, '确认'),
+              el('button', { class: 'btn sm', onclick: async () => { if (!confirm('确认移除该台账记录？')) return; try { await api.post('/api/admin/scan/forget', { ids: [it.id] }); toast('已移除'); loadDevices(); } catch (e) { toast(e.message, 'err'); } } }, '移除')),
+          ))),
+        ));
+      } catch (e) { devWrap.replaceChildren(empty(e.message)); }
+    };
+
+    let timer = null;
+    const poll = () => {
+      api.get('/api/admin/scan/progress').then(d => {
+        if (d.running) { progress.replaceChildren(el('span', { class: 'spin' }), ' 扫描进行中…'); if (!timer) timer = setInterval(poll, 1500); }
+        else { if (timer) { clearInterval(timer); timer = null; } progress.replaceChildren(el('span', { class: 'sub', text: '上次扫描：' + (d.lastRun ? fmtAgo(d.lastRun) : '尚未扫描') })); loadDevices(); }
+      }).catch(() => {});
+    };
+
+    const runScan = async () => {
+      const targets = manualIps.value.split('\n').map(s => s.trim()).filter(Boolean);
+      const body = targets.length ? { targets } : (subnetSel.value ? { subnet: subnetSel.value } : {});
+      try { await api.post('/api/admin/scan/run', body); toast('扫描已启动', 'ok'); poll(); }
+      catch (e) { toast(e.message, 'err'); }
+    };
+
+    const autoChk = el('input', { type: 'checkbox', checked: !!cfg.enabled });
+    const interval = el('input', { class: 'input', type: 'number', value: cfg.intervalMin || 30, style: { width: '80px' } });
+    const saveCfg = async () => { try { await api.post('/api/admin/scan/config', { enabled: autoChk.checked, intervalMin: +interval.value || 30 }); toast('自动巡检设置已保存', 'ok'); } catch (e) { toast(e.message, 'err'); } };
+
+    root.replaceChildren(
+      el('h3', { text: '局域网扫描与设备台账' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '自动（按配置定时）或手动扫描局域网，识别安卓屏、电子屏、摄像头、交换机等设备并建立资产台账；新设备或失联设备触发告警，让"接入即可见"。' }),
+      el('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+        subnetSel,
+        el('button', { class: 'btn primary', onclick: runScan }, '开始扫描'),
+        el('button', { class: 'btn', onclick: loadDevices }, '刷新台账'),
+      ),
+      manualIps,
+      progress,
+      el('div', { class: 'card', style: { marginTop: '14px', background: 'var(--bg-2)' } },
+        el('div', { class: 'sub', style: { fontWeight: 600, marginBottom: '8px' }, text: '自动巡检（无人值守周期扫描）' }),
+        el('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+          el('label', { class: 'sub', text: '启用' }), autoChk,
+          el('label', { class: 'sub', text: '间隔(分)' }), interval,
+          el('button', { class: 'btn sm primary', onclick: saveCfg }, '保存'),
+        ),
+      ),
+      el('div', { style: { margin: '12px 0 4px' } }, el('b', { text: '设备台账' })),
+      devWrap,
+    );
+    poll();
+  })();
+  return root;
 }
 
 /* ================= 监看墙（一块大屏监控所有屏） ================= */
@@ -1233,7 +1317,216 @@ async function renderMonitor() {
   return root;
 }
 
+/* ================= 安全中心 ================= */
+async function renderSecurity() {
+  const box = el('div', { class: 'page-security' }, spinner());
+  (async () => {
+    let overview = null, settings = { security: {} }, moderation = { config: {}, stats: { categories: [] } };
+    try { overview = await api.get('/api/admin/security/overview'); } catch {}
+    try { settings = await api.get('/api/admin/security/settings'); } catch {}
+    try { moderation = await api.get('/api/admin/security/moderation'); } catch {}
+
+    const sec = settings.security || {};
+    const p = overview?.posture || {};
+    const mcfg0 = moderation.config || {};
+    const mstats0 = moderation.stats || {};
+    let mcfg = mcfg0, mstats = mstats0;
+    const isAdmin = can('system:setting');
+    const canModerate = can('layout:view');
+
+    /* 1. 态势概览 */
+    const stat = (label, val, tone) => el('div', { class: 'stat-card' + (tone ? ' ' + tone : '') },
+      el('div', { class: 'val', text: String(val) }), el('div', { class: 'lab', text: label }));
+    const postureCards = el('div', { class: 'stat-grid' },
+      stat('网络隔离 LAN-only', p.lanOnly ? '已开启' : '关闭', p.lanOnly ? 'ok' : ''),
+      stat('IP 白名单', p.allowlist ?? 0), stat('IP 黑名单', p.denylist ?? 0),
+      stat('内容合规', mcfg.enabled ? '启用' : '停用', mcfg.enabled ? 'ok' : 'warn'),
+      stat('URL 白名单', p.urlWhitelistCount ?? 0),
+      stat('当前封禁 IP', p.bannedNow ?? 0, p.bannedNow ? 'warn' : ''),
+      stat('近 7 天安全事件', p.recentSecurityEvents ?? 0),
+      stat('敏感词总数', mstats.totalWords ?? 0),
+    );
+
+    /* 2. 网络隔离 */
+    const lanOnlyChk = el('input', { type: 'checkbox', checked: !!sec.lanOnly, ...(isAdmin ? {} : { disabled: true }) });
+    const allowTa = el('textarea', { class: 'input', rows: 3, value: (sec.allowIps || []).join('\n'), placeholder: '每行一个，支持 192.168.1.* 与 10.0.0.0/24', ...(isAdmin ? {} : { disabled: true }) });
+    const denyTa = el('textarea', { class: 'input', rows: 3, value: (sec.denyIps || []).join('\n'), placeholder: '每行一个，支持通配与 CIDR', ...(isAdmin ? {} : { disabled: true }) });
+    const saveNetwork = async () => {
+      try {
+        await api.post('/api/admin/security/settings', {
+          lanOnly: lanOnlyChk.checked,
+          allowIps: allowTa.value.split('\n').map(s => s.trim()).filter(Boolean),
+          denyIps: denyTa.value.split('\n').map(s => s.trim()).filter(Boolean),
+        });
+        toast('网络隔离设置已保存', 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const networkCard = el('div', { class: 'card' },
+      el('h3', { text: '网络隔离（仅允许局域网 / 指定 IP 访问）' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '开启后，只有来自局域网或白名单的 IP 能访问管理端与接口，可彻底阻断来自公网的探测与攻击。' }),
+      field('仅允许局域网', lanOnlyChk),
+      field('IP 白名单（留空 = 不限制来源）', allowTa),
+      field('IP 黑名单（优先级高于白名单）', denyTa),
+      isAdmin ? el('div', { style: { marginTop: '10px' } }, el('button', { class: 'btn primary', onclick: saveNetwork }, '保存网络隔离设置'))
+        : el('div', { class: 'sub', text: '（需要 system:setting 权限）' }),
+    );
+
+    /* 3. IP 封禁 */
+    const banIp = el('input', { class: 'input', placeholder: 'IP，如 10.20.30.40', style: { width: '180px' } });
+    const banMin = el('input', { class: 'input', type: 'number', value: '60', style: { width: '80px' } });
+    const banList = el('div', {});
+    const renderBans = (bans) => {
+      if (!bans || !bans.length) { banList.replaceChildren(empty('当前没有被封禁的 IP')); return; }
+      banList.replaceChildren(el('table', { class: 'tbl' },
+        el('thead', {}, el('tr', {}, el('th', { text: 'IP' }), el('th', { text: '剩余' }), el('th', { text: '操作' }))),
+        el('tbody', {}, ...bans.map(b => el('tr', {},
+          el('td', { text: b.ip }), el('td', { text: fmtAgo(Date.now() + b.remainSec * 1000) }),
+          el('td', {}, el('button', { class: 'btn sm', onclick: async () => { try { await api.post('/api/admin/security/unban', { ip: b.ip }); toast('已解封 ' + b.ip, 'ok'); loadBans(); } catch (e) { toast(e.message, 'err'); } } }, '解封')),
+        ))),
+      ));
+    };
+    const loadBans = async () => { try { const d = await api.get('/api/admin/security/bans'); renderBans(d.bans); } catch {} };
+    const banCard = el('div', { class: 'card' },
+      el('h3', { text: 'IP 封禁（抗爆破 / 抗扫描）' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '暴力破解、异常扫描会触发自动限速并临时封禁；也可在此手动封禁可疑来源。' }),
+      isAdmin ? el('div', { class: 'row', style: { gap: '8px', marginBottom: '12px', alignItems: 'center' } },
+        banIp, el('span', { text: '封禁' }), banMin, el('span', { text: '分钟' }),
+        el('button', { class: 'btn primary', onclick: async () => {
+          if (!banIp.value.trim()) return toast('请填写 IP', 'err');
+          try { await api.post('/api/admin/security/ban', { ip: banIp.value.trim(), minutes: +banMin.value || 60 }); toast('已封禁', 'ok'); banIp.value = ''; loadBans(); }
+          catch (e) { toast(e.message, 'err'); }
+        } }, '手动封禁')) : el('div', { class: 'sub', text: '（需要 system:setting 权限）' }),
+      banList,
+    );
+    loadBans();
+
+    /* 4. 审计哈希链 */
+    const chainOut = el('div', {});
+    const chainCard = el('div', { class: 'card' },
+      el('h3', { text: '审计日志完整性校验（防篡改链）' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '每条审计记录都带前序哈希，形成不可篡改的链。任何人直接修改日志文件都会断链 —— 点击即可立即发现内鬼痕迹。' }),
+      el('button', { class: 'btn', onclick: async () => {
+        chainOut.replaceChildren(el('div', { class: 'sub' }, el('span', { class: 'spin' }), ' 校验中...'));
+        try {
+          const d = await api.post('/api/admin/security/audit/verify');
+          if (d.ok) chainOut.replaceChildren(el('div', { class: 'badge ok', text: '✓ 审计链完整（已校验 ' + d.checked + ' 条记录）' }));
+          else chainOut.replaceChildren(el('div', { class: 'badge danger', text: '✗ 检测到篡改：第 ' + (d.broken?.index ?? '?') + ' 条记录哈希不匹配' }));
+        } catch (e) { chainOut.replaceChildren(empty(e.message)); }
+      } }, '校验审计链完整性'),
+      chainOut,
+    );
+
+    /* 5. 内容合规 */
+    const modEnabled = el('input', { type: 'checkbox', checked: !!mcfg.enabled, ...(isAdmin ? {} : { disabled: true }) });
+    const urlWhitelistTa = el('textarea', { class: 'input', rows: 3, value: (mcfg.urlWhitelist || []).join('\n'), placeholder: '每行一个可信域名，如 trusted.example.com', ...(isAdmin ? {} : { disabled: true }) });
+    const catWrap = el('div', { class: 'cat-list' }, ...(mstats.categories || []).map(c => catItem(c)));
+    const catItem = (c) => el('div', { class: 'cat-item' },
+      el('span', { class: 'badge ' + (c.level === 'block' ? 'danger' : c.level === 'review' || c.level === 'warn' ? 'warn' : 'ok'), text: ({ block: '拒绝', review: '复核', warn: '提示', pass: '通过' }[c.level] || c.level) }),
+      el('span', { class: 'cat-name', text: c.label }),
+      el('span', { class: 'cat-count', text: (c.count || 0) + ' 词' }),
+      el('span', { class: 'sub', text: c.builtin ? '内置' : '自定义' }),
+    );
+    const wordCat = el('select', { class: 'input', style: { minWidth: '160px' } },
+      ...(mstats.categories || []).map(c => el('option', { value: c.key }, c.label)),
+      el('option', { value: 'custom', text: '＋ 新建自定义类目' }));
+    const wordCatNew = el('input', { class: 'input', placeholder: '自定义类目名', style: { width: '140px' } });
+    const wordsTa = el('textarea', { class: 'input', rows: 3, placeholder: '每行一个词' });
+    const refreshMod = () => { try { api.get('/api/admin/security/moderation').then(d => {
+      mcfg = d.config || mcfg; mstats = d.stats || mstats;
+      catWrap.replaceChildren(...(mstats.categories || []).map(c => catItem(c)));
+    }); } catch {} };
+    const modCard = el('div', { class: 'card' },
+      el('h3', { text: '内容合规审核' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '所有节目在写入、提交审批、下发三道环节都会被机器审核，命中违规词 / 引流 / 外链会拦截或强制人工复核，从源头杜绝不良内容上屏。' }),
+      field('启用内容审核', modEnabled),
+      field('网页组件 URL 白名单（仅允许嵌入这些域名）', urlWhitelistTa),
+      isAdmin ? el('div', { style: { margin: '10px 0' } }, el('button', { class: 'btn primary', onclick: async () => {
+        try { await api.post('/api/admin/security/moderation/config', { enabled: modEnabled.checked, urlWhitelist: urlWhitelistTa.value.split('\n').map(s => s.trim()).filter(Boolean) }); toast('合规设置已保存', 'ok'); } catch (e) { toast(e.message, 'err'); }
+      } }, '保存合规设置')) : el('div', { class: 'sub', text: '（需要 system:setting 权限）' }),
+      el('div', { style: { margin: '14px 0 6px' } }, el('b', { text: '敏感词类目（' + (mstats.totalWords || 0) + ' 词 / ' + (mstats.categories || []).length + ' 类）' })),
+      catWrap,
+      isAdmin ? el('div', { class: 'mod-words', style: { marginTop: '14px' } },
+        el('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          el('span', { text: '类目' }), wordCat, wordCatNew, el('span', { text: '词（每行一个）' })),
+        wordsTa,
+        el('div', { class: 'row', style: { marginTop: '8px', gap: '8px' } },
+          el('button', { class: 'btn primary', onclick: async () => {
+            const cat = wordCat.value === 'custom' ? wordCatNew.value.trim() : wordCat.value;
+            if (!cat) return toast('请选择或填写类目', 'err');
+            try { const d = await api.post('/api/admin/security/moderation/words', { category: cat, action: 'add', words: wordsTa.value.split('\n').map(s => s.trim()).filter(Boolean) }); toast('已新增 ' + d.count + ' 词', 'ok'); wordsTa.value = ''; refreshMod(); } catch (e) { toast(e.message, 'err'); }
+          } }, '新增词'),
+          el('button', { class: 'btn', onclick: async () => {
+            const cat = wordCat.value === 'custom' ? wordCatNew.value.trim() : wordCat.value;
+            if (!cat) return toast('请选择或填写类目', 'err');
+            try { const d = await api.post('/api/admin/security/moderation/words', { category: cat, action: 'remove', words: wordsTa.value.split('\n').map(s => s.trim()).filter(Boolean) }); toast('已移除 ' + d.count + ' 词', 'ok'); wordsTa.value = ''; refreshMod(); } catch (e) { toast(e.message, 'err'); }
+          } }, '移除词'),
+        ),
+      ) : null,
+    );
+
+    /* 6. 试审沙盒 */
+    const testTa = el('textarea', { class: 'input', rows: 3, placeholder: '粘贴一段文本或链接，测试会被如何处置（不上屏、不入库）' });
+    const testOut = el('div', {});
+    const testCard = el('div', { class: 'card' },
+      el('h3', { text: '合规试审（沙盒）' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '输入文本或链接，查看审核引擎会给出什么处置，用于验证词库与规则。' }),
+      testTa,
+      canModerate ? el('div', { style: { marginTop: '8px' } }, el('button', { class: 'btn', onclick: async () => {
+        const v = testTa.value.trim(); if (!v) return;
+        testOut.replaceChildren(el('div', { class: 'sub' }, el('span', { class: 'spin' }), ' 检测中...'));
+        try {
+          const isUrl = /^https?:\/\//i.test(v);
+          const d = await api.post('/api/admin/security/moderation/test', isUrl ? { url: v } : { text: v });
+          const r = isUrl ? d.url : d.text;
+          const tone = ({ block: 'danger', review: 'warn', warn: 'warn', pass: 'ok' }[r?.level] || '');
+          testOut.replaceChildren(
+            el('div', { class: 'badge ' + tone, text: '处置：' + ({ block: '拒绝入库', review: '需人工复核', warn: '提示', pass: '通过' }[r?.level] || r?.level) }),
+            el('div', { class: 'sub', style: { marginTop: '6px' }, text: r?.summary || '未发现违规' }),
+          );
+        } catch (e) { testOut.replaceChildren(empty(e.message)); }
+      } }, '试审')) : el('div', { class: 'sub', text: '（需要 layout:view 权限）' }),
+      testOut,
+    );
+
+    /* 7. 待复核清单 */
+    const pendingWrap = el('div', {});
+    const loadPending = async () => {
+      try {
+        const d = await api.get('/api/admin/security/moderation/pending');
+        if (!d.items || !d.items.length) { pendingWrap.replaceChildren(empty('没有待复核的内容')); return; }
+        pendingWrap.replaceChildren(el('table', { class: 'tbl' },
+          el('thead', {}, el('tr', {}, el('th', { text: '节目' }), el('th', { text: '类型' }), el('th', { text: '命中' }), el('th', { text: '审批状态' }))),
+          el('tbody', {}, ...d.items.map(it => el('tr', {},
+            el('td', { text: it.name || it.id }), el('td', { text: it.type || '-' }),
+            el('td', {}, el('span', { class: 'badge warn', text: (it.hitCount || 0) + ' 处' })),
+            el('td', { text: it.approvalState || '-' }),
+          ))),
+        ));
+      } catch (e) { pendingWrap.replaceChildren(empty(e.message)); }
+    };
+    const pendingCard = el('div', { class: 'card' },
+      el('h3', { text: '待人工复核清单' }),
+      el('p', { class: 'sub', style: { marginBottom: '12px' }, text: '被标记为「需人工复核」的节目，在复核确认前不可下发到大屏。' }),
+      pendingWrap,
+      canModerate ? el('div', { style: { marginTop: '8px' } }, el('button', { class: 'btn', onclick: loadPending }, '刷新清单')) : null,
+    );
+    if (canModerate) loadPending();
+
+    const view = el('div', { class: 'page-security' },
+      pageHead('安全中心', isAdmin ? null : el('span', { class: 'badge', text: '只读' })),
+      el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', { text: '安全态势概览' }), postureCards),
+      el('div', { class: 'grid-2' }, networkCard, banCard),
+      chainCard,
+      el('div', { class: 'grid-2' }, modCard, testCard),
+      pendingCard,
+    );
+    box.replaceWith(view);
+  })();
+  return box;
+}
+
 export const views = {
+  security: renderSecurity,
   dashboard: renderDashboard,
   terminals: renderTerminals,
   media: renderMedia,

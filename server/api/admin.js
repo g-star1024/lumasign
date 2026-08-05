@@ -17,6 +17,7 @@ import {
 import { buildManifest, detectConflicts, MODE_PRIORITY } from '../lib/schedule.js';
 import { lanIPs, primaryIP } from '../lib/discovery.js';
 import { builtinTemplates } from '../lib/seed.js';
+import { sniffFile, passwordStrength } from '../lib/security.js';
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mkv|avi|flv|ts|mov|m4v)$/i;
@@ -28,7 +29,7 @@ const mediaKind = name =>
   : AUDIO_EXT.test(name) ? 'audio' : DOC_EXT.test(name) ? 'doc' : 'other';
 
 export function registerAdminApi(router, ctx) {
-  const { store, auth, bus, logger, paths } = ctx;
+  const { store, auth, bus, logger, paths, moderator } = ctx;
   const S = n => store.col(n);
   const settings = () => S('settings').byId('settings');
 
@@ -39,6 +40,27 @@ export function registerAdminApi(router, ctx) {
     if (perm && !auth.can(user, perm)) return fail(res, '没有权限执行此操作', 403);
     return handler(req, res, params, url, user);
   };
+
+  /* ================= 内容合规守卫 =================
+   * 三道闸：写入(create/update) → 提审(submit/approve) → 下发(publish)。
+   * 之所以每道都查，是因为攻击者可能绕过 UI 直接调 API：先存一份干净草稿，
+   * 再用 PUT 改内容、或直接改磁盘 JSON。只有在「下发前」也查一次，才真正挡得住。
+   */
+  const moderateLayout = (layoutLike, user, scene) => {
+    if (!moderator) return { ok: true, level: 'pass', hits: [] };
+    const r = moderator.checkLayout(layoutLike);
+    moderator.audit(r, { user, scene, targetId: layoutLike?.id, targetName: layoutLike?.name });
+    return r;
+  };
+  /** 命中 BLOCK 时统一的拒绝响应（带命中明细，方便运营自查） */
+  const blockedResponse = (res, r, scene) => json(res, {
+    ok: false,
+    error: `内容合规检查未通过（${scene}）：${r.summary}`,
+    moderation: {
+      level: r.level,
+      hits: r.hits.slice(0, 20).map(h => ({ label: h.label, word: h.word, where: h.where || '' })),
+    },
+  }, 422);
 
   /* ================= 认证 ================= */
   router.post('/api/auth/login', async (req, res) => {
@@ -375,6 +397,33 @@ export function registerAdminApi(router, ctx) {
     const out = [];
     for (const f of parsed.files) {
       try {
+        /* 安全闸：只信文件头，不信扩展名与 Content-Type。
+           典型攻击：把含 <script> 的 HTML 改名为 .jpg 上传，再用「网页组件」引用 → XSS 直达大屏。
+           同时挡住 SVG（可内嵌脚本，本系统一律不收为素材）。 */
+        const sniff = sniffFile(f.tmpPath, {
+          allow: ['jpg', 'png', 'gif', 'bmp', 'webp', 'mp4', 'webm', 'avi', 'flv', 'mkv', 'mp3', 'wav', 'pdf'],
+        });
+        if (!sniff.ok) {
+          try { fs.unlinkSync(f.tmpPath); } catch {}
+          logger.audit({
+            action: 'upload_rejected', userId: user.id, username: user.username,
+            target: f.filename, reason: sniff.reason,
+          });
+          out.push({ name: f.filename, error: sniff.reason });
+          continue;
+        }
+        // 文件名本身也可能是攻击载体（回显到管理端列表）→ 过合规 + 去掉危险字符
+        const safeName = String(f.filename).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 120);
+        if (moderator) {
+          const nameCheck = moderator.check(safeName, { scene: 'name' });
+          if (!nameCheck.ok) {
+            try { fs.unlinkSync(f.tmpPath); } catch {}
+            moderator.audit(nameCheck, { user, scene: '素材文件名', targetName: safeName });
+            out.push({ name: safeName, error: `文件名未通过合规检查：${nameCheck.summary}` });
+            continue;
+          }
+        }
+
         const buf = fs.readFileSync(f.tmpPath);
         const hash = crypto.createHash('sha256').update(buf).digest('hex');
         const exist = S('media').findOne(m => m.hash === hash);
@@ -383,17 +432,18 @@ export function registerAdminApi(router, ctx) {
           out.push({ ...exist, duplicated: true });
           continue;
         }
-        const ext = path.extname(f.filename) || '';
+        // 扩展名以「嗅探结果」为准，而不是用户提供的原始扩展名
+        const ext = '.' + sniff.ext;
         const rel = path.join(hash.slice(0, 2), hash + ext);
         const dest = path.join(paths.media, rel);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(f.tmpPath, dest);
 
         const row = S('media').insert({
-          id: uid('m_'), name: f.filename, hash, ext,
+          id: uid('m_'), name: safeName, hash, ext,
           rel: rel.split(path.sep).join('/'),
-          size: f.size, mime: f.mime || mimeOf(f.filename),
-          kind: mediaKind(f.filename), folderId,
+          size: f.size, mime: sniff.mime,
+          kind: mediaKind(ext), folderId,
           duration: null, width: null, height: null, pages: null,
           uploadedBy: user.id, refCount: 0,
         });
@@ -476,6 +526,11 @@ export function registerAdminApi(router, ctx) {
   router.post('/api/layouts', guard('layout:edit', async (req, res, p, u, user) => {
     const b = await readJson(req);
     const lv = settings().approvalLevel || 0;
+
+    // 闸一：写入拦截
+    const mod = moderateLayout(b, user, '新建节目');
+    if (!mod.ok) return blockedResponse(res, mod, '新建节目');
+
     const row = S('layouts').insert({
       id: uid('l_'),
       name: b.name || '未命名节目',
@@ -488,10 +543,12 @@ export function registerAdminApi(router, ctx) {
       background: b.background || { color: '#000000', mediaId: null },
       regions: b.regions || [{ id: 'r_1', name: '主区', x: 0, y: 0, w: b.width || 1920, h: b.height || 1080, z: 1, loop: true, transition: 'fade', items: [] }],
       approval: { state: lv === 0 ? 'approved' : 'draft', level: lv, records: [] },
+      // 命中 review 级 → 即使系统设为"免审批"，该节目也必须人工复核
+      moderation: mod.hits.length ? { level: mod.level, summary: mod.summary, at: Date.now() } : null,
       createdBy: user.id,
     });
     logger.change(user, 'layout_create', row.id, null, row, req);
-    ok(res, { item: row });
+    ok(res, { item: row, moderation: mod.hits.length ? mod : undefined });
   }));
 
   router.put('/api/layouts/:id', guard('layout:edit', async (req, res, { id }, u, user) => {
@@ -500,6 +557,12 @@ export function registerAdminApi(router, ctx) {
     if (!before) return fail(res, '节目不存在', 404);
     if (before.builtin) return fail(res, '内置模板不可修改，请先「另存为」');
     const lv = settings().approvalLevel || 0;
+
+    // 闸一：写入拦截（合并后再查，避免只改一个字段时漏检）
+    const merged = { ...before, name: b.name ?? before.name, regions: b.regions ?? before.regions };
+    const mod = moderateLayout(merged, user, '编辑节目');
+    if (!mod.ok) return blockedResponse(res, mod, '编辑节目');
+
     // 内容变更后需重新审批
     const contentChanged = JSON.stringify(before.regions) !== JSON.stringify(b.regions ?? before.regions);
     const patch = {
@@ -514,10 +577,11 @@ export function registerAdminApi(router, ctx) {
     };
     if (contentChanged && lv > 0)
       patch.approval = { state: 'draft', level: lv, records: before.approval?.records || [] };
+    patch.moderation = mod.hits.length ? { level: mod.level, summary: mod.summary, at: Date.now() } : null;
     const row = S('layouts').update(id, patch);
     logger.change(user, 'layout_update', id, before, row, req);
     notifyLayoutChanged(id);
-    ok(res, { item: row });
+    ok(res, { item: row, moderation: mod.hits.length ? mod : undefined });
   }));
 
   router.post('/api/layouts/:id/duplicate', guard('layout:edit', async (req, res, { id }, u, user) => {
@@ -558,6 +622,11 @@ export function registerAdminApi(router, ctx) {
     if (lv === 0) return fail(res, '当前系统设置为「不审批」，节目可直接发布');
     const approval = l.approval || { records: [] };
     if (approval.state === 'pending') return fail(res, '该节目已在待审批状态，请勿重复提交');
+
+    // 闸二：提审前全量复检（防"先存干净草稿、再改内容"绕过）
+    const mod = moderateLayout(l, user, '提交审批');
+    if (!mod.ok) return blockedResponse(res, mod, '提交审批');
+
     const prev = approval.state;
     approval.state = 'pending';
     approval.level = lv;
@@ -581,6 +650,20 @@ export function registerAdminApi(router, ctx) {
     const approval = l.approval || { records: [], level: 1, currentStep: 1 };
     if (approval.state !== 'pending') return fail(res, '该节目当前不在待审批状态');
     const pass = b.pass !== false;
+
+    // 闸二：审批通过前再检一次 —— 审批通过就等于放行上屏，这是最后的机器防线
+    if (pass) {
+      const mod = moderateLayout(l, user, '审批放行');
+      if (!mod.ok) return blockedResponse(res, mod, '审批放行');
+      if (mod.needReview && !b.confirmModeration) {
+        return json(res, {
+          ok: false, needConfirm: true,
+          error: `内容存在待复核项，请确认后再放行：${mod.summary}`,
+          moderation: { level: mod.level, hits: mod.hits.slice(0, 20) },
+        }, 409);
+      }
+    }
+
     approval.records = [...(approval.records || []), {
       at: Date.now(), by: user.id, byName: user.name,
       action: pass ? 'approve' : 'reject', step: approval.currentStep || 1, comment: b.comment || '',
@@ -716,6 +799,13 @@ export function registerAdminApi(router, ctx) {
     const l = S('layouts').byId(s.layoutId);
     if (l?.approval && l.approval.state !== 'approved')
       return fail(res, '该节目尚未通过审批，无法发布');
+
+    // 闸三：下发前最后复检 —— 哪怕数据被人直接改过磁盘 JSON，也过不去这一关
+    if (l) {
+      const mod = moderateLayout(l, user, '排期发布');
+      if (!mod.ok) return blockedResponse(res, mod, '排期发布');
+    }
+
     S('schedules').update(id, { enabled: true, publishedAt: Date.now(), publishedBy: user.id });
     const n = pushToTargets(s);
     logger.audit({ action: 'schedule_publish', userId: user.id, username: user.username, target: id, terminals: n });
@@ -981,11 +1071,14 @@ function publicUser(u, auth) {
   const { password, _sid, ...rest } = u;
   return { ...rest, perms: auth.permsOf(u) };
 }
+/**
+ * 密码强度校验：委托给 security.js 的统一实现。
+ * 除长度/字符类别外，还挡住 admin123 / lumasign 这类"部署后没改的默认口令"——
+ * 实战里绝大多数标牌系统被拿下，都是死在这上面。
+ */
 function checkPasswordStrength(pw) {
-  if (!pw || pw.length < 8) return '密码至少 8 位';
-  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) return '密码需同时包含字母和数字';
-  if (/^(.)\1+$/.test(pw)) return '密码过于简单';
-  return null;
+  const r = passwordStrength(pw);
+  return r.ok ? null : `密码不符合安全要求：${r.issues.join('；')}`;
 }
 function decorateTerminal(t, threshold, bus) {
   const now = Date.now();
