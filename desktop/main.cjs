@@ -11,6 +11,7 @@
 const { app, BrowserWindow, Tray, Menu, shell, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { pathToFileURL } = require('node:url');
 
 const isWin = process.platform === 'win32';
 const isPackaged = app.isPackaged;
@@ -88,8 +89,8 @@ function createTray() {
 
 /* ---------------- 启动服务端（同进程） ---------------- */
 async function startServer() {
-  // 用 path.resolve 构建绝对路径：开发态从 desktop/ 回到项目根，打包后在 asar 内正确解析
-  const serverEntry = path.resolve(__dirname, '..', 'server', 'server.js');
+  // 用 pathToFileURL 转 file:// 协议：ESM 动态 import 只接受 file:/data: URL，不接受裸路径
+  const serverEntry = pathToFileURL(path.resolve(__dirname, '..', 'server', 'server.js')).href;
   const { init } = await import(serverEntry);
   // 监听 0.0.0.0：本地窗口用 127.0.0.1 访问；局域网安卓设备也能连接注册/发现
   serverApi = await init({ dataDir: DATA_DIR, port: PORT, adbPath: ADB_PATH, host: '0.0.0.0' });
