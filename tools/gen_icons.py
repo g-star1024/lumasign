@@ -242,10 +242,10 @@ def makedirs(p):
 
 def main():
     # ---- Windows / macOS ----
-    bdir = os.path.join(ROOT, 'desktop', 'build')
-    makedirs(bdir)
-    write_ico(os.path.join(bdir, 'icon.ico'), [16, 32, 48, 64, 128, 256])
-    write_icns(os.path.join(bdir, 'icon.icns'), [16, 32, 64, 128, 256, 512, 1024])
+    ddir = os.path.join(ROOT, 'desktop')
+    makedirs(ddir)
+    write_ico(os.path.join(ddir, 'icon.ico'), [16, 32, 48, 64, 128, 256])
+    write_icns(os.path.join(ddir, 'icon.icns'), [16, 32, 64, 128, 256, 512, 1024])
     write_png(os.path.join(ROOT, 'desktop', 'tray.png'), render('full', 32), 32, 32)
 
     # ---- Android 传统多密度 ----

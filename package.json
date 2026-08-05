@@ -33,11 +33,11 @@
     "mac": {
       "category": "public.app-category.business",
       "target": ["dmg", "zip"],
-      "icon": "desktop/build/icon.icns"
+      "icon": "desktop/icon.icns"
     },
     "win": {
       "target": ["nsis", "zip"],
-      "icon": "desktop/build/icon.ico"
+      "icon": "desktop/icon.ico"
     }
   },
   "engines": {
