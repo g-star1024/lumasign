@@ -88,7 +88,9 @@ function createTray() {
 
 /* ---------------- 启动服务端（同进程） ---------------- */
 async function startServer() {
-  const { init } = await import('../server/server.js');
+  // 用 path.resolve 构建绝对路径：开发态从 desktop/ 回到项目根，打包后在 asar 内正确解析
+  const serverEntry = path.resolve(__dirname, '..', 'server', 'server.js');
+  const { init } = await import(serverEntry);
   // 监听 0.0.0.0：本地窗口用 127.0.0.1 访问；局域网安卓设备也能连接注册/发现
   serverApi = await init({ dataDir: DATA_DIR, port: PORT, adbPath: ADB_PATH, host: '0.0.0.0' });
   await serverApi.ready;
