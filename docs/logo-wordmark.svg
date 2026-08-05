@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="800" height="200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="content" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark -->
+  <g transform="translate(10,10)">
+    <rect width="180" height="180" rx="39" fill="url(#bg)"/>
+    <rect x="29" y="29" width="122" height="122" rx="16" fill="#FFFFFF"/>
+    <rect x="54" y="54" width="72" height="72" rx="9" fill="url(#content)"/>
+    <rect x="69" y="85" width="42" height="9" rx="4.5" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="210" y="95" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display','PingFang SC','Microsoft YaHei',sans-serif" font-size="52" font-weight="700" fill="#111111">LumaSign</text>
+  <text x="210" y="138" font-family="'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif" font-size="28" font-weight="500" fill="#666666">灵屏 · 局域网数字标牌管理系统</text>
+</svg>

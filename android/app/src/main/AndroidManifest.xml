@@ -26,7 +26,8 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="灵屏播放端"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"

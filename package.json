@@ -32,10 +32,12 @@
     "asar": true,
     "mac": {
       "category": "public.app-category.business",
-      "target": ["dmg", "zip"]
+      "target": ["dmg", "zip"],
+      "icon": "desktop/build/icon.icns"
     },
     "win": {
-      "target": ["nsis", "zip"]
+      "target": ["nsis", "zip"],
+      "icon": "desktop/build/icon.ico"
     }
   },
   "engines": {
