@@ -36,7 +36,7 @@ jobs:
           cache: 'npm'
 
       - name: Install desktop dependencies
-        run: npm install --save-dev electron@26.6.10 electron-builder@24.6.4
+        run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
         working-directory: ${{ github.workspace }}
 
       - name: Build Windows installer
@@ -71,18 +71,18 @@ jobs:
           cache: 'npm'
 
       - name: Install desktop dependencies
-        run: npm install --save-dev electron@26.6.10 electron-builder@24.6.4
+        run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
         working-directory: ${{ github.workspace }}
 
       - name: Build macOS app (Intel)
-        run: npx electron-builder --mac x64 --publish never
+        run: npx electron-builder --mac --x64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
         working-directory: ${{ github.workspace }}
 
       - name: Build macOS app (Apple Silicon)
-        run: npx electron-builder --mac arm64 --publish never
+        run: npx electron-builder --mac --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
