@@ -482,6 +482,14 @@ tbody tr:hover { background: var(--hover); }
 .t-badge.w { background:var(--c-warning-soft); color:var(--c-warning); }
 .t-badge.d { background:var(--c-danger-soft); color:var(--c-danger); }
 
+/* 生命周期页专用 */
+.t-grid-2 { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px 18px; align-items:start; }
+.t-check { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--c-text-2); cursor:pointer; }
+.t-check input { width:16px; height:16px; accent-color:var(--c-primary); }
+.t-sub { color:var(--c-text-3); font-size:13px; margin:4px 0 0; line-height:1.6; }
+.t-dnote { color:var(--c-text-3); font-size:12px; margin-top:4px; margin-bottom:8px; word-break:break-all; }
+
+
 /* 弹窗内的输入/标签（modal 不在 page 作用域内，故为全局并自带 token 兜底） */
 .t-input { height:36px; padding:0 10px; border-radius:var(--c-radius-md); border:1px solid var(--c-border); background:var(--c-surface); font-size:13px; color:var(--c-text); font-family:var(--c-font); width:100%; box-sizing:border-box; outline:none; transition:border-color .15s, box-shadow .15s; }
 .t-input:focus { border-color:var(--c-primary); box-shadow:0 0 0 3px var(--c-primary-soft); }

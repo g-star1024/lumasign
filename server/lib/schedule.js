@@ -6,6 +6,8 @@
  *  - insert    实时插播：临时高优先级插入，播完回落
  *  - exclusive 独占播放：命中时段内独占屏幕，屏蔽其他所有节目
  */
+import { isPlayable, windowForManifest } from './lifecycle.js';
+
 export const MODE_PRIORITY = { default: 0, cycle: 10, insert: 20, exclusive: 30 };
 
 const pad = n => String(n).padStart(2, '0');
@@ -36,6 +38,16 @@ export function hits(sch, when = new Date()) {
   }
   // 实时插播的有效期
   if (sch.mode === 'insert' && sch.expireAt && Date.now() > sch.expireAt) return false;
+  // 内容有效期：兼容排期文档（validFrom/validUntil）与下发清单（validity）两种形态
+  const now = when instanceof Date ? when.getTime() : Date.now();
+  if (sch.validity) {
+    if (sch.validity.from != null && now < sch.validity.from) return false;
+    if (sch.validity.until != null && now > sch.validity.until) return false;
+  } else if (!isPlayable(sch, now)) return false;
+  if (sch.layoutValidity) {
+    if (sch.layoutValidity.from != null && now < sch.layoutValidity.from) return false;
+    if (sch.layoutValidity.until != null && now > sch.layoutValidity.until) return false;
+  }
   return true;
 }
 
@@ -62,6 +74,7 @@ export function buildManifest(store, terminal) {
   const media = store.col('media');
   const list = schedulesForTerminal(store, terminal);
 
+  const now = Date.now();
   const out = [], assetMap = new Map();
   const collectAssets = layout => {
     for (const r of layout.regions || []) {
@@ -85,10 +98,20 @@ export function buildManifest(store, terminal) {
   };
 
   for (const s of list) {
-    const layout = layouts.byId(s.layoutId);
-    if (!layout) continue;
+    // 闸一：排期本身的有效期
+    if (!isPlayable(s, now)) continue;
+
+    const raw = layouts.byId(s.layoutId);
+    if (!raw) continue;
     // 只下发审批通过的节目
-    if (layout.approval && layout.approval.state !== 'approved') continue;
+    if (raw.approval && raw.approval.state !== 'approved') continue;
+    // 闸二：节目的有效期
+    if (!isPlayable(raw, now)) continue;
+
+    // 闸三：剔除已过期的素材项（节目还有效，但里面某张促销海报过期了）
+    const layout = stripExpiredItems(raw, media, now);
+    if (isLayoutEmpty(layout)) continue;
+
     collectAssets(layout);
     out.push({
       scheduleId: s.id,
@@ -99,12 +122,63 @@ export function buildManifest(store, terminal) {
       weekdays: s.weekdays || null,
       timeSlots: s.timeSlots || null,
       expireAt: s.expireAt || null,
+      // 绝对时间戳有效期：终端断网时靠这个自行下线，不依赖服务端推送
+      validity: windowForManifest(s),
+      layoutValidity: windowForManifest(raw),
       order: s.order || 0,
       layout,
     });
   }
   out.sort((a, b) => b.priority - a.priority || a.order - b.order);
   return { schedules: out, assets: [...assetMap.values()] };
+}
+
+/**
+ * 剔除节目里已过期的素材项，并给保留项打上有效期戳（终端本地兜底用）。
+ * 不修改原对象——store 里存的是引用，改了就把数据写脏了。
+ */
+function stripExpiredItems(layout, media, now) {
+  let touched = false;
+  const regions = (layout.regions || []).map(r => {
+    const items = (r.items || []).filter(it => {
+      if (!it.mediaId) return true;                       // 纯组件项（文字/时钟/天气）不受素材有效期约束
+      const m = media.byId(it.mediaId);
+      if (!m) return true;                                // 素材缺失走原有兜底逻辑，不在这里砍
+      if (!isPlayable(m, now)) { touched = true; return false; }
+      return true;
+    }).map(it => {
+      const w = it.mediaId ? windowForManifest(media.byId(it.mediaId)) : null;
+      const own = windowForManifest(it);
+      const merged = mergeWindow(w, own);
+      if (!merged) return it;
+      touched = true;
+      return { ...it, validity: merged };
+    });
+    if (items.length === (r.items || []).length && !touched) return r;
+    return { ...r, items };
+  });
+  // 背景素材过期则回落纯色，不能让屏上出现破图
+  let background = layout.background;
+  if (background?.mediaId) {
+    const bm = media.byId(background.mediaId);
+    if (bm && !isPlayable(bm, now)) { background = { ...background, mediaId: null }; touched = true; }
+  }
+  if (!touched) return layout;
+  return { ...layout, regions, background };
+}
+
+/** 取两个时间窗的交集：素材有效期 ∩ 项自身有效期 */
+function mergeWindow(a, b) {
+  if (!a && !b) return null;
+  if (!a) return b;
+  if (!b) return a;
+  const from = (a.from == null) ? b.from : (b.from == null ? a.from : Math.max(a.from, b.from));
+  const until = (a.until == null) ? b.until : (b.until == null ? a.until : Math.min(a.until, b.until));
+  return { from, until };
+}
+
+function isLayoutEmpty(layout) {
+  return !(layout.regions || []).some(r => (r.items || []).length > 0);
 }
 
 /** 排期冲突检测：同优先级同时段的独占冲突 */

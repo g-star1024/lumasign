@@ -30,6 +30,7 @@ import { startDiscovery, primaryIP, lanIPs } from './lib/discovery.js';
 import { seed } from './lib/seed.js';
 import { Inventory } from './lib/inventory.js';
 import { Moderator } from './lib/moderation.js';
+import { Lifecycle } from './lib/lifecycle.js';
 import {
   applySecurityHeaders, ApiGuard, AuditChain, csrfGuard, lanOnlyGuard, ipListGuard, clientIp,
 } from './lib/security.js';
@@ -38,6 +39,7 @@ import { registerTerminalApi } from './api/terminal.js';
 import { registerFleetApi } from './api/fleet.js';
 import { registerNetscanApi } from './api/netscan.js';
 import { registerSecurityApi } from './api/security.js';
+import { registerLifecycleApi } from './api/lifecycle.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,6 +115,11 @@ async function init(opts = {}) {
   ctx.inventory = inventory;
   inventory.start();
 
+  /* 内容生命周期：有效期到点自动下线 + 归档 + 提醒 */
+  const lifecycle = new Lifecycle(ctx);
+  ctx.lifecycle = lifecycle;
+  lifecycle.start();
+
   /* ---------------- 路由注册 ---------------- */
   const router = new Router();
   registerAdminApi(router, ctx);
@@ -120,6 +127,7 @@ async function init(opts = {}) {
   registerFleetApi(router, ctx);
   registerNetscanApi(router, ctx);
   registerSecurityApi(router, ctx);
+  registerLifecycleApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {
@@ -304,6 +312,7 @@ async function init(opts = {}) {
     try { disc.close(); } catch { /* ignore */ }
     try { clearInterval(refreshTimer); } catch { /* ignore */ }
     try { inventory.stop(); } catch { /* ignore */ }
+    try { lifecycle.stop(); } catch { /* ignore */ }
     store.flushAll();
     logger.flush();
     try { auditChain.flush(); } catch { /* ignore */ }

@@ -13,6 +13,7 @@ const NAV = [
     { id: 'layouts', label: '节目制作', icon: '◳', perm: 'layout:view', hash: '#/layouts' },
     { id: 'approvals', label: '审批中心', icon: '✔', perm: 'layout:view', hash: '#/approvals' },
     { id: 'schedules', label: '排期下发', icon: '▤', perm: 'schedule:view', hash: '#/schedules' },
+    { id: 'lifecycle', label: '内容生命周期', icon: '⧗', perm: 'media:view', hash: '#/lifecycle' },
     { id: 'monitor', label: '监看墙', icon: '◫', perm: 'terminal:view', hash: '#/monitor' },
   ] },
   { group: '系统', items: [

@@ -15,6 +15,7 @@ import {
   PERMISSIONS, ALL_PERMS,
 } from '../lib/auth.js';
 import { buildManifest, detectConflicts, MODE_PRIORITY } from '../lib/schedule.js';
+import { validityOf } from '../lib/lifecycle.js';
 import { lanIPs, primaryIP } from '../lib/discovery.js';
 import { builtinTemplates } from '../lib/seed.js';
 import { sniffFile, passwordStrength } from '../lib/security.js';
@@ -27,6 +28,18 @@ const DOC_EXT = /\.(pdf|ppt|pptx|doc|docx|xls|xlsx)$/i;
 const mediaKind = name =>
   IMAGE_EXT.test(name) ? 'image' : VIDEO_EXT.test(name) ? 'video'
   : AUDIO_EXT.test(name) ? 'audio' : DOC_EXT.test(name) ? 'doc' : 'other';
+
+/** 给列表项附上生命周期状态（有效期看板 / 列表徽标用） */
+const withLifecycle = (doc) => {
+  const v = validityOf(doc);
+  return {
+    validFrom: doc.validFrom ?? doc.validTo ?? null,
+    validUntil: doc.validUntil ?? doc.validTo ?? null,
+    lifecycleState: v.state,
+    daysLeft: v.daysLeft,
+    archived: v.archived,
+  };
+};
 
 export function registerAdminApi(router, ctx) {
   const { store, auth, bus, logger, paths, moderator } = ctx;
@@ -386,6 +399,7 @@ export function registerAdminApi(router, ctx) {
     if (folderId) items = items.filter(m => m.folderId === folderId);
     if (q) items = items.filter(m => m.name.toLowerCase().includes(q));
     items = items.slice().sort((a, b) => b.createdAt - a.createdAt);
+    items = items.map(m => ({ ...m, ...withLifecycle(m) }));
     ok(res, { items, folders: S('mediaFolders').all() });
   }));
 
@@ -465,7 +479,11 @@ export function registerAdminApi(router, ctx) {
 
   router.put('/api/media/:id', guard('media:upload', async (req, res, { id }, u, user) => {
     const b = await readJson(req);
-    const row = S('media').update(id, { name: b.name, folderId: b.folderId ?? null });
+    const patch = { name: b.name, folderId: b.folderId ?? null };
+    // 有效期：显式传了才改，避免只改个名字把有效期清空
+    if ('validFrom' in b) patch.validFrom = b.validFrom || null;
+    if ('validUntil' in b) patch.validUntil = b.validUntil || null;
+    const row = S('media').update(id, patch);
     if (!row) return fail(res, '素材不存在', 404);
     logger.audit({ action: 'media_update', userId: user.id, target: id });
     ok(res, { item: row });
@@ -511,6 +529,7 @@ export function registerAdminApi(router, ctx) {
       createdAt: l.createdAt, updatedAt: l.updatedAt,
       usedBy: S('schedules').count(s => s.layoutId === l.id),
     })).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    items = items.map(l => ({ ...l, ...withLifecycle(l) }));
     ok(res, { items });
   }));
 
@@ -538,7 +557,7 @@ export function registerAdminApi(router, ctx) {
       width: b.width || 1920, height: b.height || 1080,
       orientation: (b.width || 1920) >= (b.height || 1080) ? 'landscape' : 'portrait',
       duration: b.duration || 0,
-      validFrom: b.validFrom || null, validTo: b.validTo || null,
+      validFrom: b.validFrom || null, validUntil: b.validUntil ?? b.validTo ?? null,
       playMode: b.playMode || 'default',
       background: b.background || { color: '#000000', mediaId: null },
       regions: b.regions || [{ id: 'r_1', name: '主区', x: 0, y: 0, w: b.width || 1920, h: b.height || 1080, z: 1, loop: true, transition: 'fade', items: [] }],
@@ -570,7 +589,8 @@ export function registerAdminApi(router, ctx) {
       width: b.width ?? before.width, height: b.height ?? before.height,
       orientation: (b.width ?? before.width) >= (b.height ?? before.height) ? 'landscape' : 'portrait',
       duration: b.duration ?? before.duration,
-      validFrom: b.validFrom ?? before.validFrom, validTo: b.validTo ?? before.validTo,
+      validFrom: b.validFrom ?? before.validFrom,
+      validUntil: b.validUntil ?? b.validTo ?? before.validUntil ?? before.validTo ?? null,
       playMode: b.playMode ?? before.playMode,
       background: b.background ?? before.background,
       regions: b.regions ?? before.regions,
@@ -744,6 +764,7 @@ export function registerAdminApi(router, ctx) {
   router.get('/api/schedules', guard('schedule:view', async (req, res) => {
     const items = S('schedules').all().map(s => ({
       ...s,
+      ...withLifecycle(s),
       layoutName: S('layouts').byId(s.layoutId)?.name || '（节目已删除）',
       targetCount: countTargets(s),
     })).sort((a, b) => (MODE_PRIORITY[b.mode] ?? 0) - (MODE_PRIORITY[a.mode] ?? 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -764,6 +785,7 @@ export function registerAdminApi(router, ctx) {
       weekdays: b.weekdays || [0, 1, 2, 3, 4, 5, 6],
       timeSlots: b.timeSlots || [['00:00', '24:00']],
       expireAt: b.expireAt || null,
+      validFrom: b.validFrom || null, validUntil: b.validUntil || null,
       transferMode: b.transferMode || 'now',   // now | at | plan
       transferAt: b.transferAt || null,
       enabled: b.enabled === true,   // 默认 false（草稿），需手动发布

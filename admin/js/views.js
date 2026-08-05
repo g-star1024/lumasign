@@ -9,6 +9,21 @@ const empty = t => el('div', { class: 'empty', text: t });
 const pageHead = (title, ...actions) => el('div', { class: 'page-head' },
   el('h1', { text: title }), el('div', { class: 'spacer' }), ...actions);
 
+/** 生命周期徽标：pending/active/expiring/expired/archived → 配色徽标
+ *  永久有效（无有效期且非归档）不显示，避免列表噪声。*/
+function lcBadge(state, daysLeft, validFrom, validUntil) {
+  if (state === 'archived') return el('span', { class: 't-badge off', text: '已归档' });
+  const hasWindow = validFrom || validUntil;
+  if (!hasWindow) return null;
+  const TONE = { pending: 'w', active: 's', expiring: 'w', expired: 'd' };
+  let label = '限时';
+  if (state === 'pending') label = '待生效';
+  else if (state === 'expiring' && daysLeft != null) label = `即将到期 ${Math.max(0, daysLeft)}天`;
+  else if (state === 'expired') label = '已过期';
+  else if (state === 'active') label = '限时';
+  return el('span', { class: `t-badge ${TONE[state] || 'off'}`, text: label });
+}
+
 /* ---------------- 仪表盘 ---------------- */
 async function renderDashboard() {
   const box = el('div', {}, spinner());
@@ -239,12 +254,14 @@ async function renderMedia() {
     const km = kindMeta[m.kind] || kindMeta.file;
     const thumb = el('div', { class: 'm-thumb' }, el('div', { class: 'ph', text: km.icon }));
     if (m.kind === 'image') thumb.style.backgroundImage = `url(/api/media/${m.id}/raw)`;
+    const badge = lcBadge(m.lifecycleState, m.daysLeft, m.validFrom, m.validUntil);
     return el('div', { class: 'm-card', onclick: () => openPreview(m) },
       thumb,
       el('div', { class: 'm-meta' },
         el('div', { class: 'm-name', text: m.name || m.id }),
         el('div', { class: 'm-sub', text: `${km.label} · ${fmtBytes(m.size || 0)}` }),
         el('span', { class: 'm-kind', text: km.label }),
+        badge ? el('span', { style: { marginLeft: '6px' } }, badge) : '',
       ),
     );
   }
@@ -326,6 +343,7 @@ async function renderLayouts() {
       el('td', { class: 'mono', text: `${l.width}×${l.height}` }),
       el('td', { text: l.orientation === 'portrait' ? '竖屏' : '横屏' }),
       el('td', {}, approvalBadge(l.approval?.state)),
+      el('td', {}, lcBadge(l.lifecycleState, l.daysLeft, l.validFrom, l.validUntil)),
       el('td', {},
         el('button', { class: 't-btn ghost', style: { height: '28px', padding: '0 10px', marginRight: '6px' }, onclick: () => { location.hash = `#/editor/${l.id}`; } }, '编辑'),
         can('layout:delete') ? el('button', { class: 't-btn ghost danger', style: { height: '28px', padding: '0 10px' }, onclick: async () => {
@@ -342,6 +360,7 @@ async function renderLayouts() {
         el('th', { text: '分辨率' }),
         el('th', { text: '方向' }),
         el('th', { text: '审批' }),
+        el('th', { text: '有效期' }),
         el('th', { text: '操作' }),
       )),
       el('tbody', {}, ...rows),
@@ -775,7 +794,7 @@ async function renderSchedules() {
   const modeLabel = { default: '默认', cycle: '周期', insert: '插播', exclusive: '独占' };
   const paint = () => {
     const table = el('table', {},
-      el('thead', {}, el('tr', {}, el('th', { text: '名称' }), el('th', { text: '节目' }), el('th', { text: '方式' }), el('th', { text: '审批' }), el('th', { text: '状态' }), el('th', { text: '' }))),
+      el('thead', {}, el('tr', {}, el('th', { text: '名称' }), el('th', { text: '节目' }), el('th', { text: '方式' }), el('th', { text: '审批' }), el('th', { text: '有效期' }), el('th', { text: '状态' }), el('th', { text: '' }))),
       el('tbody', {}, ...all.map(s => {
         const lo = layouts.find(l => l.id === s.layoutId);
         const ap = lo?.approval?.state;
@@ -788,6 +807,7 @@ async function renderSchedules() {
           el('td', { text: lo?.name || s.layoutId || '-' }),
           el('td', { text: modeLabel[s.mode] || s.mode }),
           el('td', {}, apBadge),
+          el('td', {}, lcBadge(s.lifecycleState, s.daysLeft, s.validFrom, s.validUntil)),
           el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '已发布' : '草稿' })),
           el('td', {},
             !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: async () => {
@@ -1525,6 +1545,232 @@ async function renderSecurity() {
   return box;
 }
 
+/* ---------------- 内容生命周期（有效期与自动下线） ---------------- */
+const TYPE_LABEL = { media: '素材', layouts: '节目', schedules: '排期' };
+function fmtDate(ms) {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function dateInput(value, placeholder) {
+  return el('input', { class: 't-input', type: 'date', value: value || '', placeholder: placeholder || '' });
+}
+
+async function renderLifecycle() {
+  const root = el('div', { class: 'page-lifecycle' });
+
+  const typeSel = el('select', { class: 't-select', onchange: reload },
+    el('option', { value: '', text: '全部类型' }),
+    el('option', { value: 'media', text: '素材' }),
+    el('option', { value: 'layouts', text: '节目' }),
+    el('option', { value: 'schedules', text: '排期' }),
+  );
+  const stateSel = el('select', { class: 't-select', onchange: reload },
+    el('option', { value: '', text: '全部状态' }),
+    el('option', { value: 'pending', text: '待生效' }),
+    el('option', { value: 'expiring', text: '即将到期' }),
+    el('option', { value: 'expired', text: '已过期' }),
+    el('option', { value: 'archived', text: '已归档' }),
+    el('option', { value: 'active', text: '生效中/限时' }),
+  );
+  const qInput = el('input', { class: 't-input', placeholder: '搜索名称…', oninput: debounce(reload, 300) });
+
+  const statsEl = el('div', { class: 't-stats' });
+  const cfgCard = el('div', { class: 't-card' });
+  const tableWrap = el('div', { class: 't-scroll t-card', style: { marginTop: '16px' } }, spinner());
+
+  let lastItems = [];
+
+  const debT = {};
+  function debounce(fn, ms) {
+    return (...a) => { clearTimeout(debT[fn]); debT[fn] = setTimeout(() => fn(...a), ms); };
+  }
+
+  function statCard(label, value, hint, tone) {
+    return el('div', { class: 't-stat' },
+      el('div', { class: 'label', text: label }),
+      el('div', { class: 'value', text: String(value) }),
+      hint ? el('div', { class: `hint ${tone || ''}`, text: hint }) : '',
+    );
+  }
+
+  function paintSummary(d) {
+    const b = d.buckets || {};
+    statsEl.innerHTML = '';
+    statsEl.append(
+      statCard('生效中', b.active || 0, '', 'g'),
+      statCard('即将到期', b.expiring || 0, '需关注', 'w'),
+      statCard('已过期', b.expired || 0, '已自动下线', 'd'),
+      statCard('已归档', b.archived || 0, '可恢复', ''),
+      statCard('待生效', b.pending || 0, '未到开始日', 'w'),
+      statCard('永久有效', b.none || 0, '无有效期', ''),
+    );
+  }
+
+  function paintConfig(c, defs) {
+    const enabled = el('input', { type: 'checkbox', checked: c.enabled ? 'checked' : null });
+    const autoArchive = el('input', { type: 'checkbox', checked: c.autoArchive ? 'checked' : null });
+    const warnDays = el('input', { class: 't-input', type: 'number', min: '0', max: '90', value: c.warnDays });
+    const sweep = el('input', { class: 't-input', type: 'number', min: '1', max: '1440', value: c.sweepMinutes });
+    const grace = el('input', { class: 't-input', type: 'number', min: '0', max: '365', value: c.archiveGraceDays });
+    const save = el('button', { class: 't-btn primary', onclick: async () => {
+      try {
+        await api.post('/api/admin/lifecycle/config', {
+          enabled: enabled.checked, autoArchive: autoArchive.checked,
+          warnDays: +warnDays.value, sweepMinutes: +sweep.value, archiveGraceDays: +grace.value,
+        });
+        toast('配置已保存', 'ok'); reload();
+      } catch (e) { toast(e.message, 'err'); }
+    } }, '保存配置');
+    cfgCard.innerHTML = '';
+    cfgCard.append(
+      el('div', { class: 't-title', style: { marginBottom: '12px' }, text: '生命周期策略' }),
+      el('div', { class: 't-grid-2' },
+        el('label', { class: 't-check' }, enabled, el('span', { text: '启用自动巡检与到期下线' })),
+        el('label', { class: 't-check' }, autoArchive, el('span', { text: '过期后自动归档（不删除）' })),
+        el('div', { class: 't-field' }, el('label', { text: '到期前提醒（天）' }), warnDays),
+        el('div', { class: 't-field' }, el('label', { text: '巡检间隔（分钟）' }), sweep),
+        el('div', { class: 't-field' }, el('label', { text: '过期后宽限（天，0=立即归档）' }), grace),
+      ),
+      el('div', { style: { marginTop: '14px' } }, save),
+    );
+  }
+
+  function paintTable() {
+    if (!lastItems.length) { tableWrap.innerHTML = ''; tableWrap.append(empty('没有符合条件的内容')); return; }
+    const rows = lastItems.map(it => el('tr', {},
+      el('td', {}, el('span', { class: 't-badge off', text: TYPE_LABEL[it.type] || it.type })),
+      el('td', { text: it.name }),
+      el('td', {}, lcBadge(it.state, it.daysLeft, it.from ? new Date(it.from).toISOString().slice(0, 10) : null, it.until ? new Date(it.until).toISOString().slice(0, 10) : null) || el('span', { text: '—' })),
+      el('td', { class: 'mono', text: fmtDate(it.from) }),
+      el('td', { class: 'mono', text: fmtDate(it.until) }),
+      el('td', { class: 'mono', text: it.daysLeft != null ? `${it.daysLeft} 天` : '—' }),
+      el('td', {}, rowActions(it)),
+    ));
+    tableWrap.innerHTML = '';
+    tableWrap.append(el('table', { class: 't-table' },
+      el('thead', {}, el('tr', {},
+        el('th', { text: '类型' }), el('th', { text: '名称' }), el('th', { text: '状态' }),
+        el('th', { text: '生效' }), el('th', { text: '失效' }), el('th', { text: '剩余' }), el('th', { text: '操作' }),
+      )),
+      el('tbody', {}, ...rows),
+    ));
+  }
+
+  function rowActions(it) {
+    const acts = [];
+    if (can('media:upload')) {
+      acts.push(el('button', { class: 't-btn ghost', style: { height: '28px', padding: '0 8px', marginRight: '4px' }, onclick: () => openSetModal(it) }, '设有效期'));
+    }
+    if (it.state === 'archived') {
+      if (can('media:upload')) acts.push(el('button', { class: 't-btn ghost', style: { height: '28px', padding: '0 8px' }, onclick: () => openRestoreModal(it) }, '恢复'));
+    } else {
+      if (can('media:upload')) acts.push(el('button', { class: 't-btn ghost danger', style: { height: '28px', padding: '0 8px' }, onclick: async () => {
+        if (await confirmModal({ title: '归档', body: `确认归档「${esc(it.name)}」？归档后停止播放，可随时恢复。`, danger: true })) {
+          try { await api.post('/api/admin/lifecycle/archive', { type: it.type, id: it.id }); toast('已归档', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
+        }
+      } }, '归档'));
+    }
+    return acts;
+  }
+
+  function openSetModal(it) {
+    const from = it.from ? new Date(it.from).toISOString().slice(0, 10) : '';
+    const until = it.until ? new Date(it.until).toISOString().slice(0, 10) : '';
+    const fIn = dateInput(from), uIn = dateInput(until);
+    const box = el('div', {},
+      el('h2', { text: `设置有效期 · ${TYPE_LABEL[it.type] || it.type}` }),
+      el('div', { class: 't-dnote', text: it.name }),
+      el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '生效日期（留空=永久生效）' }), fIn),
+      el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '失效日期（留空=永久有效，纯日期=当日 23:59:59 止）' }), uIn),
+      el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
+        el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
+        el('button', { class: 't-btn primary', onclick: async () => {
+          try {
+            await api.post('/api/admin/lifecycle/set', { type: it.type, id: it.id, validFrom: fIn.value || null, validUntil: uIn.value || null });
+            toast('有效期已更新，终端将自动重新拉取', 'ok'); document.querySelector('.modal-mask')?._close?.(); reload();
+          } catch (e) { toast(e.message, 'err'); }
+        } }, '保存'),
+      ),
+    );
+    openModal(box);
+  }
+
+  function openRestoreModal(it) {
+    const uIn = dateInput(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+    const box = el('div', {},
+      el('h2', { text: '恢复归档' }),
+      el('div', { class: 't-dnote', text: it.name }),
+      el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '失效日期（恢复后通常需顺延到未来日期才会重新播出）' }), uIn),
+      el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
+        el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
+        el('button', { class: 't-btn primary', onclick: async () => {
+          try {
+            const d = await api.post('/api/admin/lifecycle/restore', { type: it.type, id: it.id, validUntil: uIn.value || null });
+            toast(d.warn || '已恢复', d.warn ? 'err' : 'ok'); document.querySelector('.modal-mask')?._close?.(); reload();
+          } catch (e) { toast(e.message, 'err'); }
+        } }, '恢复'),
+      ),
+    );
+    openModal(box);
+  }
+
+  async function bulkSet() {
+    if (!lastItems.length) { toast('当前筛选无内容', 'err'); return; }
+    const fIn = dateInput(''), uIn = dateInput('');
+    const box = el('div', {},
+      el('h2', { text: '批量设置有效期' }),
+      el('div', { class: 't-dnote', text: `将对当前筛选的 ${lastItems.length} 个对象生效` }),
+      el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '生效日期（留空=不变更/永久）' }), fIn),
+      el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '失效日期（留空=不变更/永久）' }), uIn),
+      el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
+        el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
+        el('button', { class: 't-btn primary', onclick: async () => {
+          try {
+            const ids = lastItems.map(x => x.id);
+            const r = await api.post('/api/admin/lifecycle/bulk', { type: typeSel.value || 'media', ids, validFrom: fIn.value || null, validUntil: uIn.value || null });
+            toast(`已更新 ${r.updated} 个对象`, 'ok'); document.querySelector('.modal-mask')?._close?.(); reload();
+          } catch (e) { toast(e.message, 'err'); }
+        } }, '批量应用'),
+      ),
+    );
+    openModal(box);
+  }
+
+  async function reload() {
+    try { const d = await api.get('/api/admin/lifecycle/summary'); paintSummary(d); } catch {}
+    try { const c = await api.get('/api/admin/lifecycle/config'); paintConfig(c.config, c.defaults); } catch {}
+    try {
+      const qs = new URLSearchParams({ type: typeSel.value, state: stateSel.value, q: qInput.value }).toString();
+      const d = await api.get('/api/admin/lifecycle/items?' + qs);
+      lastItems = d.items || [];
+      paintTable();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  const sweepBtn = el('button', { class: 't-btn', onclick: async () => {
+    try { const r = await api.post('/api/admin/lifecycle/sweep'); toast(`巡检完成：扫描 ${r.scanned} 项，过期 ${r.expired?.length || 0}，归档 ${r.archived || 0}`, 'ok'); reload(); }
+    catch (e) { toast(e.message, 'err'); }
+  } }, '立即巡检');
+
+  root.append(
+    pageHead('内容生命周期',
+      can('media:upload') ? el('button', { class: 't-btn', onclick: bulkSet }, '批量设有效期') : '',
+      sweepBtn,
+    ),
+    el('div', { class: 't-sub', text: '为素材 / 节目 / 排期设置有效期，到期自动从所有终端下线并归档；断网时终端也会按本地缓存的失效时间自行停播。' }),
+    statsEl,
+    el('div', { class: 'grid cols-2', style: { marginTop: '16px', alignItems: 'start' } }, cfgCard, el('div', {},
+      el('div', { class: 't-toolbar', style: { marginBottom: '0' } }, typeSel, stateSel, qInput),
+    )),
+    tableWrap,
+  );
+
+  reload();
+  return root;
+}
+
 export const views = {
   security: renderSecurity,
   dashboard: renderDashboard,
@@ -1539,4 +1785,5 @@ export const views = {
   logs: renderLogs,
   settings: renderSettings,
   fleet: renderFleet,
+  lifecycle: renderLifecycle,
 };

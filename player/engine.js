@@ -28,8 +28,19 @@ const native = name => !!(window.LumaBridge && typeof window.LumaBridge[name] ==
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const toMin = hhmm => { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + (m || 0); };
 
+/** 有效期本地兜底：断网时终端靠清单里的绝对时间戳自己下线过期内容 */
+function inWindow(w, now = Date.now()) {
+  if (!w) return true;
+  if (w.from != null && now < w.from) return false;
+  if (w.until != null && now > w.until) return false;
+  return true;
+}
+
 function hits(sch, when = new Date()) {
   if (sch.enabled === false) return false;
+  const nowMs = when.getTime();
+  if (!inWindow(sch.validity, nowMs)) return false;
+  if (!inWindow(sch.layoutValidity, nowMs)) return false;
   const dk = ymd(when);
   if (sch.dateRange && sch.dateRange.length === 2) {
     const [from, to] = sch.dateRange;
@@ -72,6 +83,8 @@ class Player {
     this.hbTimer = null;
     this.es = null;
     this.currentScheduleId = null;
+    this.lastManifest = null;
+    this._cachedTried = false;
   }
 
   stop() {
@@ -158,12 +171,24 @@ class Player {
     const ctl = { aborted: false };
     this.regionCtls.push(ctl);
     const loop = region.loop !== false;
-    const items = region.items || [];
-    if (!items.length) return;
+    const all = region.items || [];
+    if (!all.length) return;
+    // 每轮重算：素材有效期可能在长时间播放途中到点，必须当场生效
+    const live = () => {
+      const now = Date.now();
+      const f = all.filter(it => inWindow(it.validity, now));
+      return f.length ? f : null;
+    };
     let idx = 0;
 
     const tick = async () => {
       while (!ctl.aborted) {
+        const items = live();
+        if (!items) {                       // 本区所有内容都过期了：留空等待，不播过期内容
+          region._el.innerHTML = '';
+          await this.wait(30000, () => false, ctl);
+          continue;
+        }
         const item = items[idx % items.length];
         const holder = document.createElement('div');
         holder.className = 'widget-holder';
@@ -194,7 +219,7 @@ class Player {
         holder.remove();
 
         if (!loop && idx >= items.length - 1) break;
-        idx++;
+        idx = (idx + 1) % Math.max(1, items.length);
       }
     };
     tick();
@@ -218,16 +243,33 @@ class Player {
   async refreshTerm() {
     try {
       const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`);
-      if (!r.ok) return;
-      const man = await r.json();
-      const sch = pickActiveSchedule(man);
-      const id = sch ? sch.scheduleId : null;
-      if (id !== this.currentScheduleId) {
-        this.currentScheduleId = id;
-        const layout = sch ? sch.layout : fallbackLayout();
-        this.load(layout, { resolver: this.resolver, mode: 'term' });
+      if (r.ok) {
+        const man = await r.json();
+        this.lastManifest = man;
+        try { localStorage.setItem('luma_manifest', JSON.stringify(man)); } catch { /* 配额满则跳过 */ }
       }
-    } catch (e) { /* 离线期间保持当前画面 */ }
+    } catch (e) { /* 离线：走本地缓存清单重算 */ }
+
+    // 不管在线离线都重算一次 —— 有效期到点必须自己下线，不能等服务端推
+    const man = this.lastManifest || this._loadCachedManifest();
+    if (!man) return;
+    const sch = pickActiveSchedule(man);
+    const id = sch ? sch.scheduleId : null;
+    if (id !== this.currentScheduleId) {
+      this.currentScheduleId = id;
+      const layout = sch ? sch.layout : fallbackLayout();
+      this.load(layout, { resolver: this.resolver, mode: 'term' });
+    }
+  }
+
+  _loadCachedManifest() {
+    if (this._cachedTried) return this.lastManifest || null;
+    this._cachedTried = true;
+    try {
+      const raw = localStorage.getItem('luma_manifest');
+      if (raw) this.lastManifest = JSON.parse(raw);
+    } catch { /* ignore */ }
+    return this.lastManifest || null;
   }
 
   /* ---------------- 终端能力：注册 / 心跳 / 指令 ---------------- */
@@ -412,9 +454,14 @@ async function bootstrap() {
   if (mode === 'term') {
     if (terminalId) { player.terminalId = terminalId; player.token = token; }
     else { await player.ensureTerminal(); }
-    const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`);
-    if (!r.ok) { showFallback('终端清单获取失败，请检查终端ID/令牌'); return; }
-    const man = await r.json();
+    let man = null;
+    try {
+      const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`);
+      if (r.ok) { man = await r.json(); try { localStorage.setItem('luma_manifest', JSON.stringify(man)); } catch { /* ignore */ } }
+    } catch { /* 开机时服务端未就绪，退回缓存清单继续播 */ }
+    if (!man) { try { man = JSON.parse(localStorage.getItem('luma_manifest') || 'null'); } catch { man = null; } }
+    if (!man) { showFallback('终端清单获取失败，请检查终端ID/令牌'); return; }
+    player.lastManifest = man;
     const sch = pickActiveSchedule(man);
     player.currentScheduleId = sch ? sch.scheduleId : null;
     const layout = sch ? sch.layout : fallbackLayout();

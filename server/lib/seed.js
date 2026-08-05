@@ -27,6 +27,13 @@ export const DEFAULT_SETTINGS = {
     email: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', to: '' },
     webhook: { enabled: false, url: '', type: 'wecom' },  // wecom | dingtalk | feishu | custom
   },
+  lifecycle: {                     // 内容有效期与自动下线
+    enabled: true,
+    warnDays: 3,                   // 到期前几天开始提醒
+    sweepMinutes: 10,              // 巡检间隔
+    autoArchive: true,             // 过期后自动归档（不删除，可恢复）
+    archiveGraceDays: 0,
+  },
   weather: { city: '深圳', source: 'manual', manual: { temp: 28, text: '晴', humidity: 60 } },
 };
 
