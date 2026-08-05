@@ -36,7 +36,7 @@ jobs:
           cache: 'npm'
 
       - name: Install desktop dependencies
-        run: npm install --save-dev electron@latest electron-builder@latest
+        run: npm install --save-dev electron@28.3.3 electron-builder@24.13.3
         working-directory: ${{ github.workspace }}
 
       - name: Build Windows installer
@@ -71,7 +71,7 @@ jobs:
           cache: 'npm'
 
       - name: Install desktop dependencies
-        run: npm install --save-dev electron@latest electron-builder@latest
+        run: npm install --save-dev electron@28.3.3 electron-builder@24.13.3
         working-directory: ${{ github.workspace }}
 
       - name: Build macOS app (Intel)
