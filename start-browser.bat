@@ -1,0 +1,6 @@
+@echo off
+cd /d "%~dp0"
+echo Starting LumaSign...
+start "" cmd /c "node server/server.js & timeout /t 3 >nul & start http://localhost:7788/"
+echo Opening browser in 3 seconds...
+pause
