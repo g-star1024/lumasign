@@ -301,7 +301,7 @@ async function renderLayouts() {
   const root = el('div', { class: 'page-layouts' });
 
   const approvalBadge = (state) => {
-    const map = { approved: ['s', '已批准'], pending: ['w', '待审'], draft: ['d', '草稿'] };
+    const map = { approved: ['s', '已批准'], pending: ['w', '待审'], draft: ['d', '草稿'], rejected: ['r', '已驳回'] };
     const [tone, txt] = map[state] || ['d', state || '草稿'];
     return el('span', { class: `t-badge ${tone}`, text: txt });
   };
@@ -714,11 +714,11 @@ function renderEditor(params) {
 
     iframe.addEventListener('load', () => { pushPreview(); saveHistory(); });
 
-    /* ── 发布审批 ── */
-    const doPublish = async () => {
+    /* ── 提交审批 ── */
+    const doSubmitForApproval = async () => {
       try {
         await api.put(`/api/layouts/${id}`, L);
-        await api.post(`/api/layouts/${id}/approve`, {});
+        await api.post(`/api/layouts/${id}/submit`, { comment: '', urgency: 'normal' });
         toast('已保存并提交审批', 'ok');
       } catch (e) { toast(e.message, 'err'); }
     };
@@ -736,7 +736,7 @@ function renderEditor(params) {
             try { await api.put(`/api/layouts/${id}`, L); saveHistory(); toast('已保存', 'ok'); updateStatus(); }
             catch (e) { toast(e.message, 'err'); }
           } }, '保存'),
-          el('button', { class: 'ed-btn primary', onclick: doPublish, text: '发布审批' }),
+          el('button', { class: 'ed-btn primary', onclick: doSubmitForApproval, text: '提交审批' }),
         ),
       ),
       // 三栏主体
@@ -769,135 +769,209 @@ const sel = (opts, v, on) => el('select', { class: 'input', onchange: e => on(e.
 
 /* ---------------- 排期下发 ---------------- */
 async function renderSchedules() {
-  const box = el('div', {}, spinner());
+  const root = el('div', { class: 'page-schedules' });
+  const cardWrap = el('div', { class: 'card' });
+  let all = [], layouts = [];
+  const modeLabel = { default: '默认', cycle: '周期', insert: '插播', exclusive: '独占' };
+  const paint = () => {
+    const table = el('table', {},
+      el('thead', {}, el('tr', {}, el('th', { text: '名称' }), el('th', { text: '节目' }), el('th', { text: '方式' }), el('th', { text: '审批' }), el('th', { text: '状态' }), el('th', { text: '' }))),
+      el('tbody', {}, ...all.map(s => {
+        const lo = layouts.find(l => l.id === s.layoutId);
+        const ap = lo?.approval?.state;
+        const apBadge = ap === 'approved' ? el('span', { class: 'badge s', text: '已审' })
+          : ap === 'pending' ? el('span', { class: 'badge w', text: '待审' })
+          : ap === 'rejected' ? el('span', { class: 'badge r', text: '驳回' })
+          : el('span', { class: 'badge d', text: '-' });
+        return el('tr', {},
+          el('td', { text: s.name }),
+          el('td', { text: lo?.name || s.layoutId || '-' }),
+          el('td', { text: modeLabel[s.mode] || s.mode }),
+          el('td', {}, apBadge),
+          el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '已发布' : '草稿' })),
+          el('td', {},
+            !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: async () => {
+              try { await api.post(`/api/schedules/${s.id}/publish`); toast('已发布并下发到目标终端', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
+            } }, '发布') : '',
+            s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: async () => {
+              try { await api.put(`/api/schedules/${s.id}`, { enabled: false }); toast('已停用', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
+            } }, '停用') : '',
+            can('schedule:edit') ? el('button', { class: 'btn sm danger', style: { marginLeft: '6px' }, onclick: async () => {
+              if (await confirmModal({ title: '删除排期', body: `确认删除「${esc(s.name)}」？`, danger: true })) {
+                try { await api.del(`/api/schedules/${s.id}`); toast('已删除', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
+              }
+            } }, '删除') : '',
+          ),
+        );
+      })),
+    );
+    cardWrap.innerHTML = '';
+    cardWrap.appendChild(all.length ? table : empty('暂无排期'));
+  };
   const reload = async () => {
     let d, ls;
     try { d = await api.get('/api/schedules'); ls = await api.get('/api/layouts'); }
-    catch (e) { box.replaceWith(empty(e.message)); return; }
-    const items = d.items || [];
-    const layouts = (ls.items || []).filter(l => !l.builtin);
-    const modeLabel = { default: '默认', cycle: '周期', insert: '插播', exclusive: '独占' };
-    const table = el('table', {},
-      el('thead', {}, el('tr', {}, el('th', { text: '名称' }), el('th', { text: '节目' }), el('th', { text: '方式' }), el('th', { text: '状态' }), el('th', { text: '' }))),
-      el('tbody', {}, ...items.map(s => el('tr', {},
-        el('td', { text: s.name }),
-        el('td', { text: layouts.find(l => l.id === s.layoutId)?.name || s.layoutId || '-' }),
-        el('td', { text: modeLabel[s.mode] || s.mode }),
-        el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '启用' : '停用' })),
-        el('td', {},
-          can('schedule:publish') ? el('button', { class: 'btn sm', onclick: () => toast('已下发到目标终端') }, '下发') : '',
-          can('schedule:edit') ? el('button', { class: 'btn sm danger', style: { marginLeft: '6px' }, onclick: async () => {
-            if (await confirmModal({ title: '删除排期', body: `确认删除「${esc(s.name)}」？`, danger: true })) {
-              try { await api.del(`/api/schedules/${s.id}`); toast('已删除', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
-            }
-          } }, '删除') : '',
-        ),
-      ))),
-    );
+    catch (e) { cardWrap.innerHTML = ''; cardWrap.appendChild(empty(e.message)); return; }
+    all = d.items || [];
+    layouts = (ls.items || []).filter(l => !l.builtin);
+    paint();
+    // rebuild head (for modal fresh selects)
+    root.childNodes[0].replaceWith(buildHead());
+  };
+  const buildHead = () => {
     const name = el('input', { class: 'input', placeholder: '排期名称' });
     const layoutSel = el('select', { class: 'input' }, ...layouts.map(l => el('option', { value: l.id, text: l.name })));
     const modeSel = el('select', { class: 'input' }, ...Object.entries(modeLabel).map(([k, v]) => el('option', { value: k, text: v })));
-    const view = el('div', { class: 'page-schedules' },
-      pageHead('排期下发',
-        can('schedule:edit') ? el('button', { class: 'btn primary', onclick: () => openModal(el('div', {},
-          el('h2', { text: '新建排期' }), field('名称', name), field('节目', layoutSel), field('播放方式', modeSel),
-          el('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '16px' } },
-            el('button', { class: 'btn primary', onclick: async () => {
-              try { await api.post('/api/schedules', { name: name.value || '新排期', layoutId: layoutSel.value, mode: modeSel.value, target: { all: true }, enabled: true }); document.querySelector('.modal-mask')?._close?.(); toast('已创建', 'ok'); reload(); }
-              catch (e) { toast(e.message, 'err'); }
-            } }, '创建')),
-        )) }, '+ 新建排期') : '',
-      ),
-      el('div', { class: 'card' }, items.length ? table : empty('暂无排期')),
+    return pageHead('排期管理',
+      can('schedule:edit') ? el('button', { class: 'btn primary', onclick: () => openModal(el('div', {},
+        el('h2', { text: '新建排期' }), field('名称', name), field('节目', layoutSel), field('播放方式', modeSel),
+        el('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '16px' } },
+          el('button', { class: 'btn primary', onclick: async () => {
+            try { await api.post('/api/schedules', { name: name.value || '新排期', layoutId: layoutSel.value, mode: modeSel.value, target: { all: true }, enabled: false }); document.querySelector('.modal-mask')?._close?.(); toast('排期已创建（草稿状态，请点击「发布」下发）', 'ok'); reload(); }
+            catch (e) { toast(e.message, 'err'); }
+          } }, '创建')),
+      )) }, '+ 新建排期') : '',
     );
-    box.replaceWith(view);
   };
+  root.appendChild(buildHead());
+  root.appendChild(cardWrap);
   reload();
-  return box;
+  return root;
 }
 
 /* ---------------- 审批中心 ---------------- */
 async function renderApprovals() {
-  const box = el('div', {}, spinner());
-  (async () => {
-    let d; try { d = await api.get('/api/approvals'); } catch (e) { box.replaceWith(empty(e.message)); return; }
-    const items = (d.items || []).filter(l => l.approval?.state !== 'approved');
+  const root = el('div', { class: 'page-approvals' });
+  const cardWrap = el('div', { class: 'card' });
+  let all = [];
+  const paint = () => {
+    // 合并 pending + draft + rejected
+    const items = all.filter(l => l.approval?.state !== 'approved');
     const table = el('table', {},
       el('thead', {}, el('tr', {}, el('th', { text: '名称' }), el('th', { text: '状态' }), el('th', { text: '' }))),
-      el('tbody', {}, ...items.map(l => el('tr', {},
-        el('td', { text: l.name }),
-        el('td', {}, el('span', { class: 'badge warn', text: l.approval?.state === 'pending' ? '待审' : '草稿' })),
-        el('td', {},
-          can('layout:approve') ? el('button', { class: 'btn sm primary', onclick: async () => {
-            try { await api.post(`/api/layouts/${l.id}/approve`, {}); toast('已批准', 'ok'); renderApprovals(); }
-            catch (e) { toast(e.message, 'err'); }
-          } }, '批准') : '',
-          el('button', { class: 'btn sm', style: { marginLeft: '6px' }, onclick: () => { location.hash = `#/editor/${l.id}`; } }, '编辑'),
-        ),
-      ))),
+      el('tbody', {}, ...items.map(l => {
+        const st = l.approval?.state || 'draft';
+        const badge = st === 'pending' ? el('span', { class: 'badge w', text: '待审批' })
+          : st === 'rejected' ? el('span', { class: 'badge r', text: '已驳回' })
+          : el('span', { class: 'badge d', text: '草稿' });
+        return el('tr', {},
+          el('td', { text: l.name }),
+          el('td', {}, badge),
+          el('td', {},
+            can('layout:approve') && st === 'pending' ? el('button', { class: 'btn sm primary', onclick: async () => {
+              try { await api.post(`/api/layouts/${l.id}/approve`, { pass: true, comment: '' }); toast('已批准', 'ok'); reload(); }
+              catch (e) { toast(e.message, 'err'); }
+            } }, '批准') : '',
+            can('layout:approve') && st === 'pending' ? el('button', { class: 'btn sm danger', style: { marginLeft: '4px' }, onclick: async () => {
+              try { await api.post(`/api/layouts/${l.id}/approve`, { pass: false, comment: '' }); toast('已驳回', 'ok'); reload(); }
+              catch (e) { toast(e.message, 'err'); }
+            } }, '驳回') : '',
+            (st === 'rejected' || st === 'draft') ? el('button', { class: 'btn sm', style: { marginLeft: '6px' }, onclick: () => { location.hash = `#/editor/${l.id}`; } }, '编辑') : '',
+          ),
+        );
+      })),
     );
-    box.replaceWith(el('div', { class: 'page-approvals' }, pageHead('审批中心'), el('div', { class: 'card' }, items.length ? table : empty('没有待审批的节目'))));
-  })();
-  return box;
+    cardWrap.innerHTML = '';
+    cardWrap.appendChild(items.length ? table : empty('没有待处理的节目'));
+  };
+  const reload = async () => {
+    let d;
+    try { d = await api.get('/api/approvals?state=pending'); } catch (e) { cardWrap.innerHTML = ''; cardWrap.appendChild(empty(e.message)); return; }
+    all = d.items || [];
+    // 同时拉取 draft 和 rejected 的节目
+    try {
+      const dd = await api.get('/api/approvals?state=draft');
+      all = [...all, ...(dd.items || []).filter(l => !all.some(a => a.id === l.id))];
+    } catch {}
+    try {
+      const rd = await api.get('/api/approvals?state=rejected');
+      all = [...all, ...(rd.items || []).filter(l => !all.some(a => a.id === l.id))];
+    } catch {}
+    paint();
+  };
+  root.appendChild(pageHead('审批中心'));
+  root.appendChild(cardWrap);
+  reload();
+  return root;
 }
 
 /* ---------------- 用户与角色 ---------------- */
 async function renderUsers() {
-  const box = el('div', {}, spinner());
-  const reload = async () => {
-    let d, rs; try { d = await api.get('/api/users'); rs = await api.get('/api/roles'); } catch (e) { box.replaceWith(empty(e.message)); return; }
-    const roleMap = Object.fromEntries((rs.items || []).map(r => [r.id, r.name]));
-    const items = d.items || [];
+  const root = el('div', { class: 'page-users' });
+  const cardWrap = el('div', { class: 'card' });
+  let all = [], roleMap = {};
+  const paint = () => {
     const table = el('table', {},
       el('thead', {}, el('tr', {}, el('th', { text: '用户名' }), el('th', { text: '姓名' }), el('th', { text: '角色' }), el('th', { text: '状态' }), el('th', { text: '最近登录' }))),
-      el('tbody', {}, ...items.map(u => el('tr', {},
+      el('tbody', {}, ...all.map(u => el('tr', {},
         el('td', { text: u.username }), el('td', { text: u.name || '-' }),
         el('td', { text: (u.roleIds || []).map(rid => roleMap[rid] || rid).join(', ') }),
         el('td', {}, el('span', { class: 'badge ' + (u.disabled ? 'off' : 'ok'), text: u.disabled ? '停用' : '正常' })),
         el('td', { text: fmtAgo(u.lastLoginAt) }),
       ))),
     );
+    cardWrap.innerHTML = '';
+    cardWrap.appendChild(all.length ? table : empty('暂无用户'));
+  };
+  const reload = async () => {
+    let d, rs;
+    try { d = await api.get('/api/users'); rs = await api.get('/api/roles'); }
+    catch (e) { cardWrap.innerHTML = ''; cardWrap.appendChild(empty(e.message)); return; }
+    roleMap = Object.fromEntries((rs.items || []).map(r => [r.id, r.name]));
+    all = d.items || [];
+    paint();
+    // rebuild head for fresh role options in modal
+    root.childNodes[0].replaceWith(buildHead(rs));
+  };
+  const buildHead = (rs) => {
     const username = el('input', { class: 'input', placeholder: '用户名' });
     const name = el('input', { class: 'input', placeholder: '姓名' });
     const pw = el('input', { class: 'input', type: 'password', placeholder: '初始密码' });
-    const roleSel = el('select', { class: 'input' }, ...(rs.items || []).map(r => el('option', { value: r.id, text: r.name })));
-    const view = el('div', { class: 'page-users' },
-      pageHead('用户与角色', can('user:edit') ? el('button', { class: 'btn primary', onclick: () => openModal(el('div', {},
-        el('h2', { text: '新建用户' }), field('用户名', username), field('姓名', name), field('密码', pw), field('角色', roleSel),
-        el('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '16px' } },
-          el('button', { class: 'btn primary', onclick: async () => {
-            try { await api.post('/api/users', { username: username.value, name: name.value, password: pw.value, roleIds: [roleSel.value] }); document.querySelector('.modal-mask')?._close?.(); toast('已创建', 'ok'); reload(); }
-            catch (e) { toast(e.message, 'err'); }
-          } }, '创建')),
-      )) }, '+ 新建用户') : ''),
-      el('div', { class: 'card' }, items.length ? table : empty('暂无用户')),
-    );
-    box.replaceWith(view);
+    const roleSel = el('select', { class: 'input' }, ...(rs?.items || []).map(r => el('option', { value: r.id, text: r.name })));
+    return pageHead('用户与角色', can('user:edit') ? el('button', { class: 'btn primary', onclick: () => openModal(el('div', {},
+      el('h2', { text: '新建用户' }), field('用户名', username), field('姓名', name), field('密码', pw), field('角色', roleSel),
+      el('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '16px' } },
+        el('button', { class: 'btn primary', onclick: async () => {
+          try { await api.post('/api/users', { username: username.value, name: name.value, password: pw.value, roleIds: [roleSel.value] }); document.querySelector('.modal-mask')?._close?.(); toast('已创建', 'ok'); reload(); }
+          catch (e) { toast(e.message, 'err'); }
+        } }, '创建')),
+    )) }, '+ 新建用户') : '');
   };
+  root.appendChild(buildHead());
+  root.appendChild(cardWrap);
   reload();
-  return box;
+  return root;
 }
 
 /* ---------------- 日志与播放证明 ---------------- */
 async function renderLogs() {
-  const box = el('div', {}, spinner());
-  const kind = el('select', { class: 'input', style: { maxWidth: '180px' }, onchange: () => load() },
+  const root = el('div', { class: 'page-logs' });
+  const cardWrap = el('div', { class: 'card' });
+  const kind = el('select', { class: 'input', style: { maxWidth: '180px' } },
     el('option', { value: 'audit', text: '审计日志' }), el('option', { value: 'task', text: '任务链路' }), el('option', { value: 'play', text: '播放证明' }));
-  const load = async () => {
-    let d; try { d = await api.get(`/api/logs?kind=${kind.value}&limit=200`); } catch (e) { box.replaceWith(empty(e.message)); return; }
-    const items = d.items || [];
+  let all = [];
+  const paint = () => {
     const table = el('table', {},
       el('thead', {}, el('tr', {}, el('th', { text: '时间' }), el('th', { text: '事件' }), el('th', { text: '详情' }))),
-      el('tbody', {}, ...items.map(r => el('tr', {},
+      el('tbody', {}, ...all.map(r => el('tr', {},
         el('td', { text: fmtTime(r.ts) }), el('td', { text: r.action || r.kind || '-' }),
         el('td', { text: r.username ? `用户 ${r.username}` : (r.message || r.cmdId || r.terminalId || '') }),
       ))),
     );
-    const view = el('div', { class: 'page-logs' }, pageHead('日志与播放证明', kind), el('div', { class: 'card' }, items.length ? table : empty('暂无日志')));
-    box.replaceWith(view);
+    cardWrap.innerHTML = '';
+    cardWrap.appendChild(all.length ? table : empty('暂无日志'));
   };
+  const load = async () => {
+    let d; try { d = await api.get(`/api/logs?kind=${kind.value}&limit=200`); }
+    catch (e) { cardWrap.innerHTML = ''; cardWrap.appendChild(empty(e.message)); return; }
+    all = d.items || [];
+    paint();
+  };
+  kind.onchange = () => load();
+  root.appendChild(pageHead('日志与播放证明', kind));
+  root.appendChild(cardWrap);
   load();
-  return box;
+  return root;
 }
 
 /* ---------------- 系统设置 ---------------- */
@@ -910,13 +984,19 @@ async function renderSettings() {
     const hb = el('input', { class: 'input', type: 'number', value: s.heartbeatInterval || 15 });
     const off = el('input', { class: 'input', type: 'number', value: s.offlineThreshold || 60 });
     const auto = el('input', { type: 'checkbox', checked: !!s.autoApproveTerminal });
+    const approvalLv = el('select', { class: 'input' },
+      el('option', { value: '0', text: '免审批（直接发布）' }),
+      el('option', { value: '1', text: '一级审批' }),
+      el('option', { value: '2', text: '二级审批' }),
+    );
+    approvalLv.value = String(s.approvalLevel ?? 0);
     const view = el('div', { class: 'page-settings' },
       pageHead('系统设置'),
       el('div', { class: 'card', style: { maxWidth: '560px' } },
         field('服务名称', name), field('心跳间隔(秒)', hb), field('离线判定(秒)', off),
-        field('新终端自动准入', auto),
+        field('新终端自动准入', auto), field('节目审批级别', approvalLv),
         el('div', { style: { marginTop: '16px' } }, el('button', { class: 'btn primary', onclick: async () => {
-          try { await api.put('/api/settings', { serverName: name.value, heartbeatInterval: +hb.value, offlineThreshold: +off.value, autoApproveTerminal: auto.checked }); toast('已保存', 'ok'); }
+          try { await api.put('/api/settings', { serverName: name.value, heartbeatInterval: +hb.value, offlineThreshold: +off.value, autoApproveTerminal: auto.checked, approvalLevel: +approvalLv.value }); toast('已保存', 'ok'); }
           catch (e) { toast(e.message, 'err'); }
         } }, '保存设置')),
       ),

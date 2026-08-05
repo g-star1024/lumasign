@@ -326,7 +326,7 @@ class Player {
         case 'show': case 'play':
           if (cmd.payload?.layoutId) {
             const r = await fetch(`/api/layouts/${encodeURIComponent(cmd.payload.layoutId)}`);
-            if (r.ok) { const l = await r.json(); this.load(l, { resolver: this.resolver, mode: 'term' }); }
+            if (r.ok) { const data = await r.json(); this.load(data.item || data, { resolver: this.resolver, mode: 'term' }); }
           }
           break;
         default: break;
@@ -418,7 +418,7 @@ async function bootstrap() {
     const sch = pickActiveSchedule(man);
     player.currentScheduleId = sch ? sch.scheduleId : null;
     const layout = sch ? sch.layout : fallbackLayout();
-    player.load(layout, { resolver: id => `/api/t/media/${id}`, mode: 'term' });
+    player.load(layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
     return;
   }
 
@@ -426,7 +426,8 @@ async function bootstrap() {
   if (layoutId) {
     const r = await fetch(`/api/layouts/${encodeURIComponent(layoutId)}`);
     if (!r.ok) { showFallback('节目获取失败'); return; }
-    const layout = await r.json();
+    const data = await r.json();
+    const layout = data.item || data;
     player.load(layout, { resolver: id => `/api/media/${id}/raw`, mode: 'preview' });
     return;
   }

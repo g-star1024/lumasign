@@ -557,6 +557,8 @@ export function registerAdminApi(router, ctx) {
     const lv = settings().approvalLevel || 0;
     if (lv === 0) return fail(res, '当前系统设置为「不审批」，节目可直接发布');
     const approval = l.approval || { records: [] };
+    if (approval.state === 'pending') return fail(res, '该节目已在待审批状态，请勿重复提交');
+    const prev = approval.state;
     approval.state = 'pending';
     approval.level = lv;
     approval.currentStep = 1;
@@ -681,11 +683,11 @@ export function registerAdminApi(router, ctx) {
       expireAt: b.expireAt || null,
       transferMode: b.transferMode || 'now',   // now | at | plan
       transferAt: b.transferAt || null,
-      enabled: b.enabled !== false,
+      enabled: b.enabled === true,   // 默认 false（草稿），需手动发布
       createdBy: user.id,
     });
     logger.change(user, 'schedule_create', row.id, null, row, req);
-    pushToTargets(row);
+    // 不自动推送：排期创建后为草稿状态，需手动"发布"才 pushToTargets
     ok(res, { item: row });
   }));
 
@@ -988,11 +990,24 @@ function checkPasswordStrength(pw) {
 function decorateTerminal(t, threshold, bus) {
   const now = Date.now();
   const online = !!(t.lastHeartbeat && now - t.lastHeartbeat < threshold);
+  // 内联 latestShot 逻辑（原函数定义在 registerAdminApi 闭包内，此处无法引用）
+  let shot = null;
+  try {
+    const dir = path.join(paths.shots, t.id);
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir).filter(f => /^\d+(\.\w+)?$/.test(f));
+      if (files.length) {
+        files.sort((a, b) => Number(b.split('.')[0] || 0) - Number(a.split('.')[0] || 0));
+        const f = files[0];
+        shot = { file: f, url: `/api/terminals/${t.id}/shot/${f}`, ts: Number(f.split('.')[0]) || 0 };
+      }
+    }
+  } catch { /* ignore */ }
   return {
     ...t,
     status: !t.lastHeartbeat ? 'never' : online ? 'online' : 'offline',
     linked: bus.isLinked(t.id),
     offlineSeconds: t.lastHeartbeat ? Math.floor((now - t.lastHeartbeat) / 1000) : null,
-    lastShot: latestShot(t.id),
+    lastShot: shot,
   };
 }
