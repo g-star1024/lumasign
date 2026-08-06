@@ -9,6 +9,36 @@ const empty = t => el('div', { class: 'empty', text: t });
 const pageHead = (title, ...actions) => el('div', { class: 'page-head' },
   el('h1', { text: title }), el('div', { class: 'spacer' }), ...actions);
 
+/* ═══ HEVC 视频扩展：模块级共享（素材预览 + 系统设置页共用） ═══ */
+const HEVC_STORE_URL = 'ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq';
+
+function browserSupportsHevc() {
+  try {
+    const v = document.createElement('video');
+    return !!v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+           !!v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
+  } catch { return false; }
+}
+
+/** 一键安装 HEVC 扩展：优先桌面宿主原生安装，否则跳转 Microsoft Store */
+async function installHevcFromAdmin() {
+  if (window.lumaDesktop && typeof window.lumaDesktop.installHevc === 'function') {
+    try {
+      const r = await window.lumaDesktop.installHevc();
+      if (r && r.ok) {
+        toast(r.method === 'winget'
+          ? '已通过 winget 静默安装 HEVC 扩展，刷新页面即可预览 H.265 视频'
+          : '已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展，完成后刷新页面', 'ok');
+      } else {
+        toast((r && r.message) ? r.message : '安装触发失败，请手动前往 Microsoft Store 搜索「HEVC 视频扩展」', 'err');
+      }
+      return;
+    } catch { /* 回退到商店链接 */ }
+  }
+  window.open(HEVC_STORE_URL, '_blank');
+  toast('已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展后刷新页面', 'ok');
+}
+
 /** 生命周期徽标：pending/active/expiring/expired/archived → 配色徽标
  *  永久有效（无有效期且非归档）不显示，避免列表噪声。*/
 function lcBadge(state, daysLeft, validFrom, validUntil) {
@@ -400,38 +430,6 @@ async function renderMedia() {
     text:  { icon: '📄', label: '文本' },
     file:  { icon: '📄', label: '文件' },
   };
-
-  // ── HEVC 视频扩展：浏览器能力探测 + 后台一键安装 ──
-  // Microsoft Store 免费 HEVC 扩展（微软官方）ProductId
-  const HEVC_STORE_URL = 'ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq';
-
-  function browserSupportsHevc() {
-    try {
-      const v = document.createElement('video');
-      return !!v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
-             !!v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
-    } catch { return false; }
-  }
-
-  // 优先走桌面宿主原生安装（真装，走 Electron 主进程），否则浏览器直接跳转商店页
-  async function installHevcFromAdmin() {
-    if (window.lumaDesktop && typeof window.lumaDesktop.installHevc === 'function') {
-      try {
-        const r = await window.lumaDesktop.installHevc();
-        if (r && r.ok) {
-          toast(r.method === 'winget'
-            ? '已通过 winget 静默安装 HEVC 扩展，刷新页面即可预览 H.265 视频'
-            : '已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展，完成后刷新页面', 'ok');
-        } else {
-          toast((r && r.message) ? r.message : '安装触发失败，请手动前往 Microsoft Store 搜索「HEVC 视频扩展」', 'err');
-        }
-        return;
-      } catch (e) { /* 回退到商店链接 */ }
-    }
-    // 纯浏览器环境：直接跳转商店页面（仅 Windows 有效）
-    window.open(HEVC_STORE_URL, '_blank');
-    toast('已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展后刷新页面', 'ok');
-  }
 
   function openPreview(m) {
     const km = kindMeta[m.kind] || kindMeta.file;
