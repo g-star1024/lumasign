@@ -675,3 +675,23 @@ tbody tr:hover { background: var(--hover); }
 .hs-popup-media { display: block; max-width: 80vw; max-height: 80vh; }
 .hs-popup-text { padding: 40px; color: #e6e8eb; font-size: 28px; text-align: center; }
 
+/* ============ 热区导航栈（P2） ============ */
+.hs-navbar {
+  position: fixed; top: 12px; left: 12px; z-index: 10000;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(0,0,0,.72); backdrop-filter: blur(12px);
+  border-radius: 10px; padding: 6px 12px;
+  font-family: system-ui, -apple-system, sans-serif;
+  box-shadow: 0 4px 20px rgba(0,0,0,.35);
+  animation: hsNavIn .25s ease-out;
+}
+@keyframes hsNavIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.hs-nav-back {
+  background: rgba(37,99,235,.85); color: #fff; border: none; border-radius: 6px;
+  padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease;
+}
+.hs-nav-back:hover { background: rgba(37,99,235,1); }
+.hs-nav-crumbs { display: flex; align-items: center; gap: 2px; font-size: 12px; color: #c8ccd4; max-width: 400px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hs-nav-sep { color: #555d6e; margin: 0 2px; }
+

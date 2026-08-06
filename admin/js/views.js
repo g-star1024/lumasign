@@ -1420,29 +1420,85 @@ async function renderUsers() {
 async function renderLogs() {
   const root = el('div', { class: 'page-logs' });
   const cardWrap = el('div', { class: 'card' });
-  const kind = el('select', { class: 'input', style: { maxWidth: '180px' } },
+  const kind = el('select', { class: 't-select', style: { maxWidth: '180px' } },
     el('option', { value: 'audit', text: '审计日志' }), el('option', { value: 'task', text: '任务链路' }), el('option', { value: 'play', text: '播放证明' }));
+  const fromI = el('input', { class: 't-input', type: 'date', style: { maxWidth: '160px' } });
+  const toI = el('input', { class: 't-input', type: 'date', style: { maxWidth: '160px' } });
+  const qI = el('input', { class: 't-input', placeholder: '搜索…', style: { maxWidth: '200px', flex: 1 } });
   let all = [];
+
   const paint = () => {
-    const table = el('table', {},
-      el('thead', {}, el('tr', {}, el('th', { text: '时间' }), el('th', { text: '事件' }), el('th', { text: '详情' }))),
-      el('tbody', {}, ...all.map(r => el('tr', {},
-        el('td', { text: fmtTime(r.ts) }), el('td', { text: r.action || r.kind || '-' }),
-        el('td', { text: r.username ? `用户 ${r.username}` : (r.message || r.cmdId || r.terminalId || '') }),
-      ))),
-    );
-    cardWrap.innerHTML = '';
-    cardWrap.appendChild(all.length ? table : empty('暂无日志'));
+    if (kind.value === 'play') {
+      // 播放证明：聚合表格
+      const table = el('table', { class: 't-table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '终端' }), el('th', { text: '素材' }), el('th', { text: '节目' }),
+          el('th', { text: '次数' }), el('th', { text: '时长(秒)' }), el('th', { text: '首次' }), el('th', { text: '最近' }),
+        )),
+        el('tbody', {}, ...all.map(r => el('tr', {},
+          el('td', { text: r.terminalName || r.terminalId || '-' }),
+          el('td', { text: r.mediaName || r.mediaId || '-' }),
+          el('td', { text: r.layoutName || '-' }),
+          el('td', { text: String(r.count || 0) }),
+          el('td', { text: Math.round(r.seconds || 0).toLocaleString() }),
+          el('td', { text: fmtTime(r.firstAt) }),
+          el('td', { text: fmtTime(r.lastAt) }),
+        ))),
+      );
+      cardWrap.innerHTML = '';
+      cardWrap.appendChild(all.length ? table : empty('暂无播放记录'));
+    } else {
+      // 审计/任务/系统：明细表格
+      const table = el('table', { class: 't-table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: '时间' }), el('th', { text: '操作人' }), el('th', { text: '动作' }),
+          el('th', { text: '目标' }), el('th', { text: '详情' }),
+        )),
+        el('tbody', {}, ...all.slice(0, 300).map(r => el('tr', {},
+          el('td', { class: 'mono', text: fmtTime(r.ts), style: { fontSize: '12px', whiteSpace: 'nowrap' } }),
+          el('td', { text: r.username || '-' }),
+          el('td', { text: r.action || r.kind || '-' }),
+          el('td', { text: r.name || r.target || r.terminalId || '-', style: { maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
+          el('td', { style: { maxWidth: '280px', fontSize: '12px', color: 'var(--c-text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, text: r.ip ? `${r.ip}` : (r.diff ? `变更 ${Object.keys(r.diff).length} 字段` : (r.message || r.cmdId || '')) }),
+        ))),
+      );
+      cardWrap.innerHTML = '';
+      cardWrap.appendChild(all.length ? table : empty('暂无日志'));
+      if (all.length > 300) cardWrap.appendChild(el('div', { class: 't-dnote', style: { textAlign: 'center', marginTop: '8px' }, text: `仅显示前 300 条，共 ${all.length} 条。请缩小日期范围或使用导出功能获取全部数据。` }));
+    }
   };
   const load = async () => {
-    let d; try { d = await api.get(`/api/logs?kind=${kind.value}&limit=200`); }
+    let d; try { d = await api.get(`/api/logs?kind=${kind.value}&from=${fromI.value || ''}&to=${toI.value || ''}&q=${encodeURIComponent(qI.value)}&limit=2000`); }
     catch (e) { cardWrap.innerHTML = ''; cardWrap.appendChild(empty(e.message)); return; }
     all = d.items || [];
     paint();
   };
-  kind.onchange = () => load();
-  root.appendChild(pageHead('日志与播放证明', kind));
-  root.appendChild(cardWrap);
+
+  const exportBtn = el('button', { class: 't-btn', onclick: async () => {
+    exportBtn.disabled = true; exportBtn.textContent = '导出中…';
+    try {
+      const url = `/api/logs/export?kind=${kind.value}&from=${fromI.value || ''}&to=${toI.value || ''}`;
+      const a = document.createElement('a'); a.href = url; a.click();
+      toast(`已导出 ${all.length} 条记录`, 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    finally { exportBtn.disabled = false; exportBtn.textContent = '📥 导出 CSV'; }
+  } }, '📥 导出 CSV');
+
+  kind.onchange = load;
+  fromI.onchange = load;
+  toI.onchange = load;
+  let qTimer; qI.oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(load, 400); };
+
+  root.append(
+    pageHead('日志与播放证明',
+      el('div', { class: 't-head' },
+        el('div', { class: 't-head-actions', style: { flexWrap: 'wrap', gap: '8px' } },
+          kind, fromI, toI, qI, exportBtn,
+        ),
+      ),
+    ),
+    cardWrap,
+  );
   load();
   return root;
 }

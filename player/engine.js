@@ -85,6 +85,9 @@ class Player {
     this.currentScheduleId = null;
     this.lastManifest = null;
     this._cachedTried = false;
+    this.navStack = [];        // 热区跳转导航栈：[{id, name}, ...]
+    this.navBar = null;        // 返回按钮容器 DOM
+    this.navTimer = null;      // 自动返回定时器
   }
 
   stop() {
@@ -96,9 +99,11 @@ class Player {
     if (this._dsTimer) { clearInterval(this._dsTimer); this._dsTimer = null; }
     app.innerHTML = '';
     this.stage = null; this.regionCtls = []; this.hotspotsLayer = null;
+    if (this.navBar && this.navBar.parentNode) this.navBar.remove();
+    this.navBar = null; this.cancelNavTimer();
   }
 
-  /** opts.resolver: (mediaId)=>url */
+  /** opts.resolver: (mediaId)=>url; opts.fromNav=true 表示来自导航栈跳转（不清空栈） */
   async load(layout, opts = {}) {
     this.stop();
     this.ctl = { aborted: false };
@@ -107,6 +112,7 @@ class Player {
     this.mode = opts.mode || 'preview';
     this.dsCache = {};          // dataSourceId -> 最新数据
     this._dsIds = [];
+    if (!opts.fromNav) { this.navStack = []; this.cancelNavTimer(); }
     hideFallback();
     this.buildStage(layout);
     this.startRegions(layout);
@@ -191,6 +197,7 @@ class Player {
     }
     this.hotspotsLayer = null;
     this.renderHotspots();
+    this.renderNavBar();
     this.rescale();
     window.addEventListener('resize', this._onResize = () => this.rescale());
   }
@@ -357,6 +364,36 @@ class Player {
     if (handle) handle.addEventListener('pointerdown', startResize);
   }
 
+  renderNavBar() {
+    // 移除旧的导航栏
+    if (this.navBar && this.navBar.parentNode) this.navBar.remove();
+    if (this.navStack.length === 0) { this.navBar = null; return; }
+
+    const bar = document.createElement('div');
+    bar.className = 'hs-navbar';
+    const prev = this.navStack[this.navStack.length - 1];
+
+    // 面包屑：主界面 > 子页面1 > ... > 当前
+    const crumbs = [el('span', { text: '🏠 主界面' })];
+    for (let i = 0; i < this.navStack.length; i++) {
+      crumbs.push(el('span', { class: 'hs-nav-sep', text: ' › ' }));
+      crumbs.push(el('span', { text: this.navStack[i].name || `节目${i + 1}` }));
+    }
+
+    const backBtn = document.createElement('button');
+    backBtn.className = 'hs-nav-back';
+    backBtn.textContent = '← 返回';
+    backBtn.onclick = () => this.goBack();
+
+    bar.append(backBtn, el('div', { class: 'hs-nav-crumbs' }, ...crumbs));
+    document.body.appendChild(bar);
+    this.navBar = bar;
+
+    // 如果热区配置了自动返回超时，启动定时器
+    const autoReturnSecs = this.layout?._autoReturnSeconds || 0;
+    if (autoReturnSecs > 0) this.startAutoReturn(autoReturnSecs);
+  }
+
   addHotspot(hs) {
     this.layout.hotspots = this.layout.hotspots || [];
     this.layout.hotspots.push(hs);
@@ -400,6 +437,11 @@ class Player {
   }
 
   async gotoLayout(id) {
+    // 将当前节目压入导航栈
+    if (this.layout && this.layout.id) {
+      this.navStack.push({ id: this.layout.id, name: this.layout.name || '主界面' });
+    }
+    this.cancelNavTimer();
     const base = (this.mode === 'term' && this.terminalId)
       ? `/api/t/layout/${encodeURIComponent(id)}?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`
       : `/api/layouts/${encodeURIComponent(id)}`;
@@ -408,8 +450,35 @@ class Player {
       if (!r.ok) { console.warn('gotoLayout failed', r.status); return; }
       const d = await r.json();
       const item = d.item || d;
-      if (item && item.regions) this.load(item, { resolver: this.resolver, mode: this.mode });
+      if (item && item.regions) this.load(item, { resolver: this.resolver, mode: this.mode, fromNav: true });
     } catch (e) { console.warn('gotoLayout error', e); }
+  }
+
+  goBack() {
+    if (this.navStack.length === 0) return;
+    this.cancelNavTimer();
+    const prev = this.navStack.pop();
+    // 直接用栈中的 id 重新加载，不再压栈（fromNav=true 但不 push）
+    const base = (this.mode === 'term' && this.terminalId)
+      ? `/api/t/layout/${encodeURIComponent(prev.id)}?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`
+      : `/api/layouts/${encodeURIComponent(prev.id)}`;
+    fetch(base, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { const item = d?.item || d; if (item?.regions) this.load(item, { resolver: this.resolver, mode: this.mode, fromNav: true }); })
+      .catch(() => {});
+  }
+
+  cancelNavTimer() {
+    if (this.navTimer) { clearTimeout(this.navTimer); this.navTimer = null; }
+  }
+
+  startAutoReturn(seconds) {
+    this.cancelNavTimer();
+    if (!seconds || seconds <= 0) return;
+    this.navTimer = setTimeout(() => {
+      if (this.navStack.length > 0) this.goBack();
+      else this.cancelNavTimer();
+    }, seconds * 1000);
   }
 
   showPopup(a) {
