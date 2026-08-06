@@ -20,6 +20,14 @@ export const DEFAULT_SETTINGS = {
   retentionDays: 180,
   accent: 'blue',
   theme: 'system',                 // light | dark | system
+  security: {
+    lanOnly: false,
+    // 默认仅允许本机（localhost/127.0.0.1）进入管理后台。
+    // 白名单只约束后台面；终端拉取/上报、播放端、监看墙均豁免，不会误伤电子屏。
+    // 若需从局域网其他设备/手机管理后台，请在此追加对应 IP（支持 192.168.1.* 与 CIDR）。
+    allowIps: ['127.0.0.1'],
+    denyIps: [],
+  },
   alert: {
     offlineEnabled: true,
     offlineMinutes: 5,

@@ -232,10 +232,16 @@ async function init(opts = {}) {
         return fail(res, '禁止访问', 403);
       }
 
-      const ipl = ipListGuard(req, cfg);
-      if (!ipl.allowed) {
-        logger.audit({ userId: 'system', username: 'system', action: 'security_blocked_ip', target: ipl.reason });
-        return fail(res, '禁止访问', 403);
+      // 白名单仅约束「管理后台面」（/api/admin、/、/admin）。
+      // 终端拉取/上报、SSE、播放端 /player、监看墙 等内网通信豁免，
+      // 否则 allowIps 非空时会误伤全部电子屏，导致屏拉不到节目。
+      const isAdminSurface = pathname.startsWith('/api/admin') || pathname === '/' || pathname.startsWith('/admin');
+      if (isAdminSurface) {
+        const ipl = ipListGuard(req, cfg);
+        if (!ipl.allowed) {
+          logger.audit({ userId: 'system', username: 'system', action: 'security_blocked_ip', target: ipl.reason });
+          return fail(res, '禁止访问', 403);
+        }
       }
 
       // 1) API
