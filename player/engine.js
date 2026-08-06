@@ -779,7 +779,7 @@ class Player {
         case 'screen_off': if (native('screenOff')) window.LumaBridge.screenOff(); break;
         case 'set_brightness': if (native('setBrightness')) window.LumaBridge.setBrightness(cmd.payload?.level ?? 100); break;
         case 'power_schedule': if (native('setPowerSchedule')) window.LumaBridge.setPowerSchedule(JSON.stringify(cmd.payload?.schedule || [])); break;
-        case 'upgrade_apk': if (native('downloadAndInstallApk') && cmd.payload?.url) window.LumaBridge.downloadAndInstallApk(cmd.payload.url); break;
+        case 'upgrade_apk': if (native('downloadAndInstallApk') && cmd.payload?.url) window.LumaBridge.downloadAndInstallApk(cmd.payload.url, cmd.payload?.sha256 || null); break;
         case 'clear_cache':
           try { if (native('clearCache')) window.LumaBridge.clearCache(); } catch {}
           try { localStorage.removeItem('luma_manifest'); } catch {}
@@ -852,6 +852,15 @@ async function bootstrap() {
   const inline = q.get('data');
   const player = new Player();
 
+  // 网络恢复钩子：原生端 ConnectivityManager 监听到重连后调用，重开指令流(SSE)+刷新清单
+  window.__onNetworkChange = (online) => {
+    if (!online) return;
+    try {
+      player.startCommands();      // 重开 SSE（旧连接已死）
+      player.refreshTerm();        // 立即重新拉取清单，避免最长 30s 空窗
+    } catch (e) { /* 忽略 */ }
+  };
+
   // 编辑器实时预览：监听 postMessage
   window.addEventListener('message', e => {
     const d = e.data;
@@ -919,4 +928,4 @@ async function bootstrap() {
 bootstrap();
 
 // 供桌面端 / 测试探测
-window.__LUMA_PLAYER__ = { version: '1.0.0' };
+window.__LUMA_PLAYER__ = { version: '1.1.0' };

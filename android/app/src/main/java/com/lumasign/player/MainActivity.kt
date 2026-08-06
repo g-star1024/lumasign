@@ -2,22 +2,34 @@ package com.lumasign.player
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -26,6 +38,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bridge: LumaBridge
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    // 加载 / 错误覆盖层（服务端不可达时显示「正在重连」而非黑屏死寂）
+    private lateinit var overlay: TextView
+    private var loadFailed = false
+    private var retryRunnable: Runnable? = null
+
+    // 网络连通性监听
+    private val connectivityManager by lazy {
+        getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+    private var lastNetOnline: Boolean? = null
+    private val netCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { onConnectivityChanged(true) }
+        override fun onLost(network: Network) { onConnectivityChanged(false) }
+    }
+    private val netReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) { onConnectivityChanged(isNetworkOnline()) }
+    }
 
     companion object {
         const val PREFS = "luma_config"
@@ -38,6 +68,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // 开机/重启后自动点亮屏幕并越过锁屏（kiosk 无人值守关键）
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+        )
         hideSystemUI()
 
         // 累计崩溃计数（持久化），供健康度上报
@@ -47,6 +83,7 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putInt("crash_count", crashCount).apply()
         }
 
+        setupOverlay()
         webView = findViewById(R.id.webview)
         setupWebView()
 
@@ -54,6 +91,8 @@ class MainActivity : AppCompatActivity() {
         val server = prefs.getString(KEY_SERVER, "") ?: ""
         if (server.isBlank()) showConfigDialog() else loadPlayer(server)
         applyScreenIntent(intent)
+
+        registerConnectivity()
     }
 
     /** 响应定时/远程开关节指令 */
@@ -76,21 +115,69 @@ class MainActivity : AppCompatActivity() {
         ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         ws.useWideViewPort = true
         ws.loadWithOverviewMode = true
-        ws.cacheMode = WebSettings.LOAD_DEFAULT
-        WebView.setWebContentsDebuggingEnabled(true)
+        // 离线韧性：优先用缓存，服务端重启/短暂断网时播放壳不白屏
+        ws.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+        try { ws.setAppCacheEnabled(true); ws.setAppCachePath(cacheDir.absolutePath) } catch (_: Exception) {}
+        // WebView 远程调试仅 debug 构建开启（release 常开是安全风险）
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (debuggable) WebView.setWebContentsDebuggingEnabled(true)
 
         bridge = LumaBridge(this, webView)
         webView.addJavascriptInterface(bridge, "LumaBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean = false
-        }
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                // 进度可在 UI 上体现，此处保持轻量
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                if (loadFailed) showOverlay("灵屏 LumaSign\n正在重新连接服务端…")
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                loadFailed = false
+                retryRunnable?.let { uiHandler.removeCallbacks(it) }
+                hideOverlay()
+            }
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                if (request?.isForMainFrame == true) onMainFrameError(error?.description?.toString())
+            }
+            @Suppress("DEPRECATION")
+            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                if (view?.url == null || failingUrl == view.url) onMainFrameError(description)
             }
         }
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) { /* 进度可在 UI 体现，此处保持轻量 */ }
+        }
     }
+
+    private fun onMainFrameError(desc: String?) {
+        loadFailed = true
+        showOverlay("无法连接服务端\n${desc ?: ""}\n将自动重试…")
+        scheduleRetry()
+    }
+
+    private fun scheduleRetry() {
+        retryRunnable?.let { uiHandler.removeCallbacks(it) }
+        retryRunnable = Runnable {
+            val server = prefs.getString(KEY_SERVER, "") ?: ""
+            if (server.isNotBlank() && loadFailed) { loadFailed = false; loadPlayer(server) }
+        }
+        uiHandler.postDelayed(retryRunnable!!, 15000)
+    }
+
+    private fun setupOverlay() {
+        overlay = TextView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundColor(Color.BLACK)
+            setTextColor(Color.parseColor("#6b7280"))
+            textSize = 16f
+            gravity = Gravity.CENTER
+            text = "灵屏 LumaSign\n正在连接服务端…"
+            visibility = View.VISIBLE
+        }
+        (findViewById<ViewGroup>(R.id.root)).addView(overlay)
+    }
+
+    private fun showOverlay(msg: String) { overlay.text = msg; overlay.visibility = View.VISIBLE }
+    private fun hideOverlay() { overlay.visibility = View.GONE }
 
     private fun loadPlayer(server: String) {
         val code = prefs.getString(KEY_CODE, "") ?: ""
@@ -100,6 +187,53 @@ class MainActivity : AppCompatActivity() {
             if (code.isNotBlank()) append("&code=").append(code)
         }
         webView.loadUrl(url)
+    }
+
+    /** 网络连通性变化：恢复时通知引擎重连指令流+刷新清单，并兜底重载失败的页面 */
+    private fun onConnectivityChanged(online: Boolean) {
+        if (lastNetOnline == online) return
+        lastNetOnline = online
+        if (!online) return
+        webView.post {
+            webView.evaluateJavascript("try{window.__onNetworkChange&&window.__onNetworkChange(true)}catch(e){}", null)
+            if (loadFailed) {
+                val server = prefs.getString(KEY_SERVER, "") ?: ""
+                if (server.isNotBlank()) { loadPlayer(server) }
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isNetworkOnline(): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val nw = connectivityManager.activeNetwork ?: return false
+                val caps = connectivityManager.getNetworkCapabilities(nw) ?: return false
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            } else {
+                val info = connectivityManager.activeNetworkInfo
+                info != null && info.isConnected
+            }
+        } catch (_: Exception) { false }
+    }
+
+    private fun registerConnectivity() {
+        lastNetOnline = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val req = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
+            try { connectivityManager.registerNetworkCallback(req, netCallback) } catch (_: Exception) {}
+        } else {
+            val filter = IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
+            try { registerReceiver(netReceiver, filter) } catch (_: Exception) {}
+        }
+    }
+
+    private fun unregisterConnectivity() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) connectivityManager.unregisterNetworkCallback(netCallback)
+            else unregisterReceiver(netReceiver)
+        } catch (_: Exception) {}
     }
 
     /** 深链配置：lumasync://config?server=http://192.168.1.10:7788&code=LS-0001 */
@@ -225,6 +359,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        unregisterConnectivity()
+        retryRunnable?.let { uiHandler.removeCallbacks(it) }
         webView.destroy()
         super.onDestroy()
     }

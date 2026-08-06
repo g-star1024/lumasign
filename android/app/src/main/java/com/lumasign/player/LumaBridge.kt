@@ -3,19 +3,27 @@ package com.lumasign.player
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.AudioManager
+import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
 import android.util.Base64
+import android.view.PixelCopy
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileReader
 
 /**
@@ -30,6 +38,7 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     private val power: PowerManager by lazy {
         activity.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
     }
+    private val uiHandler = Handler(Looper.getMainLooper())
 
     /** 硬件信息：mac/serial 作为服务端注册幂等键 */
     @JavascriptInterface
@@ -81,9 +90,10 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
                 put("storageTotal", total)
                 put("storageFree", free)
                 put("appVersion", ver)
-                put("cpuTemp", 0)
+                put("cpuTemp", cpuTempC())
                 put("cpu", cpuPct)
                 put("mem", memPct)
+                put("battery", batteryPct())
                 put("uptime", uptime)
                 put("crashCount", MainActivity.crashCount)
             }.toString()
@@ -113,16 +123,40 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         } catch (_: Exception) { }
     }
 
-    /** 截屏：截取 WebView 当前画面（含 DOM），返回 dataURL，再回调 JS */
+    /** 截屏：优先 PixelCopy 抓合成帧（含硬解视频，避免 webView.draw 黑屏），降级 webView.draw */
     @JavascriptInterface
     fun capture(jsCallback: String) {
+        val w = webView.width
+        val h = webView.height
+        if (w <= 0 || h <= 0) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                PixelCopy.request(activity.window, Rect(0, 0, w, h), bmp, { result ->
+                    if (result == PixelCopy.SUCCESS) {
+                        val url = bitmapToDataUrl(bmp)
+                        bmp.recycle()
+                        if (url != null) invokeCapture(jsCallback, url)
+                    } else {
+                        fallbackCapture(jsCallback)
+                    }
+                }, uiHandler)
+                return
+            } catch (_: Exception) { fallbackCapture(jsCallback); return }
+        }
+        fallbackCapture(jsCallback)
+    }
+
+    private fun fallbackCapture(jsCallback: String) {
         webView.post {
             val dataUrl = screenshotBase64()
-            if (dataUrl != null) {
-                val safe = dataUrl.replace("'", "\\'")
-                webView.evaluateJavascript("($jsCallback)('$safe')", null)
-            }
+            if (dataUrl != null) invokeCapture(jsCallback, dataUrl)
         }
+    }
+
+    private fun invokeCapture(jsCallback: String, dataUrl: String) {
+        val safe = dataUrl.replace("'", "\\'")
+        webView.evaluateJavascript("($jsCallback)('$safe')", null)
     }
 
     /** 设置系统音量 0-100 */
@@ -196,10 +230,10 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         PowerScheduleManager.applySchedule(activity, json)
     }
 
-    /** 自升级：下载并安装新 APK */
+    /** 自升级：下载并安装新 APK（expectedSha256 可选，非空则校验） */
     @JavascriptInterface
-    fun downloadAndInstallApk(url: String) {
-        UpdateManager.install(activity, url)
+    fun downloadAndInstallApk(url: String, expectedSha256: String? = null) {
+        UpdateManager.install(activity, url, expectedSha256)
     }
 
     /* ---------------- 内部工具 ---------------- */
@@ -215,6 +249,48 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
         bmp.recycle()
         return "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    /** Bitmap → JPEG dataURL（PixelCopy 路径复用） */
+    private fun bitmapToDataUrl(bmp: Bitmap): String? {
+        return try {
+            val out = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        } catch (_: Exception) { null }
+    }
+
+    /** 真实 CPU/SoC 温度（°C），读 thermal_zone 文件；取不到返回 0 */
+    private fun cpuTempC(): Int {
+        return try {
+            val dir = File("/sys/class/thermal")
+            dir.listFiles()?.forEach { zone ->
+                if (!zone.name.startsWith("thermal_zone")) return@forEach
+                val typeFile = File(zone, "type")
+                val type = if (typeFile.exists()) typeFile.readText().trim().lowercase() else ""
+                if (type.contains("cpu") || type.contains("soc") || type.contains("board") ||
+                    type.contains("gpu") || type.contains("thermal")) {
+                    val tempFile = File(zone, "temp")
+                    if (tempFile.exists()) {
+                        val raw = tempFile.readText().trim().toLongOrNull() ?: 0L
+                        if (raw > 0) return (raw / 1000).toInt() // 内核通常返回毫摄氏度
+                    }
+                }
+            }
+            0
+        } catch (_: Exception) { 0 }
+    }
+
+    /** 电池电量百分比（电池供电标牌需要）；取不到返回 -1 */
+    @SuppressLint("DefaultLocale")
+    private fun batteryPct(): Int {
+        return try {
+            val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            val battery = activity.applicationContext.registerReceiver(null, ifilter) ?: return -1
+            val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            if (level < 0 || scale <= 0) -1 else (level * 100 / scale)
+        } catch (_: Exception) { -1 }
     }
 
     @SuppressLint("HardwareIds")
