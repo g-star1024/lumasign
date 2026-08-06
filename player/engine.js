@@ -422,6 +422,8 @@ class Player {
   }
 
   dispatchHotspot(hs) {
+    // 交互埋点：热区被点击（仅播放端上报）
+    this.trackInteraction('hotspot_click', hs.id);
     const a = hs.action || { type: 'none' };
     if (a.type === 'url') {
       const url = a.target || '';
@@ -458,6 +460,28 @@ class Player {
       const item = d.item || d;
       if (item && item.regions) this.load(item, { resolver: this.resolver, mode: this.mode, fromNav: true });
     } catch (e) { console.warn('gotoLayout error', e); }
+  }
+
+  /* ---------------- 交互埋点（P1 交互式节目） ---------------- */
+  trackInteraction(type, itemId) {
+    if (this.mode !== 'term') return;            // 仅播放端上报
+    const layoutId = this.layout && this.layout.id;
+    if (!layoutId) return;
+    this._iaQueue = this._iaQueue || [];
+    this._iaQueue.push({ layoutId, itemId: itemId || '', type, terminalId: this.terminalId || '' });
+    if (this._iaTimer) return;
+    this._iaTimer = setTimeout(() => { this._iaTimer = null; this._flushInteractions(); }, 1200);
+  }
+
+  async _flushInteractions() {
+    const q = this._iaQueue;
+    if (!q || !q.length) return;
+    this._iaQueue = [];
+    const hdr = { 'Content-Type': 'application/json', 'x-terminal-id': this.terminalId || '' };
+    for (const ev of q) {
+      try { await fetch('/api/interaction', { method: 'POST', headers: hdr, body: JSON.stringify(ev) }); }
+      catch (e) { /* 离线或失败：丢弃该条，不影响播放 */ }
+    }
   }
 
   goBack() {

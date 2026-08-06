@@ -47,6 +47,7 @@ import { HealthMonitor } from './lib/health.js';
 import { registerPlayProofApi } from './api/playproof.js';
 import { DataSourceManager } from './lib/datasource.js';
 import { registerDataSourceApi } from './api/datasource.js';
+import { registerInteractionApi } from './api/interaction.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -153,6 +154,7 @@ async function init(opts = {}) {
   registerHealthApi(router, ctx);
   registerPlayProofApi(router, ctx);
   registerDataSourceApi(router, ctx);
+  registerInteractionApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {

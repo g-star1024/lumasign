@@ -18,6 +18,7 @@ const NAV = [
     { id: 'monitor', label: '监看墙', icon: '◫', perm: 'terminal:view', hash: '#/monitor' },
     { id: 'health', label: '健康看板', icon: '♥', perm: 'terminal:view', hash: '#/health' },
     { id: 'proof', label: '播放证明', icon: '▣', perm: 'log:view', hash: '#/proof' },
+    { id: 'interactions', label: '交互统计', icon: '◎', perm: 'layout:view', hash: '#/interactions' },
   ] },
   { group: '系统', items: [
     { id: 'fleet', label: '设备开通', icon: '⚡', perm: 'terminal:view', hash: '#/fleet' },

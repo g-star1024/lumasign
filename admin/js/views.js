@@ -2768,6 +2768,67 @@ async function renderDataSources() {
   return root;
 }
 
+async function renderInteractions() {
+  const root = el('div', { class: 'page-interactions' }, spinner());
+  (async () => {
+    let items = [], layouts = [];
+    try { items = (await api.get('/api/admin/interactions')).items || []; } catch (e) { root.replaceWith(empty(e.message)); return; }
+    try { layouts = (await api.get('/api/layouts')).items || []; } catch {}
+    const nameOf = id => (layouts.find(l => l.id === id) || {}).name || id || '—';
+
+    const layoutSel = el('select', { class: 'input', onchange: () => load() });
+    layoutSel.append(el('option', { value: '', text: '全部节目' }));
+    layouts.forEach(l => layoutSel.append(el('option', { value: l.id, text: l.name || l.id })));
+
+    const tbody = el('tbody');
+    const paint = () => {
+      const filtered = (!layoutSel.value) ? items : items.filter(x => x.layoutId === layoutSel.value);
+      if (!filtered.length) {
+        tbody.replaceChildren(el('tr', {}, el('td', { colspan: '6' }, empty('暂无交互数据。在触摸屏节目中点击热区后，这里会统计点击次数。'))));
+        return;
+      }
+      tbody.replaceChildren(...filtered.map(x => el('tr', {},
+        el('td', {}, nameOf(x.layoutId)),
+        el('td', { text: x.itemId || '—' }),
+        el('td', {}, el('span', { class: 'badge', text: x.type })),
+        el('td', { text: String(x.count) }),
+        el('td', { text: x.lastAt ? new Date(x.lastAt).toLocaleString() : '—' }),
+        el('td', { text: String(x.terminals) }),
+      )));
+    };
+    async function load() {
+      try { items = (await api.get('/api/admin/interactions' + (layoutSel.value ? '?layoutId=' + encodeURIComponent(layoutSel.value) : ''))).items || []; }
+      catch (e) { toast(e.message, 'err'); }
+      paint();
+    }
+
+    const view = el('div', { class: 'page-interactions' },
+      pageHead('交互统计',
+        el('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+          el('span', { class: 'sub', text: '节目：' }), layoutSel,
+          can('layout:manage') ? el('button', { class: 'btn sm danger', onclick: async () => {
+            if (await confirmModal({ title: '清空交互统计', body: '确认清空全部交互点击记录？', danger: true })) {
+              try { await api.post('/api/admin/interactions/reset', {}); toast('已清空', 'ok'); load(); } catch (e) { toast(e.message, 'err'); }
+            }
+          } }, '清空') : null,
+        ),
+      ),
+      el('p', { class: 't-dnote', style: { margin: '0 0 12px' }, text: '统计播放端触摸屏上热区被点击的次数（哪个按钮被点了多少次）。数据由各终端实时上报。' }),
+      el('div', { class: 'card' },
+        el('table', { class: 'tbl' },
+          el('thead', {}, el('tr', {},
+            el('th', { text: '节目' }), el('th', { text: '元素 ID' }), el('th', { text: '交互类型' }),
+            el('th', { text: '次数' }), el('th', { text: '最近一次' }), el('th', { text: '涉及终端' }))),
+          tbody,
+        ),
+      ),
+    );
+    root.replaceWith(view);
+    paint();
+  })();
+  return root;
+}
+
 export const views = {
   security: renderSecurity,
   dashboard: renderDashboard,
@@ -2786,4 +2847,5 @@ export const views = {
   fleet: renderFleet,
   lifecycle: renderLifecycle,
   dataSources: renderDataSources,
+  interactions: renderInteractions,
 };
