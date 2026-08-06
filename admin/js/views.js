@@ -2180,7 +2180,7 @@ async function renderLifecycle() {
   const qInput = el('input', { class: 't-input', placeholder: '搜索名称…', oninput: debounce(reload, 300) });
 
   const statsEl = el('div', { class: 't-stats' });
-  const cfgCard = el('div', { class: 't-card' });
+  const cfgCard = el('div', { class: 't-card', style: { padding: '20px 24px' } });
   const tableWrap = el('div', { class: 't-scroll t-card', style: { marginTop: '16px' } }, spinner());
 
   let lastItems = [];
