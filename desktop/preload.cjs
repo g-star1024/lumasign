@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('lumaDesktop', {
   isPackaged: require('electron').app.isPackaged,
   openExternal: (u) => ipcRenderer.send('open-external', u),
   revealData: () => ipcRenderer.send('reveal-data'),
+  installHevc: () => ipcRenderer.invoke('install-hevc'),
+  detectHevc: () => ipcRenderer.invoke('detect-hevc'),
+  openStoreHevc: () => ipcRenderer.send('open-store-hevc'),
 });

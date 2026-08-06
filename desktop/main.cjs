@@ -11,6 +11,7 @@
 const { app, BrowserWindow, Tray, Menu, shell, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
 const isWin = process.platform === 'win32';
@@ -76,12 +77,16 @@ function createTray() {
   try {
     tray = new Tray(path.join(__dirname, 'tray.png'));
   } catch { return; } // 缺图标不致命
-  const ctx = Menu.buildFromTemplate([
+  const trayItems = [
     { label: '打开管理端', click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
     { label: '打开数据目录', click: () => shell.showItemInFolder(DATA_DIR) },
-    { type: 'separator' },
-    { label: '退出', click: () => { forceQuit = true; app.quit(); } },
-  ]);
+  ];
+  if (isWin) trayItems.push({
+    label: '安装 HEVC 视频扩展',
+    click: () => { const r = installHevcExtension(); if (!r.ok) dialog.showErrorBox('安装未自动完成', (r.message || '') + '\n请手动在 Microsoft Store 搜索「HEVC 视频扩展」安装。'); },
+  });
+  trayItems.push({ type: 'separator' }, { label: '退出', click: () => { forceQuit = true; app.quit(); } });
+  const ctx = Menu.buildFromTemplate(trayItems);
   tray.setToolTip('灵屏 LumaSign');
   tray.setContextMenu(ctx);
   tray.on('click', () => { if (mainWin) { mainWin.show(); mainWin.focus(); } });
@@ -114,6 +119,9 @@ app.whenReady().then(async () => {
   const url = `http://127.0.0.1:${PORT}/`;
   mainWin.loadURL(url);
 
+  // 首次启动引导安装 HEVC 扩展（缺失则提示一次）
+  maybePromptHevc();
+
   // 外部链接走系统浏览器
   mainWin.webContents.setWindowOpenHandler(({ url: u }) => {
     if (u.startsWith('http://127.0.0.1') || u.startsWith('http://localhost')) return { action: 'allow' };
@@ -136,3 +144,61 @@ app.on('before-quit', () => {
 const { ipcMain } = require('electron');
 ipcMain.on('open-external', (e, u) => { try { shell.openExternal(u); } catch {} });
 ipcMain.on('reveal-data', () => { try { shell.showItemInFolder(DATA_DIR); } catch {} });
+
+/* ---------------- HEVC 视频扩展：检测 / 一键安装 ----------------
+ * HEVC 扩展是 Windows Store 应用，装的是"让 Windows 系统能解码 H.265"的能力。
+ * 管理端浏览器（Windows 上的 Chrome/Edge）需要它才能预览 H.265 视频。
+ * 桌面端有系统权限，可在首次启动检测并触发安装。 */
+const HEVC_STORE_URL = 'ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq';
+
+function detectHevcWindows() {
+  if (!isWin) return null;            // 非 Windows：macOS 多原生支持，返回 unknown
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      'Get-AppxPackage -Name *HEVC* | Select-Object -First 1 -ExpandProperty Name'],
+      { encoding: 'utf8', timeout: 8000 });
+    return !!String(r.stdout || '').trim();
+  } catch { return null; }
+}
+
+function installHevcExtension() {
+  if (!isWin) {
+    return { ok: false, message: '当前平台（macOS）通常原生支持 HEVC；若无法预览请改用 Safari 或转码为 H.264。' };
+  }
+  // 优先 winget 静默安装（需 Windows 10 1809+ 且已装 App Installer）
+  try {
+    const r = spawnSync('winget', ['install', '--exact',
+      '--accept-package-agreements', '--accept-source-agreements', '--silent',
+      'Microsoft.HEVCVideoExtensions'], { encoding: 'utf8', timeout: 180000 });
+    if (r.status === 0) return { ok: true, method: 'winget' };
+  } catch {}
+  // 退回打开 Microsoft Store 页面（用户点「获取」即可）
+  try { shell.openExternal(HEVC_STORE_URL); return { ok: true, method: 'store' }; }
+  catch (e) { return { ok: false, message: String((e && e.message) || e) }; }
+}
+
+ipcMain.handle('detect-hevc', () => detectHevcWindows());
+ipcMain.handle('install-hevc', () => installHevcExtension());
+ipcMain.on('open-store-hevc', () => { try { shell.openExternal(HEVC_STORE_URL); } catch {} });
+
+// 首次启动（仅 Windows、仅提示一次）：缺失则引导安装 HEVC 扩展
+async function maybePromptHevc() {
+  if (!isWin) return;
+  const flag = path.join(app.getPath('userData'), 'hevc-prompted.json');
+  if (fs.existsSync(flag)) return;
+  try { fs.writeFileSync(flag, JSON.stringify({ promptedAt: Date.now() })); } catch {}
+  let installed = false;
+  try { installed = detectHevcWindows() === true; } catch {}
+  if (installed) return;
+  const { response } = await dialog.showMessageBox(mainWin || undefined, {
+    type: 'info',
+    title: '建议安装 HEVC 视频扩展',
+    message: '本机尚未安装 Windows HEVC 视频扩展，预览 H.265 视频会黑屏。是否现在安装？',
+    detail: '灵屏已内置一键安装：点「安装」将打开 Microsoft Store，点击「获取」即可。安卓播放端不受影响。',
+    buttons: ['现在安装', '稍后'], defaultId: 0, cancelId: 1,
+  });
+  if (response === 0) {
+    const r = installHevcExtension();
+    if (!r.ok) dialog.showErrorBox('安装未自动完成', (r.message || '') + '\n请手动在 Microsoft Store 搜索「HEVC 视频扩展」安装。');
+  }
+}

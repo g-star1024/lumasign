@@ -37,7 +37,10 @@
     },
     "win": {
       "target": ["nsis", "zip"],
-      "icon": "desktop/icon.ico"
+      "icon": "desktop/icon.ico",
+      "nsis": {
+        "scripts": "desktop/install-hevc.nsh"
+      }
     }
   },
   "engines": {

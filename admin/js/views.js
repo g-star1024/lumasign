@@ -401,6 +401,38 @@ async function renderMedia() {
     file:  { icon: '📄', label: '文件' },
   };
 
+  // ── HEVC 视频扩展：浏览器能力探测 + 后台一键安装 ──
+  // Microsoft Store 免费 HEVC 扩展（微软官方）ProductId
+  const HEVC_STORE_URL = 'ms-windows-store://pdp/?ProductId=9n4wgh0z6vhq';
+
+  function browserSupportsHevc() {
+    try {
+      const v = document.createElement('video');
+      return !!v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+             !!v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"');
+    } catch { return false; }
+  }
+
+  // 优先走桌面宿主原生安装（真装，走 Electron 主进程），否则浏览器直接跳转商店页
+  async function installHevcFromAdmin() {
+    if (window.lumaDesktop && typeof window.lumaDesktop.installHevc === 'function') {
+      try {
+        const r = await window.lumaDesktop.installHevc();
+        if (r && r.ok) {
+          toast(r.method === 'winget'
+            ? '已通过 winget 静默安装 HEVC 扩展，刷新页面即可预览 H.265 视频'
+            : '已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展，完成后刷新页面', 'ok');
+        } else {
+          toast((r && r.message) ? r.message : '安装触发失败，请手动前往 Microsoft Store 搜索「HEVC 视频扩展」', 'err');
+        }
+        return;
+      } catch (e) { /* 回退到商店链接 */ }
+    }
+    // 纯浏览器环境：直接跳转商店页面（仅 Windows 有效）
+    window.open(HEVC_STORE_URL, '_blank');
+    toast('已打开 Microsoft Store，请点击「获取 / 安装」HEVC 视频扩展后刷新页面', 'ok');
+  }
+
   function openPreview(m) {
     const km = kindMeta[m.kind] || kindMeta.file;
     const head = el('div', {},
@@ -418,15 +450,20 @@ async function renderMedia() {
       const isHevc = m.codec === 'hevc' || m.browserPlayable === false;
       const degrade = (reason) => {
         if (ve.parentNode !== mediaBox) return; // 已降级或已被替换
-        const card = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)', maxWidth:'440px' } },
+        const card = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)', maxWidth:'460px' } },
           el('div', { style: { fontSize:'32px', marginBottom:'12px' }, text: isHevc ? '🎬' : '⚠' }),
           el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: isHevc ? '该视频为 H.265/HEVC 编码' : '视频加载失败' }),
           el('p', { style: { fontSize:'13px', color:'var(--c-text-2)', lineHeight:'1.6', marginBottom:'16px' },
             text: isHevc
-              ? '当前浏览器未启用 HEVC 解码（Windows 版 Chrome/Edge 默认不支持）。可在 Microsoft Store 安装「HEVC 视频扩展」后预览，或直接用安卓终端播放。'
+              ? '当前浏览器未启用 HEVC 解码（Windows 版 Chrome/Edge 默认不支持）。点击下方一键安装「HEVC 视频扩展」后即可预览，或直接用安卓终端播放。'
               : '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' }
           ),
-          el('a', { href: `/api/media/${m.id}/raw`, target: '_blank', class: 't-btn', style: { display:'inline-block', textDecoration:'none' }, text: '⬇ 下载原文件' })
+          el('div', { style: { display:'flex', gap:'8px', justifyContent:'center', flexWrap:'wrap', marginBottom:'8px' } },
+            isHevc ? el('button', { class: 't-btn primary', onclick: () => installHevcFromAdmin(), text: '⚡ 一键安装 HEVC 扩展' }) : null,
+            el('a', { href: `/api/media/${m.id}/raw`, target: '_blank', class: 't-btn', style: { textDecoration:'none' }, text: '⬇ 下载原文件' }),
+          ),
+          isHevc ? el('p', { style: { fontSize:'12px', color:'var(--c-text-3)', marginTop:'10px', marginBottom:'0' },
+            text: '安装方式类似 ADB：点击后弹出 Microsoft Store，点「获取」即完成，刷新页面即可预览。' }) : null,
         );
         ve.replaceWith(card);
       };
@@ -1569,6 +1606,30 @@ async function renderSettings() {
         } }, '保存设置')),
       ),
     );
+    /* HEVC 解码支持状态 + 一键安装 */
+    const hevcCard = el('div', { class: 'card', style: { maxWidth: '560px', marginTop: '16px' } },
+      el('h3', { text: '媒体解码（HEVC）', style: { margin: '0 0 12px', fontSize: '15px', color: 'var(--c-text-1)' } }),
+    );
+    (async () => {
+      let supported = null, viaDesktop = false;
+      try { supported = browserSupportsHevc(); } catch {}
+      if (window.lumaDesktop && typeof window.lumaDesktop.detectHevc === 'function') {
+        viaDesktop = true;
+        try { const d = await window.lumaDesktop.detectHevc(); if (typeof d === 'boolean') supported = d; } catch {}
+      }
+      hevcCard.append(
+        field('当前环境 HEVC 解码', supported === null
+          ? el('span', { class: 'badge', text: '未知' })
+          : supported
+            ? el('span', { class: 'badge ok', text: '已支持，可预览 H.265 视频' })
+            : el('span', { class: 'badge warn', text: '未启用，预览 H.265 会黑屏' })),
+        el('p', { class: 'sub', style: { margin: '0 0 12px' }, text: viaDesktop
+          ? '检测到灵屏桌面客户端：点击下方按钮可一键安装 Windows HEVC 视频扩展。'
+          : 'Windows 版 Chrome/Edge 默认不解码 H.265。可点击下方按钮跳转 Microsoft Store 安装「HEVC 视频扩展」，或用安卓终端播放。' }),
+        el('button', { class: 'btn primary', onclick: () => installHevcFromAdmin() }, '⚡ 安装 HEVC 视频扩展'),
+      );
+    })();
+    view.append(hevcCard);
     box.replaceWith(view);
   })();
   return box;
