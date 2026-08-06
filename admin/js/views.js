@@ -656,6 +656,12 @@ function renderEditor(params) {
       };
 
       return el('div', {},
+        el('button', { class: 'ed-lib-type', style: { width: '100%', justifyContent: 'center', marginBottom: '8px', background: (!ed.selRegion && !ed.hsMode) ? 'rgba(37,99,235,.12)' : 'transparent' }, onclick: () => {
+          ed.hsMode = false; ed.selRegion = null; ed.selItem = null;
+          if (hsToggle) { hsToggle.classList.remove('active'); hsToggle.textContent = '◉ 交互热区'; }
+          iframe.contentWindow?.postMessage({ type: 'luma:hs-mode', on: false }, '*');
+          refreshAll();
+        } }, '🎛 节目设置'),
         el('div', { class: 'ed-lib-head', text: '组件库' }),
         // 媒体类型按钮
         el('div', { class: 'ed-lib-types' },
@@ -729,12 +735,24 @@ function renderEditor(params) {
         else title = it.widget + ' 属性';
       } else if (r) {
         title = '区域属性';
+      } else {
+        title = '节目设置';
       }
 
       const children = [];
 
       if (!r) {
-        children.push(el('div', { style: { textAlign: 'center', color: 'var(--text-3)', padding: '40px 16px', fontSize: '13px' }}, '请先在左侧添加或选择一个区域'));
+        // === 节目级设置：导航栈自动返回 ===
+        children.push(
+          el('div', { class: 'ed-hint', text: '交互热区从其他节目跳转到【本节目】后，顶部会出现「← 返回」导航栏。设置下方超时，可在无人操作时自动返回上一级。' }),
+          el('div', { class: 'ed-field' },
+            el('label', { class: 'ed-field-label', text: '节目名称' }),
+            el('input', { class: 'ed-input', value: L.name || '', oninput: e => { L.name = e.target.value; updateStatus(); } })),
+          el('div', { class: 'ed-field' },
+            el('label', { class: 'ed-field-label', text: '跳转自动返回 (秒, 0=不自动)' }),
+            el('input', { class: 'ed-input', type: 'number', value: L._autoReturnSeconds ?? 0, min: 0, oninput: e => { L._autoReturnSeconds = Math.max(0, parseInt(e.target.value, 10) || 0); pushPreview(); updateStatus(); } })),
+          el('div', { class: 'ed-hint', style: { marginTop: '8px' }, text: '超时从进入本节目起计时；期间点击「返回」或再次跳转会重置计时。' }),
+        );
       } else if (!it) {
         // === 区域属性 ===
         children.push(
