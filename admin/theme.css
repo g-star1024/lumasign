@@ -111,7 +111,8 @@ a { color: var(--accent); text-decoration: none; }
 [data-theme="dark"] .page-monitor,
 [data-theme="dark"] .page-lifecycle,
 [data-theme="dark"] .page-health,
-[data-theme="dark"] .page-playproof {
+[data-theme="dark"] .page-playproof,
+[data-theme="dark"] .page-datasource {
   --c-primary:#3B82F6; --c-primary-hover:#2F6FEB; --c-primary-active:#2563EB; --c-primary-soft:#16233B;
   --c-bg:#0F1115; --c-surface:#1A1D23; --c-surface-2:#16181D; --c-border:#262B33; --c-border-2:#2D333D;
   --c-text:#E6E8EB; --c-text-2:#A0A4AB; --c-text-3:#6B7280;
@@ -123,10 +124,24 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 /* 新页面统一居中容器：宽屏下不散开、不贴边 */
-.page-lifecycle, .page-health, .page-playproof {
+.page-lifecycle, .page-health, .page-playproof, .page-datasource {
   max-width: 1240px;
   margin: 0 auto;
   width: 100%;
+}
+
+/* ---------------- 动态数据源（P1） ---------------- */
+.ds-table-wrap { padding: 4px 0; }
+.ds-name { font-weight: 600; color: var(--c-text); }
+.ds-form { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.ds-f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--c-text-2); }
+.ds-f.row { flex-direction: row; }
+.ds-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ds-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+.ds-preview {
+  background: var(--c-surface-2); border: 1px solid var(--c-border); border-radius: var(--c-radius-md);
+  padding: 12px; max-height: 56vh; overflow: auto; font-family: var(--c-mono); font-size: 12px;
+  color: var(--c-text); white-space: pre-wrap; word-break: break-all; line-height: 1.5;
 }
 
 /* ---------------- 布局 ---------------- */

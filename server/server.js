@@ -45,6 +45,8 @@ import { registerDeployApi } from './api/deploy.js';
 import { registerHealthApi } from './api/health.js';
 import { HealthMonitor } from './lib/health.js';
 import { registerPlayProofApi } from './api/playproof.js';
+import { DataSourceManager } from './lib/datasource.js';
+import { registerDataSourceApi } from './api/datasource.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -134,6 +136,11 @@ async function init(opts = {}) {
   ctx.health = health;
   health.start();
 
+  /* P1 动态内容数据源：定时拉取 HTTP/JSON、CSV，缓存供播放端读取 */
+  const dataManager = new DataSourceManager(ctx);
+  ctx.dataManager = dataManager;
+  dataManager.start();
+
   /* ---------------- 路由注册 ---------------- */
   const router = new Router();
   registerAdminApi(router, ctx);
@@ -145,6 +152,7 @@ async function init(opts = {}) {
   registerDeployApi(router, ctx);
   registerHealthApi(router, ctx);
   registerPlayProofApi(router, ctx);
+  registerDataSourceApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {
@@ -330,6 +338,8 @@ async function init(opts = {}) {
     try { clearInterval(refreshTimer); } catch { /* ignore */ }
     try { inventory.stop(); } catch { /* ignore */ }
     try { lifecycle.stop(); } catch { /* ignore */ }
+    try { health.stop(); } catch { /* ignore */ }
+    try { dataManager.stop(); } catch { /* ignore */ }
     store.flushAll();
     logger.flush();
     try { auditChain.flush(); } catch { /* ignore */ }

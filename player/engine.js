@@ -93,6 +93,7 @@ class Player {
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
     if (this.es) { try { this.es.close(); } catch {} this.es = null; }
+    if (this._dsTimer) { clearInterval(this._dsTimer); this._dsTimer = null; }
     app.innerHTML = '';
     this.stage = null; this.regionCtls = [];
   }
@@ -104,10 +105,49 @@ class Player {
     this.layout = layout;
     this.resolver = opts.resolver || (id => id);
     this.mode = opts.mode || 'preview';
+    this.dsCache = {};          // dataSourceId -> 最新数据
+    this._dsIds = [];
     hideFallback();
     this.buildStage(layout);
     this.startRegions(layout);
+    this.primeDataSources().catch(() => {}).finally(() => this.startDataSourcePolling());
     if (this.mode === 'term') { this.startPolling(); this.startCommands(); this.startHeartbeat(); }
+  }
+
+  /* ---------------- P1 动态数据源：拉取与缓存 ---------------- */
+  async fetchDataSourceData(id) {
+    if (!id) return null;
+    const base = (this.mode === 'term' && this.terminalId)
+      ? `/api/t/datasource/${id}?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`
+      : `/api/admin/datasources/${id}/data`;
+    try {
+      const r = await fetch(base, { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.data ?? null;
+    } catch { return null; }
+  }
+
+  async primeDataSources() {
+    const ids = new Set();
+    for (const r of (this.layout?.regions || [])) {
+      for (const it of (r.items || [])) if (it.dataSourceId) ids.add(it.dataSourceId);
+    }
+    this._dsIds = [...ids];
+    if (!this._dsIds.length) return;
+    await Promise.all(this._dsIds.map(async id => { this.dsCache[id] = await this.fetchDataSourceData(id); }));
+  }
+
+  startDataSourcePolling() {
+    if (this._dsTimer || !this._dsIds.length) return;
+    this._dsTimer = setInterval(async () => {
+      if (!this._dsIds.length || this.ctl?.aborted) return;
+      for (const id of this._dsIds) {
+        const data = await this.fetchDataSourceData(id);
+        if (data !== null) this.dsCache[id] = data;
+      }
+    }, 30000);
+    this._dsTimer.unref?.();
   }
 
   buildStage(layout) {
@@ -163,6 +203,7 @@ class Player {
 
   startRegions(layout) {
     for (const r of (layout.regions || [])) {
+      for (const it of (r.items || [])) it._getData = (id) => this.dsCache[id];
       if (r._el) this.runRegion(r);
     }
   }

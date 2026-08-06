@@ -614,6 +614,8 @@ function renderEditor(params) {
   (async () => {
     let d; try { d = await api.get(`/api/layouts/${id}`); } catch (e) { root.replaceWith(empty(e.message)); return; }
     const L = JSON.parse(JSON.stringify(d.item));
+    let dsList = [];
+    try { dsList = (await api.get('/api/admin/datasources')).items || []; } catch {}
     ed = { L, id, selRegion: L.regions?.[0]?.id || null, selItem: null, iframe: null, history: [], historyIdx: -1 };
 
     /* ── iframe 画布 ── */
@@ -667,6 +669,17 @@ function renderEditor(params) {
             el('span', { class: 'ico', text: 'T' }), el('span', {}, '超链文字')),
           el('div', { class: 'ed-lib-item', onclick: () => addWidget('clock') },
             el('span', { class: 'ico', text: '时' }), el('span', {}, '实时时钟')),
+        ),
+        // 动态数据组件（P1）
+        el('div', { class: 'ed-lib-sect' }),
+        el('div', { class: 'ed-lib-sect-title', text: '动态数据' }),
+        el('div', {},
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('data-text') },
+            el('span', { class: 'ico', text: '∑' }), el('span', {}, '模板文本')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('data-number') },
+            el('span', { class: 'ico', text: '#' }), el('span', {}, '数字牌')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('data-chart') },
+            el('span', { class: 'ico', text: '▤' }), el('span', {}, '图表')),
         ),
         // 区域列表（可切换选中区域）
         ...(L.regions && L.regions.length ? [
@@ -845,6 +858,66 @@ function renderEditor(params) {
               el('input', { class: 'ed-input', type: 'number', value: it.y ?? 0, oninput: e => changeField('y', parseFloat(e.target.value) || 0) })),
           );
         }
+
+        // 动态数据源组件（P1）
+        else if (it.widget === 'data-text' || it.widget === 'data-number' || it.widget === 'data-chart') {
+          const dsSel = el('select', { class: 'ed-select', onchange: e => changeField('dataSourceId', e.target.value) },
+            el('option', { value: '', text: '— 选择数据源 —', selected: !it.dataSourceId ? 'selected' : null }),
+            ...dsList.map(x => el('option', { value: x.id, selected: x.id === it.dataSourceId ? 'selected' : null, text: x.name + ' (' + x.type + ')' })),
+          );
+          children.push(
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '数据源' }), dsSel),
+            el('button', { class: 't-btn ghost', style: { marginBottom: '8px' }, onclick: () => { location.hash = '#/datasources'; } }, '管理数据源 →'),
+          );
+          if (it.widget === 'data-text') {
+            children.push(
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '模板（支持 {{data.字段}}）' }),
+                el('textarea', { class: 'ed-input', rows: 3, value: it.html || '', oninput: e => changeField('html', e.target.value), placeholder: '例如：当前值：{{data.value}}' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '降级文本（加载失败显示）' }),
+                el('input', { class: 'ed-input', value: it.fallback || '', oninput: e => changeField('fallback', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '字号' }),
+                el('input', { class: 'ed-input', type: 'number', value: it.fontSize ?? 48, oninput: e => changeField('fontSize', parseFloat(e.target.value) || 48) })),
+            );
+          } else if (it.widget === 'data-number') {
+            children.push(
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '数值字段' }),
+                el('input', { class: 'ed-input', value: it.valueField || '', oninput: e => changeField('valueField', e.target.value), placeholder: '如 value' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '标签' }),
+                el('input', { class: 'ed-input', value: it.label || '', oninput: e => changeField('label', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '单位' }),
+                el('input', { class: 'ed-input', value: it.unit || '', oninput: e => changeField('unit', e.target.value), placeholder: '如 人 / %' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '降级文本' }),
+                el('input', { class: 'ed-input', value: it.fallback || '', oninput: e => changeField('fallback', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '字号' }),
+                el('input', { class: 'ed-input', type: 'number', value: it.fontSize ?? 96, oninput: e => changeField('fontSize', parseFloat(e.target.value) || 96) })),
+            );
+          } else if (it.widget === 'data-chart') {
+            children.push(
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '图表类型' }),
+                el('select', { class: 'ed-select', onchange: e => changeField('chartType', e.target.value) },
+                  ...['bar', 'line', 'pie', 'donut'].map(o => el('option', { value: o, selected: o === (it.chartType || 'bar') ? 'selected' : null, text: o === 'bar' ? '柱状图' : o === 'line' ? '折线图' : o === 'pie' ? '饼图' : '环形图' })))),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '标签字段' }),
+                el('input', { class: 'ed-input', value: it.labelField || '', oninput: e => changeField('labelField', e.target.value), placeholder: '如 label' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '数值字段' }),
+                el('input', { class: 'ed-input', value: it.valueField || '', oninput: e => changeField('valueField', e.target.value), placeholder: '如 value' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '降级文本' }),
+                el('input', { class: 'ed-input', value: it.fallback || '', oninput: e => changeField('fallback', e.target.value) })),
+            );
+          }
+        }
         // 通用：删除按钮
         children.push(
           el('div', { style: { marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' } }),
@@ -964,6 +1037,9 @@ function defaultItem(w) {
   if (w === 'clock') return { ...base, format: 'digital', showDate: true, fontSize: 64, color: '#ffffff' };
   if (w === 'qrcode') return { ...base, content: 'https://example.com', showText: true };
   if (w === 'meeting') return { ...base, roomName: '会议室 A', busy: false };
+  if (w === 'data-text') return { id: base.id, widget: w, duration: 0, dataSourceId: '', html: '当前值：{{data.value}}', fallback: '数据加载中…', fontSize: 48, color: '#ffffff', align: 'center' };
+  if (w === 'data-number') return { id: base.id, widget: w, duration: 0, dataSourceId: '', valueField: 'value', label: '指标', unit: '', fallback: '—', fontSize: 96, color: '#ffffff', align: 'center' };
+  if (w === 'data-chart') return { id: base.id, widget: w, duration: 0, dataSourceId: '', chartType: 'bar', labelField: 'label', valueField: 'value', fallback: '暂无数据' };
   return base;
 }
 const field = (label, input) => el('div', { class: 'prop-row' }, el('label', { text: label }), input);
@@ -2197,6 +2273,239 @@ async function renderPlayProof() {
   return root;
 }
 
+/* ---------------- 动态内容数据源（P1 数据驱动） ---------------- */
+async function renderDataSources() {
+  const root = el('div', { class: 'page-datasource' }, spinner());
+
+  const canManage = can('datasource:manage');
+
+  const statCard = (label, value, sub) => el('div', { class: 't-stat' },
+    el('div', { class: 'label', text: label }),
+    el('div', { class: 'value', text: String(value) }),
+    el('div', { class: 'hint', text: sub || '' }),
+  );
+  const statsEl = el('div', { class: 't-stats' });
+  const tableWrap = el('div', { class: 'ds-table-wrap' });
+
+  const TYPE_LABEL = { 'http-json': 'HTTP/JSON', 'csv': 'CSV' };
+  const STATUS_TONE = { ok: 's', error: 'd', idle: 'off', '' : 'off' };
+  const statusBadge = (s, err) => {
+    const tone = STATUS_TONE[s] || 'off';
+    const label = s === 'ok' ? '正常' : s === 'error' ? '失败' : s === 'idle' ? '未运行' : String(s || '未知');
+    const b = el('span', { class: `t-badge ${tone}`, text: label });
+    if (s === 'error' && err) b.title = err;
+    return b;
+  };
+
+  function openForm(existing) {
+    const isEdit = !!existing;
+    const f = {
+      name: existing?.name || '',
+      type: existing?.type || 'http-json',
+      url: existing?.url || '',
+      method: existing?.method || 'GET',
+      path: existing?.path || '',
+      delimiter: existing?.delimiter || ',',
+      auth: existing?.auth || 'none',
+      basicUser: existing?.basicUser || '',
+      basicPass: existing?.basicPass || '',
+      refreshSec: existing?.refreshSec || 60,
+      timeoutSec: existing?.timeoutSec || 15,
+      enabled: existing?.enabled !== false,
+    };
+
+    const nameI = el('input', { class: 'input', value: f.name, placeholder: '如：门店实时客流' });
+    const typeI = el('select', { class: 't-select' },
+      el('option', { value: 'http-json', text: 'HTTP / JSON' }),
+      el('option', { value: 'csv', text: 'CSV（远程文件）' }),
+    );
+    typeI.value = f.type;
+    const urlI = el('input', { class: 'input', value: f.url, placeholder: 'https://.../api/data' });
+    const methodI = el('select', { class: 't-select' },
+      el('option', { value: 'GET', text: 'GET' }),
+      el('option', { value: 'POST', text: 'POST' }),
+    );
+    methodI.value = f.method;
+    const pathI = el('input', { class: 'input', value: f.path, placeholder: 'JSONPath，如 data.list（留空取根）' });
+    const delimI = el('input', { class: 'input', value: f.delimiter, placeholder: '如 , 或 ; 或 \\t' });
+    const authI = el('select', { class: 't-select' },
+      el('option', { value: 'none', text: '无鉴权' }),
+      el('option', { value: 'basic', text: 'HTTP Basic' }),
+    );
+    authI.value = f.auth;
+    const userI = el('input', { class: 'input', value: f.basicUser, placeholder: 'Basic 用户名' });
+    const passI = el('input', { class: 'input', type: 'password', value: f.basicPass, placeholder: 'Basic 密码' });
+    const refreshI = el('input', { class: 'input', type: 'number', min: '5', value: f.refreshSec });
+    const timeoutI = el('input', { class: 'input', type: 'number', min: '1', value: f.timeoutSec });
+    const enabledI = el('input', { type: 'checkbox' });
+    enabledI.checked = f.enabled;
+
+    const methodRow = el('label', { class: 'ds-f' }, el('span', { text: '请求方法' }), methodI);
+    const pathRow = el('label', { class: 'ds-f' }, el('span', { text: 'JSONPath 提取' }), pathI);
+    const delimRow = el('label', { class: 'ds-f' }, el('span', { text: '分隔符' }), delimI);
+    const userRow = el('label', { class: 'ds-f' }, el('span', { text: '用户名' }), userI);
+    const passRow = el('label', { class: 'ds-f' }, el('span', { text: '密码' }), passI);
+
+    function syncType() {
+      const isJson = typeI.value === 'http-json';
+      methodRow.style.display = isJson ? '' : 'none';
+      pathRow.style.display = isJson ? '' : 'none';
+      delimRow.style.display = isJson ? 'none' : '';
+    }
+    function syncAuth() {
+      const show = authI.value === 'basic';
+      userRow.style.display = show ? '' : 'none';
+      passRow.style.display = show ? '' : 'none';
+    }
+    typeI.onchange = syncType;
+    authI.onchange = syncAuth;
+    syncType(); syncAuth();
+
+    const saveBtn = el('button', { class: 't-btn primary' }, isEdit ? '保存修改' : '创建数据源');
+    const form = el('div', { class: 'ds-form' },
+      el('label', { class: 'ds-f' }, el('span', { text: '名称' }), nameI),
+      el('label', { class: 'ds-f' }, el('span', { text: '类型' }), typeI),
+      el('label', { class: 'ds-f' }, el('span', { text: '数据源 URL' }), urlI),
+      methodRow, pathRow, delimRow,
+      el('label', { class: 'ds-f' }, el('span', { text: '鉴权' }), authI),
+      userRow, passRow,
+      el('div', { class: 'ds-grid2' },
+        el('label', { class: 'ds-f' }, el('span', { text: '刷新间隔(秒)' }), refreshI),
+        el('label', { class: 'ds-f' }, el('span', { text: '超时(秒)' }), timeoutI),
+      ),
+      el('label', { class: 'ds-f row', style: { alignItems: 'center' } },
+        enabledI, el('span', { text: '启用（关闭后不再自动拉取）' })),
+    );
+
+    const close = openModal(el('div', { class: 'page-datasource' },
+      el('h2', { text: isEdit ? '编辑数据源' : '新建数据源', style: { marginBottom: '10px' } }),
+      el('div', { class: 't-dnote', text: '拉取结果由服务端缓存，播放端经终端鉴权读取，不直连外网、不暴露 token。' }),
+      form,
+      el('div', { class: 'ds-actions' },
+        saveBtn,
+        el('button', { class: 't-btn', onclick: close }, '取消'),
+      ),
+    ));
+
+    saveBtn.onclick = async () => {
+      const payload = {
+        name: nameI.value.trim() || '未命名数据源',
+        type: typeI.value,
+        url: urlI.value.trim(),
+        method: methodI.value,
+        path: pathI.value.trim(),
+        delimiter: delimI.value.trim() || ',',
+        auth: authI.value,
+        basicUser: userI.value.trim(),
+        basicPass: passI.value,
+        refreshSec: Math.max(5, parseInt(refreshI.value, 10) || 60),
+        timeoutSec: Math.max(1, parseInt(timeoutI.value, 10) || 15),
+        enabled: enabledI.checked,
+      };
+      if (!payload.url) return toast('请填写数据源 URL', 'err');
+      saveBtn.disabled = true;
+      try {
+        if (isEdit) await api.put(`/api/admin/datasources/${existing.id}`, payload);
+        else await api.post('/api/admin/datasources', payload);
+        toast(isEdit ? '已保存' : '数据源已创建', 'ok');
+        close(); await load();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { saveBtn.disabled = false; }
+    };
+  }
+
+  function showPreview(ds, r) {
+    const head = el('div', {},
+      el('h2', { text: ds.name || ds.id, style: { marginBottom: '4px' } }),
+      el('div', { class: 't-dnote', text: `${TYPE_LABEL[ds.type] || ds.type} · 耗时 ${r.tookMs ?? '?'}ms · ${r.ok ? '拉取成功' : '拉取失败'}` }),
+    );
+    let body;
+    if (r.ok) {
+      body = el('pre', { class: 'ds-preview', text: r.sampleStr || '(空数据)' });
+    } else {
+      body = el('div', { class: 'empty', text: '拉取失败：' + (r.error || '未知错误') });
+    }
+    openModal(el('div', { class: 'page-datasource' }, head, body));
+  }
+
+  async function refreshDs(ds) {
+    try {
+      const r = await api.post(`/api/admin/datasources/${ds.id}/refresh`);
+      if (r.ok) toast(`已刷新：${ds.name}`, 'ok');
+      else toast('刷新失败：' + (r.error || '未知错误'), 'err');
+      showPreview(ds, r);
+      await load();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  async function removeDs(ds) {
+    if (!(await confirmModal({ title: '删除数据源', body: `确认删除「${esc(ds.name)}」？关联节目中将无法取数。`, danger: true }))) return;
+    try { await api.del(`/api/admin/datasources/${ds.id}`); toast('已删除', 'ok'); await load(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+
+  function row(ds) {
+    const actions = el('div', { class: 'row', style: { gap: '6px' } },
+      el('button', { class: 'btn sm', onclick: () => refreshDs(ds) }, '刷新'),
+      canManage ? el('button', { class: 'btn sm', onclick: () => openForm(ds) }, '编辑') : '',
+      canManage ? el('button', { class: 'btn sm danger', onclick: () => removeDs(ds) }, '删除') : '',
+    );
+    return el('tr', {},
+      el('td', {}, el('div', { class: 'ds-name', text: ds.name }), el('div', { class: 'sub', text: ds.id })),
+      el('td', { text: TYPE_LABEL[ds.type] || ds.type }),
+      el('td', {}, statusBadge(ds.status, ds.lastError)),
+      el('td', { class: 'mono', text: ds.lastFetch ? fmtAgo(ds.lastFetch) : '—' }),
+      el('td', { class: 'mono', text: ds.tookMs != null ? ds.tookMs + 'ms' : '—' }),
+      el('td', {}, actions),
+    );
+  }
+
+  function paint(items) {
+    const total = items.length;
+    const okN = items.filter(x => x.status === 'ok').length;
+    const errN = items.filter(x => x.status === 'error').length;
+    statsEl.replaceChildren(
+      statCard('数据源总数', total, `${okN} 正常 · ${errN} 异常`),
+      statCard('刷新周期', items.length ? Math.min(...items.map(x => x.refreshSec || 60)) + 's 起' : '—', '服务端定时拉取'),
+      statCard('缓存方式', '服务端', '播放端经终端鉴权读取'),
+    );
+    if (!items.length) {
+      tableWrap.replaceChildren(el('div', { class: 'empty', text: '暂无数据源。点击右上角「新建数据源」接入实时数据。' }));
+      return;
+    }
+    tableWrap.replaceChildren(el('table', { class: 't-table' },
+      el('thead', {}, el('tr', {},
+        el('th', { text: '名称' }), el('th', { text: '类型' }), el('th', { text: '状态' }),
+        el('th', { text: '最后刷新' }), el('th', { text: '耗时' }), el('th', { text: '操作' }),
+      )),
+      el('tbody', {}, ...items.map(row)),
+    ));
+  }
+
+  let all = [];
+  async function load() {
+    try {
+      const d = await api.get('/api/admin/datasources');
+      all = d.items || [];
+      paint(all);
+    } catch (e) { root.replaceWith(empty(e.message)); }
+  }
+
+  root.replaceChildren(
+    el('div', { class: 't-head' },
+      el('div', { class: 't-title', text: '动态内容数据源' }),
+      el('div', { class: 'spacer' }),
+      canManage ? el('button', { class: 't-btn primary', onclick: () => openForm() }, '＋ 新建数据源') : '',
+    ),
+    el('div', { class: 't-sub', text: '接入 HTTP/JSON 或 CSV 实时数据，在节目中绑定「动态数据」组件即可自动填充数据。' }),
+    statsEl,
+    el('div', { class: 't-card', style: { padding: '0', marginTop: '16px' } }, tableWrap),
+  );
+
+  await load();
+  return root;
+}
+
 export const views = {
   security: renderSecurity,
   dashboard: renderDashboard,
@@ -2214,4 +2523,5 @@ export const views = {
   settings: renderSettings,
   fleet: renderFleet,
   lifecycle: renderLifecycle,
+  dataSources: renderDataSources,
 };

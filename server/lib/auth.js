@@ -33,6 +33,7 @@ export const PERMISSIONS = {
   'message:insert': '插播消息',
   'user:view': '查看用户', 'user:edit': '管理用户', 'role:edit': '管理角色',
   'log:view': '查看日志', 'system:setting': '系统设置',
+  'datasource:view': '查看数据源', 'datasource:manage': '管理数据源',
 };
 export const ALL_PERMS = Object.keys(PERMISSIONS);
 

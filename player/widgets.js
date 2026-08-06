@@ -158,6 +158,142 @@ function renderHtml(holder, item) {
   return () => {};
 }
 
+/* ================= P1 动态内容数据源组件 ================= */
+function pickPath(obj, path) {
+  if (obj == null || !path) return obj;
+  return String(path).split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+/** 模板变量 {{data.xxx}} 替换（数据值做 HTML 转义，模板静态 HTML 保留） */
+function renderTemplate(tpl, data) {
+  if (!tpl) return '';
+  return tpl.replace(/\{\{\s*data\.([^}]+?)\s*\}\}/g, (m, p) => {
+    const v = pickPath(data, p.trim());
+    return v == null ? '' : esc(v);
+  });
+}
+function polar(cx, cy, r, deg) {
+  const a = (deg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+}
+function arcPath(cx, cy, r, a0, a1) {
+  const s = polar(cx, cy, r, a1), e = polar(cx, cy, r, a0);
+  const large = (a1 - a0) <= 180 ? 0 : 1;
+  return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 0 ${e.x} ${e.y} Z`;
+}
+function donutSeg(cx, cy, rO, rI, a0, a1) {
+  const p0o = polar(cx, cy, rO, a0), p1o = polar(cx, cy, rO, a1);
+  const p1i = polar(cx, cy, rI, a1), p0i = polar(cx, cy, rI, a0);
+  const large = (a1 - a0) <= 180 ? 0 : 1;
+  return `M ${p0o.x} ${p0o.y} A ${rO} ${rO} 0 ${large} 1 ${p1o.x} ${p1o.y} L ${p1i.x} ${p1i.y} A ${rI} ${rI} 0 ${large} 0 ${p0i.x} ${p0i.y} Z`;
+}
+
+/** 模板文本：支持 {{data.field}}，定时刷新，降级显示 fallback */
+function renderDataText(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-text ' + (item.align || 'center');
+  const fs = item.fontSize ? `font-size:${item.fontSize}px;` : '';
+  const color = item.color ? `color:${item.color};` : '';
+  const bg = item.bg ? `background:${item.bg};` : '';
+  d.style.cssText = fs + color + bg;
+  holder.appendChild(d);
+  const fallback = item.fallback || '数据加载中…';
+  const render = () => {
+    const data = item._getData ? item._getData(item.dataSourceId) : null;
+    if (data == null) { d.textContent = fallback; return; }
+    d.innerHTML = renderTemplate(item.html || item.text || '', data);
+  };
+  render();
+  const id = setInterval(render, 1000);
+  return () => clearInterval(id);
+}
+
+/** 数字翻牌：取数字字段大字号展示 */
+function renderDataNumber(holder, item) {
+  const wrap = document.createElement('div');
+  wrap.className = 'w-number ' + (item.align || 'center');
+  wrap.style.cssText = item.color ? `color:${item.color};` : '';
+  const valEl = document.createElement('div'); valEl.className = 'num';
+  const unitEl = document.createElement('div'); unitEl.className = 'unit';
+  const labelEl = document.createElement('div'); labelEl.className = 'label';
+  wrap.append(valEl, unitEl, labelEl);
+  holder.appendChild(wrap);
+  const render = () => {
+    const data = item._getData ? item._getData(item.dataSourceId) : null;
+    if (data == null) { valEl.textContent = item.fallback || '—'; return; }
+    const v = pickPath(data, item.valueField || 'value');
+    const num = Number(v);
+    valEl.textContent = isNaN(num) ? (v == null ? (item.fallback || '—') : String(v)) : num.toLocaleString('zh-CN');
+    unitEl.textContent = item.unit || '';
+    labelEl.textContent = item.label || '';
+  };
+  render();
+  const id = setInterval(render, 1000);
+  return () => clearInterval(id);
+}
+
+/** SVG 图表：柱状 / 折线 / 环形 / 饼图（纯手写，零依赖） */
+function renderDataChart(holder, item) {
+  const box = document.createElement('div');
+  box.className = 'w-chart';
+  holder.appendChild(box);
+  const W = 460, H = 260, palette = ['#2563EB', '#2DD4A7', '#F5B544', '#FF6B6E', '#8B5CF6', '#3B82F6', '#14B8A6', '#F97316'];
+  const render = () => {
+    const data = item._getData ? item._getData(item.dataSourceId) : null;
+    const arr = Array.isArray(data) ? data : (data ? [data] : []);
+    if (!arr.length) { box.innerHTML = `<div class="empty">${esc(item.fallback || '暂无数据')}</div>`; return; }
+    const labelF = item.labelField || 'label';
+    const valueF = item.valueField || 'value';
+    const rows = arr.map(r => ({ label: String(r[labelF] ?? ''), value: Number(r[valueF]) || 0 }));
+    const type = item.chartType || 'bar';
+    let svg = '';
+    if (type === 'pie' || type === 'donut') {
+      const total = rows.reduce((s, r) => s + r.value, 0) || 1;
+      const cx = W / 2, cy = H / 2, rO = Math.min(W, H) / 2 - 10, rI = type === 'donut' ? rO * 0.55 : 0;
+      let a0 = 0;
+      svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet">`;
+      rows.forEach((r, i) => {
+        const a1 = a0 + (r.value / total) * 360;
+        const color = palette[i % palette.length];
+        svg += type === 'donut'
+          ? `<path d="${donutSeg(cx, cy, rO, rI, a0, a1)}" fill="${color}"/>`
+          : `<path d="${arcPath(cx, cy, rO, a0, a1)}" fill="${color}"/>`;
+        a0 = a1;
+      });
+      svg += `</svg>`;
+    } else if (type === 'line') {
+      const maxV = Math.max(1, ...rows.map(r => r.value));
+      const n = rows.length;
+      const pad = 30;
+      const bw = (W - pad * 2) / Math.max(1, n - 1);
+      const pts = rows.map((r, i) => `${pad + i * bw},${H - pad - (r.value / maxV) * (H - pad * 2)}`);
+      svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet">` +
+        `<polyline points="${pts.join(' ')}" fill="none" stroke="${palette[0]}" stroke-width="3"/>` +
+        rows.map((r, i) => `<circle cx="${pad + i * bw}" cy="${H - pad - (r.value / maxV) * (H - pad * 2)}" r="4" fill="${palette[0]}"/>`).join('') +
+        `</svg>`;
+    } else { // bar
+      const maxV = Math.max(1, ...rows.map(r => r.value));
+      const n = rows.length;
+      const padB = 28, padT = 10;
+      const slot = W / n;
+      const bw = slot * 0.6;
+      svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet">`;
+      rows.forEach((r, i) => {
+        const h = (r.value / maxV) * (H - padB - padT);
+        const x = i * slot + (slot - bw) / 2;
+        const y = H - padB - h;
+        const color = palette[i % palette.length];
+        svg += `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="${color}"/>`;
+        svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="11" fill="currentColor">${esc(r.label).slice(0, 8)}</text>`;
+      });
+      svg += `</svg>`;
+    }
+    box.innerHTML = svg;
+  };
+  render();
+  const id = setInterval(render, 2000);
+  return () => clearInterval(id);
+}
+
 const RENDERERS = {
   image: renderImage,
   video: renderVideo,
@@ -167,6 +303,9 @@ const RENDERERS = {
   qrcode: renderQR,
   meeting: renderMeeting,
   html: renderHtml,
+  'data-text': renderDataText,
+  'data-number': renderDataNumber,
+  'data-chart': renderDataChart,
 };
 
 export function renderWidget(holder, item, resolver, onEnd) {

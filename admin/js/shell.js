@@ -11,6 +11,7 @@ const NAV = [
     { id: 'terminals', label: '终端管理', icon: '▦', perm: 'terminal:view', hash: '#/terminals' },
     { id: 'media', label: '素材库', icon: '❖', perm: 'media:view', hash: '#/media' },
     { id: 'layouts', label: '节目制作', icon: '◳', perm: 'layout:view', hash: '#/layouts' },
+    { id: 'dataSources', label: '动态数据源', icon: '◈', perm: 'datasource:view', hash: '#/dataSources' },
     { id: 'approvals', label: '审批中心', icon: '✔', perm: 'layout:view', hash: '#/approvals' },
     { id: 'schedules', label: '排期下发', icon: '▤', perm: 'schedule:view', hash: '#/schedules' },
     { id: 'lifecycle', label: '内容生命周期', icon: '⧗', perm: 'media:view', hash: '#/lifecycle' },
