@@ -1029,6 +1029,8 @@ function renderEditor(params) {
           const lopts = [el('option', { value: '', text: '— 选择节目 —' })].concat((ed.layoutsList || []).map(l => el('option', { value: l.id, selected: l.id === a.target, text: l.name || l.id })));
           children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '跳转到的节目' }),
             el('select', { class: 'ed-select', onchange: e => sendAction({ ...a, target: e.target.value }) }, ...lopts)));
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '自动返回(秒, 0=不自动/用节目默认)' }),
+            el('input', { class: 'ed-input', type: 'number', min: '0', max: '3600', value: a.autoReturnSeconds ?? '', placeholder: '留空则使用节目设置', oninput: e => { const v = parseInt(e.target.value, 10); sendAction({ ...a, autoReturnSeconds: isNaN(v) ? null : v }); } })));
         }
 
         children.push(el('button', { class: 't-btn danger', style: { width: '100%', marginTop: '12px' },

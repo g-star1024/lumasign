@@ -389,8 +389,8 @@ class Player {
     document.body.appendChild(bar);
     this.navBar = bar;
 
-    // 如果热区配置了自动返回超时，启动定时器
-    const autoReturnSecs = this.layout?._autoReturnSeconds || 0;
+    // 热区级自动返回优先，其次用节目级默认值
+    const autoReturnSecs = this._pendingAutoReturn ?? (this.layout?._autoReturnSeconds || 0);
     if (autoReturnSecs > 0) this.startAutoReturn(autoReturnSecs);
   }
 
@@ -429,19 +429,25 @@ class Player {
       if (window.LumaBridge && window.LumaBridge.openUrl) window.LumaBridge.openUrl(url);
       else window.open(url, '_blank');
     } else if (a.type === 'layout') {
-      if (a.target) this.gotoLayout(a.target);
+      if (a.target) this.gotoLayout(a.target, a.autoReturnSeconds);
     } else if (a.type === 'popup') {
       this.showPopup(a);
     }
     // type 'none' → 无操作
   }
 
-  async gotoLayout(id) {
+  async gotoLayout(id, autoReturnSecs) {
     // 将当前节目压入导航栈
     if (this.layout && this.layout.id) {
       this.navStack.push({ id: this.layout.id, name: this.layout.name || '主界面' });
     }
     this.cancelNavTimer();
+    // 热区级自动返回优先于节目级默认值
+    if (typeof autoReturnSecs === 'number' && autoReturnSecs > 0) {
+      this._pendingAutoReturn = autoReturnSecs;
+    } else {
+      this._pendingAutoReturn = null;
+    }
     const base = (this.mode === 'term' && this.terminalId)
       ? `/api/t/layout/${encodeURIComponent(id)}?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`
       : `/api/layouts/${encodeURIComponent(id)}`;
