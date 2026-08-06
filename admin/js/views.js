@@ -330,16 +330,16 @@ async function renderHealth() {
         el('button', { class: 't-btn primary', onclick: save }, '保存'))));
   }
 
+  const searchInput = el('input', { placeholder: '搜索终端…', oninput: (e) => filter(e.target.value) });
   root.append(
     el('div', { class: 't-head' },
       el('div', { class: 't-title', text: '终端健康看板' }),
-      can('system:setting') ? el('button', { class: 't-btn', onclick: openHealthConfig }, '⚙ 阈值配置') : '',
+      el('div', { class: 't-head-actions' },
+        el('div', { class: 't-search', style: { width: '240px' } }, el('span', { text: '🔍' }), searchInput),
+        can('system:setting') ? el('button', { class: 't-btn', onclick: openHealthConfig }, '⚙ 阈值配置') : '',
+      ),
     ),
     summaryBox,
-    el('div', { class: 't-toolbar' },
-      el('div', { class: 't-search' }, el('span', { text: '🔍' }),
-        el('input', { placeholder: '搜索终端…', oninput: (e) => filter(e.target.value) })),
-    ),
     listWrap,
   );
 
@@ -407,11 +407,21 @@ async function renderMedia() {
       el('h2', { text: m.name || m.id, style: { marginBottom: '4px' } }),
       el('div', { class: 't-dnote', text: `${km.label} · ${fmtBytes(m.size || 0)}` }),
     );
-    const preview = m.kind === 'image'
-      ? el('div', { style: { minHeight: '240px', background: '#0F1214', borderRadius: 'var(--c-radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' } },
-          el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '460px', display: 'block' } }))
-      : el('div', { style: { height: '200px', background: 'var(--c-surface-2)', borderRadius: 'var(--c-radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '44px', color: 'var(--c-text-3)' }, text: km.icon });
-    openModal(el('div', { class: 'page-media' }, head, preview));
+    const mediaBox = el('div', { style: { background: '#0F1214', borderRadius: 'var(--c-radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: '12px' } });
+    if (m.kind === 'image') {
+      mediaBox.style.minHeight = '240px';
+      mediaBox.append(el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '520px', display: 'block' } }));
+    } else if (m.kind === 'video') {
+      mediaBox.append(el('video', { src: `/api/media/${m.id}/raw`, controls: true, style: { maxWidth: '100%', maxHeight: '520px', display: 'block', background: '#000' } }));
+    } else if (m.kind === 'audio') {
+      mediaBox.append(el('audio', { src: `/api/media/${m.id}/raw`, controls: true, style: { width: '100%', marginTop: '40px', marginBottom: '40px' } }));
+    } else {
+      mediaBox.style.height = '200px';
+      mediaBox.style.fontSize = '44px';
+      mediaBox.style.color = 'var(--c-text-3)';
+      mediaBox.textContent = km.icon;
+    }
+    openModal(el('div', { class: 'page-media' }, head, mediaBox));
   }
 
   function card(m) {
@@ -1421,9 +1431,30 @@ async function renderFleet() {
       el('button', { class: 'btn primary', onclick: scan }, '扫描设备'),
     );
 
-    const adbBadge = adb.available
-      ? el('span', { class: 'badge ok', text: 'adb 就绪' })
-      : el('span', { class: 'badge warn', text: 'adb 未安装（IP 扫描可用，APK 推送需 adb）' });
+    const adbBox = el('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } });
+    const installBtn = el('button', { class: 'btn', onclick: installAdb }, '一键安装 ADB');
+    function paintAdb(a) {
+      adbBox.replaceChildren(
+        a.available
+          ? el('span', { class: 'badge ok', text: 'adb 就绪' })
+          : el('span', { class: 'badge warn', text: 'adb 未安装（IP 扫描可用，APK 推送需 adb）' }),
+        a.available ? '' : installBtn,
+      );
+    }
+    paintAdb(adb);
+
+    async function installAdb() {
+      installBtn.disabled = true;
+      installBtn.textContent = '安装中…';
+      try {
+        const d = await api.post('/api/admin/fleet/install-adb');
+        if (d.ok) { toast('adb 安装完成：' + d.adbPath, 'ok'); }
+        else { toast('安装失败：' + (d.output || '未知错误'), 'err'); const m = openModal(el('div', {}, el('h2', { text: 'ADB 安装日志' }), el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', maxHeight: '340px', overflow: 'auto', background: 'var(--bg-2)', padding: '12px', borderRadius: '8px' } }, (d.log || []).join('\n')))); }
+        const refreshed = await api.get('/api/admin/fleet/adb').catch(() => null);
+        if (refreshed) paintAdb(refreshed);
+      } catch (e) { toast(e.message, 'err'); }
+      finally { installBtn.disabled = false; installBtn.textContent = '一键安装 ADB'; }
+    }
 
     box.replaceChildren(
       head,
@@ -1451,8 +1482,8 @@ async function renderFleet() {
         ),
         el('div', { class: 'row', style: { marginTop: '10px', gap: '10px', alignItems: 'center' } },
           el('button', { class: 'btn primary', onclick: scan }, '开始扫描'),
-          adbBadge,
-          el('span', { class: 'sub', text: adb.available ? `(${adb.path})` : '下载 adb：https://developer.android.com/tools/adb → 放入 desktop/adb/ 目录即可启用 APK 推送' }),
+          adbBox,
+          el('span', { class: 'sub', text: adb.available ? `(${adb.path})` : '点击「一键安装 ADB」可自动下载官方工具，无需手动配置' }),
         ),
       ),
       resultsEl,
@@ -2058,9 +2089,8 @@ async function renderLifecycle() {
     ),
     el('div', { class: 't-sub', text: '为素材 / 节目 / 排期设置有效期，到期自动从所有终端下线并归档；断网时终端也会按本地缓存的失效时间自行停播。' }),
     statsEl,
-    el('div', { class: 'grid cols-2', style: { marginTop: '16px', alignItems: 'start' } }, cfgCard, el('div', {},
-      el('div', { class: 't-toolbar', style: { marginBottom: '0' } }, typeSel, stateSel, qInput),
-    )),
+    el('div', { class: 't-toolbar', style: { marginTop: '16px', marginBottom: '16px' } }, typeSel, stateSel, qInput),
+    cfgCard,
     tableWrap,
   );
 

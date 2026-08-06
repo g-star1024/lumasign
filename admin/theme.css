@@ -122,6 +122,13 @@ a { color: var(--accent); text-decoration: none; }
   --c-shadow:0 1px 2px rgba(0,0,0,.30),0 1px 3px rgba(0,0,0,.40);
 }
 
+/* 新页面统一居中容器：宽屏下不散开、不贴边 */
+.page-lifecycle, .page-health, .page-playproof {
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 /* ---------------- 布局 ---------------- */
 .shell { display: flex; height: 100vh; }
 .sidebar {
@@ -449,8 +456,9 @@ tbody tr:hover { background: var(--hover); }
   --c-font:"Sarasa Gothic SC","PingFang SC",system-ui,sans-serif;
   --c-mono:"IBM Plex Mono",ui-monospace,monospace;
 }
-.t-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.t-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; gap:12px; flex-wrap:wrap; }
 .t-title { font-size:20px; font-weight:600; }
+.t-head-actions { display:flex; align-items:center; gap:10px; }
 .t-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:20px; }
 .t-stat { background:var(--c-surface); border:1px solid var(--c-border); border-radius:var(--c-radius-lg); box-shadow:var(--c-shadow); padding:20px; display:flex; flex-direction:column; gap:8px; }
 .t-stat .label { font-size:13px; color:var(--c-text-2); }

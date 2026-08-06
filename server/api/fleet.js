@@ -8,7 +8,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { json, fail, readJson } from '../lib/http.js';
 import {
-  scanTargets, adbInstall, adbUninstall, adbVersion, vendorPush,
+  scanTargets, adbInstall, adbUninstall, adbVersion, vendorPush, installAdb, resolveAdbPath,
 } from '../lib/fleet.js';
 
 export function registerFleetApi(router, ctx) {
@@ -30,10 +30,17 @@ export function registerFleetApi(router, ctx) {
     return existsSync(fp) ? fp : null;
   };
 
-  /* adb 可用性（桌面端打包了 adb；纯 Node 运行则依赖 PATH 中的 adb） */
+  /* adb 可用性（桌面端打包了 adb；纯 Node 运行则依赖 PATH 中的 adb；本机安装后优先用 desktop/adb） */
   router.get('/api/admin/fleet/adb', guard('terminal:upgrade', async (req, res) => {
-    const v = await adbVersion(adbPath);
-    return json(res, { ok: true, available: v.available, path: adbPath, output: v.output });
+    const real = resolveAdbPath(ctx);
+    const v = await adbVersion(real);
+    return json(res, { ok: true, available: v.available, path: real, output: v.output });
+  }));
+
+  /* 一键安装 ADB（服务端下载官方 platform-tools 到 desktop/adb） */
+  router.post('/api/admin/fleet/install-adb', guard('terminal:upgrade', async (req, res) => {
+    const r = await installAdb(ctx);
+    return json(res, { ok: r.ok, available: r.ok, adbPath: r.adbPath, output: r.output, log: r.log });
   }));
 
   /* 扫描：支持显式 IP 列表 或 子网末段区间 */

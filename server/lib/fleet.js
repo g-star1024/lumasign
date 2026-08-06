@@ -13,7 +13,11 @@
  */
 import net from 'node:net';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import https from 'node:https';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const DEFAULT_TIMEOUT = 900;
@@ -211,3 +215,87 @@ export async function vendorPush(ip, apkPath, { ports = [80, 8080, 8000] } = {})
 }
 
 export const FLEET_CONST = { DEFAULT_TIMEOUT };
+
+/* ---------------- ADB 一键安装（服务端下载官方 platform-tools） ---------------- */
+
+/**
+ * 优先返回已下载到 desktop/adb/platform-tools 的 adb；否则回退到启动时的 adbPath。
+ */
+export function resolveAdbPath(ctx) {
+  const root = ctx?.paths?.root || process.cwd();
+  const cand = process.platform === 'win32'
+    ? path.join(root, 'desktop', 'adb', 'platform-tools', 'adb.exe')
+    : path.join(root, 'desktop', 'adb', 'platform-tools', 'adb');
+  if (fs.existsSync(cand)) return cand;
+  return ctx?.adbPath || 'adb';
+}
+
+function downloadFile(url, dest, onLog) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'LumaSign-Fleet/1.0' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return downloadFile(res.headers.location, dest, onLog).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('下载失败 HTTP ' + res.statusCode)); }
+      const total = +res.headers['content-length'] || 0;
+      let got = 0;
+      res.on('data', (c) => { got += c.length; if (onLog && total) onLog(`下载中 ${Math.round(got / total * 100)}%`); });
+      const f = fs.createWriteStream(dest);
+      res.pipe(f);
+      f.on('finish', () => f.close(() => resolve()));
+      f.on('error', (e) => { fs.rmSync(dest, { force: true }); reject(e); });
+    });
+    req.on('error', (e) => reject(e));
+  });
+}
+
+function extractZip(zipPath, destDir, log) {
+  if (process.platform === 'win32') {
+    execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path "${zipPath}" -DestinationPath "${destDir}" -Force`], { stdio: 'ignore' });
+  } else {
+    try { execFileSync('unzip', ['-o', zipPath, '-d', destDir], { stdio: 'ignore' }); }
+    catch {
+      try { execFileSync('python3', ['-c', `import zipfile;zipfile.ZipFile(r"${zipPath}").extractall(r"${destDir}")`], { stdio: 'ignore' }); }
+      catch { execFileSync('tar', ['-xf', zipPath, '-C', destDir], { stdio: 'ignore' }); }
+    }
+  }
+}
+
+/**
+ * 下载官方 Android platform-tools 并解压到 desktop/adb/platform-tools，使其可被直接调用。
+ * 注意：此操作在用户本机执行，依赖外网可达 dl.google.com（与 agent 运行环境无关）。
+ * @returns {Promise<{ok:boolean, adbPath:string, output:string, log:string[]}>}
+ */
+export async function installAdb(ctx, onLog) {
+  const log = [];
+  const push = (m) => { log.push(m); if (onLog) onLog(m); };
+  const map = {
+    win32: 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip',
+    darwin: 'https://dl.google.com/android/repository/platform-tools-latest-darwin.zip',
+    linux: 'https://dl.google.com/android/repository/platform-tools-latest-linux.zip',
+  };
+  const url = map[process.platform] || map.linux;
+  const root = ctx?.paths?.root || process.cwd();
+  const destDir = path.join(root, 'desktop', 'adb');
+  fs.mkdirSync(destDir, { recursive: true });
+  const zipPath = path.join(destDir, 'platform-tools.zip');
+
+  try {
+    push('开始下载 platform-tools…');
+    push('源：' + url);
+    await downloadFile(url, zipPath, push);
+    push('下载完成，解压中…');
+    extractZip(zipPath, destDir, push);
+    fs.rmSync(zipPath, { force: true });
+    const adbPath = resolveAdbPath(ctx);
+    const v = await adbVersion(adbPath);
+    if (!v.available) return { ok: false, adbPath, output: v.output, log };
+    push('✓ adb 安装完成：' + adbPath);
+    return { ok: true, adbPath, output: v.output, log };
+  } catch (e) {
+    fs.rmSync(zipPath, { force: true });
+    push('✗ 安装失败：' + e.message);
+    return { ok: false, adbPath: '', output: e.message, log };
+  }
+}
