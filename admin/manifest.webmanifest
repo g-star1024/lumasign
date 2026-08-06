@@ -1,0 +1,16 @@
+{
+  "name": "灵屏标牌管理中心",
+  "short_name": "灵屏管理",
+  "description": "局域网数字标牌管理系统 · 终端管理 / 节目制作 / 监看墙 / 审批",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e0f13",
+  "theme_color": "#2563EB",
+  "icons": [
+    { "src": "/admin/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/admin/favicon.png", "sizes": "64x64", "type": "image/png" }
+  ]
+}

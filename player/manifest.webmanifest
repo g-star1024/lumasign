@@ -1,0 +1,15 @@
+{
+  "name": "灵屏监看墙",
+  "short_name": "监看墙",
+  "description": "实时监看所有电子屏正在显示的内容",
+  "lang": "zh-CN",
+  "start_url": "/player/monitor.html",
+  "scope": "/player/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070a10",
+  "theme_color": "#070a10",
+  "icons": [
+    { "src": "/player/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

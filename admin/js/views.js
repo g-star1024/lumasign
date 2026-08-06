@@ -1970,9 +1970,11 @@ async function renderMonitor() {
       tokenEl.innerHTML = '';
       const url = location.origin + (d.monitorUrl || '/player/monitor.html');
       tokenEl.append(
-        el('span', { text: '大屏监控地址：' }),
+        el('span', { text: '大屏 / 手机监看地址：' }),
         el('code', {}, url),
-        el('button', { class: 't-btn ghost', style: { height: '28px', padding: '0 10px' }, onclick: () => { navigator.clipboard && navigator.clipboard.writeText(url); toast('已复制大屏监控地址'); } }, '复制'),
+        el('button', { class: 't-btn ghost', style: { height: '28px', padding: '0 10px' }, onclick: () => { navigator.clipboard && navigator.clipboard.writeText(url); toast('已复制监看地址'); } }, '复制'),
+        el('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--c-text-3)', lineHeight: '1.6' },
+          text: '用手机浏览器打开此地址 → 点浏览器菜单「添加到主屏幕 / 安装应用」即可固定为 App；离线也能看到上一次的各屏画面。' }),
       );
       grid.innerHTML = '';
       if (!items.length) grid.append(el('div', { class: 'empty', text: '暂无终端，请先到「设备开通」或「终端管理」接入设备' }));

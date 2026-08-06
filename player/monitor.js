@@ -3,7 +3,12 @@
  * 即可化身"监控墙"，集中查看所有终端正在显示的内容。
  */
 (function () {
-  const key = new URLSearchParams(location.search).get('key') || '';
+  // 优先用 URL 中的 key；无则回退到上次保存的（已安装的 PWA 从桌面图标打开时 URL 不带 key）
+  let key = new URLSearchParams(location.search).get('key') || '';
+  try {
+    if (key) localStorage.setItem('luma_monitor_key', key);
+    else key = localStorage.getItem('luma_monitor_key') || '';
+  } catch (_) {}
   const grid = document.getElementById('grid');
   const stat = document.getElementById('stat');
   const clock = document.getElementById('clock');

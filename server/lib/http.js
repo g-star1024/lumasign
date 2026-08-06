@@ -19,6 +19,7 @@ const MIME = {
   '.pdf': 'application/pdf', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
   '.apk': 'application/vnd.android.package-archive',
   '.txt': 'text/plain; charset=utf-8', '.m3u8': 'application/vnd.apple.mpegurl',
+  '.webmanifest': 'application/manifest+json',
 };
 export const mimeOf = p => MIME[path.extname(p).toLowerCase()] || 'application/octet-stream';
 

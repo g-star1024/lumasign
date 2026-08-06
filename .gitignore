@@ -52,6 +52,13 @@ android/*.aab
 # Electron
 desktop/node_modules/
 
+# ADB platform-tools binaries (downloaded at build time, ~17MB)
+desktop/adb/platform-tools/
+
+# Session scratch files
+overview.md
+.synccheck/
+
 # Logs
 *.log
 npm-debug.log*
