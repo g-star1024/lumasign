@@ -116,8 +116,9 @@ class MainActivity : AppCompatActivity() {
         ws.useWideViewPort = true
         ws.loadWithOverviewMode = true
         // 离线韧性：优先用缓存，服务端重启/短暂断网时播放壳不白屏
+        // 注意：AppCache（setAppCacheEnabled/setAppCachePath）已在 WebView API 33+ 删除，
+        // 改用 LOAD_CACHE_ELSE_NETWORK 走 HTTP 缓存即可（服务端带 Cache-Control/ETag）
         ws.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
-        try { ws.setAppCacheEnabled(true); ws.setAppCachePath(cacheDir.absolutePath) } catch (_: Exception) {}
         // WebView 远程调试仅 debug 构建开启（release 常开是安全风险）
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (debuggable) WebView.setWebContentsDebuggingEnabled(true)
