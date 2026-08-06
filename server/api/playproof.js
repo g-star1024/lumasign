@@ -6,6 +6,7 @@ import path from 'path';
 import { json, fail, readJson } from '../lib/http.js';
 import { recordPlayEvent, queryPlayLog, aggregatePlayLog, playProofFilters } from '../lib/playlog.js';
 import { buildProofPdf, proofHash, jpegSize } from '../lib/pdf.js';
+import { ZipWriter } from '../lib/zipjs.js';
 
 export function registerPlayProofApi(router, ctx) {
   const { store, auth, paths, bus } = ctx;
@@ -101,6 +102,58 @@ export function registerPlayProofApi(router, ctx) {
       res.setHeader('Content-Disposition', `attachment; filename="${reportId}.json"`);
       res.setHeader('Content-Length', buf.length);
       return res.end(buf);
+    }
+
+    // ZIP：打包 PDF + JSON 元数据 + 截屏原图
+    if (fmt === 'zip') {
+      const zip = new ZipWriter();
+
+      // 1. 收集截屏
+      const screenshots = [];
+      try {
+        const termIds = [...new Set(rows.map(r => r.terminalId))].slice(0, 9);
+        for (const tid of termIds) {
+          const dir = path.join(paths.shots, tid);
+          if (!fs.existsSync(dir)) continue;
+          const files = fs.readdirSync(dir).filter(f => /\.jpe?g$/i.test(f)).sort((a, b) => b.localeCompare(a));
+          if (!files.length) continue;
+          const fp = path.join(dir, files[0]);
+          const buf = fs.readFileSync(fp);
+          const sz = jpegSize(buf);
+          if (sz) {
+            screenshots.push({ buf, w: sz.w, h: sz.h, label: tid });
+            zip.addFile(`screenshots/${tid}_${files[0]}`, buf, 'store'); // JPEG 已压缩
+          }
+        }
+      } catch { /* 无截屏也可出证 */ }
+
+      // 2. PDF 报告
+      const pdf = buildProofPdf({ meta, summary: sum, records: rows, screenshots });
+      zip.addFile(`${reportId}.pdf`, pdf);
+
+      // 3. 完整 JSON 元数据（含中文客户名/素材名）
+      const jsonPayload = { ok: true, meta, summary: sum, records: rows };
+      zip.addFile(`${reportId}.json`, JSON.stringify(jsonPayload, null, 2), 'deflate');
+
+      // 4. 导出清单（manifest）
+      const manifest = {
+        reportId,
+        generatedAt: new Date(generatedAt).toISOString(),
+        format: 'LumaSign PlayProof v1',
+        files: [`${reportId}.pdf`, `${reportId}.json`],
+        screenshots: screenshots.length,
+        recordCount: rows.length,
+        hash,
+        filter,
+        _note: 'PDF 正文为 ASCII；完整中文元数据见同目录 .json 文件；截图 JPEG 含原始画面作为视觉证据',
+      };
+      zip.addFile('manifest.json', JSON.stringify(manifest, null, 2), 'deflate');
+
+      const zipBuf = zip.toBuffer();
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${reportId}.zip"`);
+      res.setHeader('Content-Length', zipBuf.length);
+      return res.end(zipBuf);
     }
 
     // PDF：收集最多 9 张最新截屏（每终端取最新一张）
