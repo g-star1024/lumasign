@@ -707,6 +707,7 @@ function renderEditor(params) {
         r.items.push(it);
         ed.selItem = it.id;
         saveHistory(); refreshAll();
+        return it;
       };
 
       return el('div', {},
@@ -756,9 +757,9 @@ function renderEditor(params) {
         el('div', {},
           el('div', { class: 'ed-lib-item', onclick: () => addWidget('form') },
             el('span', { class: 'ico', text: '✎' }), el('span', {}, '满意度评分')),
-          el('div', { class: 'ed-lib-item', onclick: () => { addWidget('form'); setTimeout(() => { const si = ed.selItem; if (si) { si.formType = 'message'; si.formTitle = '留言板'; refreshAll(); } }, 0); } },
+          el('div', { class: 'ed-lib-item', onclick: () => { const si = addWidget('form'); if (si) { si.formType = 'message'; si.formTitle = '留言板'; refreshAll(); } } },
             el('span', { class: 'ico', text: '✉' }), el('span', {}, '留言板')),
-          el('div', { class: 'ed-lib-item', onclick: () => { addWidget('form'); setTimeout(() => { const si = ed.selItem; if (si) { si.formType = 'phone'; si.formTitle = '联系方式'; refreshAll(); } }, 0); } },
+          el('div', { class: 'ed-lib-item', onclick: () => { const si = addWidget('form'); if (si) { si.formType = 'phone'; si.formTitle = '联系方式'; refreshAll(); } } },
             el('span', { class: 'ico', text: '☎' }), el('span', {}, '电话收集')),
         ),
         // 区域列表（可切换选中区域）
