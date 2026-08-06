@@ -108,7 +108,10 @@ a { color: var(--accent); text-decoration: none; }
 [data-theme="dark"] .page-terminals,
 [data-theme="dark"] .page-media,
 [data-theme="dark"] .page-layouts,
-[data-theme="dark"] .page-monitor {
+[data-theme="dark"] .page-monitor,
+[data-theme="dark"] .page-lifecycle,
+[data-theme="dark"] .page-health,
+[data-theme="dark"] .page-playproof {
   --c-primary:#3B82F6; --c-primary-hover:#2F6FEB; --c-primary-active:#2563EB; --c-primary-soft:#16233B;
   --c-bg:#0F1115; --c-surface:#1A1D23; --c-surface-2:#16181D; --c-border:#262B33; --c-border-2:#2D333D;
   --c-text:#E6E8EB; --c-text-2:#A0A4AB; --c-text-3:#6B7280;
@@ -417,7 +420,8 @@ tbody tr:hover { background: var(--hover); }
 
 /* ============ 新设计系统 · 现代 SaaS 浅色（终端/素材库/节目制作/监看墙 共享） ============ */
 /* Token 块作用于所有已迁移页面根节点；组件类为全局 .t-*（不与旧管理端 .btn/.card 冲突） */
-.page-terminals, .page-media, .page-layouts, .page-monitor {
+.page-terminals, .page-media, .page-layouts, .page-monitor,
+.page-lifecycle, .page-health, .page-playproof {
   --c-primary:#2563EB; --c-primary-hover:#1D4ED8; --c-primary-active:#1E40AF; --c-primary-soft:#EFF4FF;
   --c-bg:#F7F8FC; --c-surface:#FFFFFF; --c-surface-2:#FAFBFD; --c-border:#EAEAEA; --c-border-2:#E5E7EB;
   --c-text:#111111; --c-text-2:#6B6B6B; --c-text-3:#9CA3AF;
@@ -456,8 +460,9 @@ tbody tr:hover { background: var(--hover); }
 .t-stat .hint.w { color:var(--c-warning); }
 .t-stat .hint.d { color:var(--c-danger); }
 
-.t-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
-.t-search { display:flex; align-items:center; gap:8px; width:300px; height:36px; padding:0 10px; border-radius:var(--c-radius-md); background:var(--c-surface); border:1px solid var(--c-border); color:var(--c-text-3); font-size:13px; }
+.t-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:nowrap; }
+.t-toolbar .t-btn { white-space:nowrap; flex-shrink:0; }
+.t-search { display:flex; align-items:center; gap:8px; width:300px; min-width:0; height:36px; padding:0 10px; border-radius:var(--c-radius-md); background:var(--c-surface); border:1px solid var(--c-border); color:var(--c-text-3); font-size:13px; flex-shrink:1; }
 .t-search input { background:transparent; border:none; outline:none; flex:1; font-size:13px; color:var(--c-text); font-family:var(--c-font); }
 .t-select { appearance:none; -webkit-appearance:none; height:36px; padding:0 30px 0 10px; border-radius:var(--c-radius-md); background:var(--c-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%239CA3AF' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center; border:1px solid var(--c-border); font-size:13px; color:var(--c-text); cursor:pointer; font-family:var(--c-font); }
 .t-spacer { flex:1; }
@@ -522,6 +527,9 @@ tbody tr:hover { background: var(--hover); }
 .page-media .m-name { font-size:13px; color:var(--c-text); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .page-media .m-sub { font-size:12px; color:var(--c-text-2); }
 .page-media .m-kind { align-self:flex-start; display:inline-flex; align-items:center; height:20px; padding:0 6px; border-radius:var(--c-radius-sm); font-size:11px; background:var(--c-surface-2); color:var(--c-text-2); }
+.page-media .m-del { position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%; border:none; background:rgba(0,0,0,.45); color:#fff; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .15s; z-index:1; line-height:1; padding:0; }
+.page-media .m-card:hover .m-del { opacity:1; }
+.page-media .m-del:hover { background:var(--c-danger, #e54d4d); }
 
 /* --- 监看墙 .page-monitor --- */
 .page-monitor .mn-bar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }

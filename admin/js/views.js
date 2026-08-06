@@ -419,8 +419,12 @@ async function renderMedia() {
     const thumb = el('div', { class: 'm-thumb' }, el('div', { class: 'ph', text: km.icon }));
     if (m.kind === 'image') thumb.style.backgroundImage = `url(/api/media/${m.id}/raw)`;
     const badge = lcBadge(m.lifecycleState, m.daysLeft, m.validFrom, m.validUntil);
+    const delBtn = can('media:delete') ? el('button', {
+      class: 'm-del', text: '✕', title: '删除素材',
+      onclick: (e) => { e.stopPropagation(); if (!confirm(`确定删除「${m.name || m.id}」？此操作不可撤销`)) return; api.del(`/api/media/${m.id}`).then(() => { toast('已删除'); load(); }).catch(err => toast(err.message, 'err')); }
+    }) : '';
     return el('div', { class: 'm-card', onclick: () => openPreview(m) },
-      thumb,
+      el('div', { style: { position: 'relative' } }, thumb, delBtn),
       el('div', { class: 'm-meta' },
         el('div', { class: 'm-name', text: m.name || m.id }),
         el('div', { class: 'm-sub', text: `${km.label} · ${fmtBytes(m.size || 0)}` }),
@@ -1413,7 +1417,7 @@ async function renderFleet() {
 
     const adbBadge = adb.available
       ? el('span', { class: 'badge ok', text: 'adb 就绪' })
-      : el('span', { class: 'badge danger', text: 'adb 不可用' });
+      : el('span', { class: 'badge warn', text: 'adb 未安装（IP 扫描可用，APK 推送需 adb）' });
 
     box.replaceChildren(
       head,
@@ -1442,7 +1446,7 @@ async function renderFleet() {
         el('div', { class: 'row', style: { marginTop: '10px', gap: '10px', alignItems: 'center' } },
           el('button', { class: 'btn primary', onclick: scan }, '开始扫描'),
           adbBadge,
-          el('span', { class: 'sub', text: adb.available ? `(${adb.path})` : '（放入 desktop/adb 或确保 PATH 有 adb）' }),
+          el('span', { class: 'sub', text: adb.available ? `(${adb.path})` : '下载 adb：https://developer.android.com/tools/adb → 放入 desktop/adb/ 目录即可启用 APK 推送' }),
         ),
       ),
       resultsEl,
@@ -1726,13 +1730,13 @@ async function renderSecurity() {
     /* 5. 内容合规 */
     const modEnabled = el('input', { type: 'checkbox', checked: !!mcfg.enabled, ...(isAdmin ? {} : { disabled: true }) });
     const urlWhitelistTa = el('textarea', { class: 'input', rows: 3, value: (mcfg.urlWhitelist || []).join('\n'), placeholder: '每行一个可信域名，如 trusted.example.com', ...(isAdmin ? {} : { disabled: true }) });
-    const catWrap = el('div', { class: 'cat-list' }, ...(mstats.categories || []).map(c => catItem(c)));
     const catItem = (c) => el('div', { class: 'cat-item' },
       el('span', { class: 'badge ' + (c.level === 'block' ? 'danger' : c.level === 'review' || c.level === 'warn' ? 'warn' : 'ok'), text: ({ block: '拒绝', review: '复核', warn: '提示', pass: '通过' }[c.level] || c.level) }),
       el('span', { class: 'cat-name', text: c.label }),
       el('span', { class: 'cat-count', text: (c.count || 0) + ' 词' }),
       el('span', { class: 'sub', text: c.builtin ? '内置' : '自定义' }),
     );
+    const catWrap = el('div', { class: 'cat-list' }, ...(mstats.categories || []).map(c => catItem(c)));
     const wordCat = el('select', { class: 'input', style: { minWidth: '160px' } },
       ...(mstats.categories || []).map(c => el('option', { value: c.key }, c.label)),
       el('option', { value: 'custom', text: '＋ 新建自定义类目' }));

@@ -10,18 +10,7 @@
     #err-overlay { display:none; position:fixed; inset:0; background:#0e0f13; color:#e54d4d; padding:24px; font:14px/1.6 monospace; z-index:99999; overflow:auto; white-space:pre-wrap; word-break:break-all; }
     #err-overlay.show { display:block; }
   </style>
-  <script>
-    window.addEventListener('error', function(e) {
-      var o = document.getElementById('err-overlay');
-      o.textContent = '[JS Error]\n' + (e.message || '') + '\n\nFile: ' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '') + '\n\nStack:\n' + (e.error && e.error.stack || 'N/A');
-      o.classList.add('show');
-    });
-    window.addEventListener('unhandledrejection', function(e) {
-      var o = document.getElementById('err-overlay');
-      o.textContent = '[Promise Rejection]\n' + (e.reason && (e.reason.message || e.reason.stack || String(e.reason)) || 'N/A');
-      o.classList.add('show');
-    });
-  </script>
+  <script src="js/error-handler.js"></script>
 </head>
 <body>
   <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-3);font:14px system-ui">Loading...</div></div>
