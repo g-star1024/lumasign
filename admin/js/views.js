@@ -750,6 +750,17 @@ function renderEditor(params) {
           el('div', { class: 'ed-lib-item', onclick: () => addWidget('data-chart') },
             el('span', { class: 'ico', text: '▤' }), el('span', {}, '图表')),
         ),
+        // 交互式表单（P1-3.4）
+        el('div', { class: 'ed-lib-sect' }),
+        el('div', { class: 'ed-lib-sect-title', text: '交互表单' }),
+        el('div', {},
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('form') },
+            el('span', { class: 'ico', text: '✎' }), el('span', {}, '满意度评分')),
+          el('div', { class: 'ed-lib-item', onclick: () => { addWidget('form'); setTimeout(() => { const si = ed.selItem; if (si) { si.formType = 'message'; si.formTitle = '留言板'; refreshAll(); } }, 0); } },
+            el('span', { class: 'ico', text: '✉' }), el('span', {}, '留言板')),
+          el('div', { class: 'ed-lib-item', onclick: () => { addWidget('form'); setTimeout(() => { const si = ed.selItem; if (si) { si.formType = 'phone'; si.formTitle = '联系方式'; refreshAll(); } }, 0); } },
+            el('span', { class: 'ico', text: '☎' }), el('span', {}, '电话收集')),
+        ),
         // 区域列表（可切换选中区域）
         ...(L.regions && L.regions.length ? [
           el('div', { class: 'ed-lib-sect' }),
@@ -999,6 +1010,31 @@ function renderEditor(params) {
                 el('label', { class: 'ed-field-label', text: '降级文本' }),
                 el('input', { class: 'ed-input', value: it.fallback || '', oninput: e => changeField('fallback', e.target.value) })),
             );
+          } else if (it.widget === 'form') {
+            children.push(
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '表单类型' }),
+                el('select', { class: 'ed-select', onchange: e => changeField('formType', e.target.value) },
+                  ...['satisfaction', 'message', 'phone'].map(o => el('option', { value: o, selected: o === (it.formType || 'satisfaction') ? 'selected' : null, text: o === 'satisfaction' ? '满意度评分' : o === 'message' ? '留言板' : '电话收集' })))),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '标题' }),
+                el('input', { class: 'ed-input', value: it.formTitle || '', oninput: e => changeField('formTitle', e.target.value) })),
+              ...(it.formType === 'satisfaction' ? [
+                el('div', { class: 'ed-field' },
+                  el('label', { class: 'ed-field-label', text: '星级大小' }),
+                  el('input', { class: 'ed-input', type: 'number', value: it.starSize ?? 48, oninput: e => changeField('starSize', parseFloat(e.target.value) || 48), placeholder: 'px' })),
+              ] : it.formType === 'message' ? [
+                el('div', { class: 'ed-field' },
+                  el('label', { class: 'ed-field-label', text: '输入提示' }),
+                  el('input', { class: 'ed-input', value: it.placeholder || '', oninput: e => changeField('placeholder', e.target.value) })),
+              ] : []),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '文字颜色' }),
+                el('input', { class: 'ed-input', value: it.color || '#ffffff', oninput: e => changeField('color', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '标题字号' }),
+                el('input', { class: 'ed-input', type: 'number', value: it.titleSize ?? 28, oninput: e => changeField('titleSize', parseFloat(e.target.value) || 28) })),
+            );
           }
         }
         // 通用：删除按钮
@@ -1218,6 +1254,7 @@ function defaultItem(w) {
   if (w === 'data-text') return { id: base.id, widget: w, duration: 0, dataSourceId: '', html: '当前值：{{data.value}}', fallback: '数据加载中…', fontSize: 48, color: '#ffffff', align: 'center' };
   if (w === 'data-number') return { id: base.id, widget: w, duration: 0, dataSourceId: '', valueField: 'value', label: '指标', unit: '', fallback: '—', fontSize: 96, color: '#ffffff', align: 'center' };
   if (w === 'data-chart') return { id: base.id, widget: w, duration: 0, dataSourceId: '', chartType: 'bar', labelField: 'label', valueField: 'value', fallback: '暂无数据' };
+  if (w === 'form') return { id: base.id, widget: w, duration: 0, formType: 'satisfaction', formTitle: '您对我们的服务满意吗？', color: '#ffffff', titleSize: 28 };
   return base;
 }
 const field = (label, input) => el('div', { class: 'prop-row' }, el('label', { text: label }), input);

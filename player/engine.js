@@ -422,6 +422,16 @@ class Player {
   }
 
   dispatchHotspot(hs) {
+    // P1-3.4 触摸防误触：冷却期内忽略重复点击（默认 0.8s，可按热区配置）
+    const cooldown = (hs.cooldownMs || 800);
+    if (this._hsCooldownMap == null) this._hsCooldownMap = new Map();
+    const lastClick = this._hsCooldownMap.get(hs.id) || 0;
+    if (Date.now() - lastClick < cooldown) return;
+    this._hsCooldownMap.set(hs.id, Date.now());
+
+    // 涟漪动效：在点击位置生成涟漪元素
+    this.spawnRipple(hs);
+
     // 交互埋点：热区被点击（仅播放端上报）
     this.trackInteraction('hotspot_click', hs.id);
     const a = hs.action || { type: 'none' };
@@ -509,6 +519,26 @@ class Player {
       if (this.navStack.length > 0) this.goBack();
       else this.cancelNavTimer();
     }, seconds * 1000);
+  }
+
+  /** P1-3.4 热区点击涟漪动效（纯 CSS，零依赖） */
+  spawnRipple(hs) {
+    if (!this.hotspotsLayer) return;
+    const el = this.hotspotsLayer.querySelector(`[data-id="${hs.id}"]`);
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const stageRect = this.stage.getBoundingClientRect();
+    // 在热区中心生成涟漪
+    const ripple = document.createElement('div');
+    ripple.className = 'hs-ripple';
+    ripple.style.cssText = `
+      position:absolute;left:${rect.left - stageRect.left + rect.width/2}px;top:${rect.top - stageRect.top + rect.height/2}px;
+      width:10px;height:10px;margin-left:-5px;margin-top:-5px;
+      border-radius:50%;background:rgba(37,99,235,.5);
+      pointer-events:none;z-index:99999;
+      animation:hsRipple .5s ease-out forwards;`;
+    this.stage.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 500);
   }
 
   showPopup(a) {

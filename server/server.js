@@ -48,6 +48,7 @@ import { registerPlayProofApi } from './api/playproof.js';
 import { DataSourceManager } from './lib/datasource.js';
 import { registerDataSourceApi } from './api/datasource.js';
 import { registerInteractionApi } from './api/interaction.js';
+import { registerTranscodeApi } from './api/transcode.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -155,6 +156,7 @@ async function init(opts = {}) {
   registerPlayProofApi(router, ctx);
   registerDataSourceApi(router, ctx);
   registerInteractionApi(router, ctx);
+  registerTranscodeApi(router, ctx);
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {

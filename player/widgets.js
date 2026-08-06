@@ -294,6 +294,141 @@ function renderDataChart(holder, item) {
   return () => clearInterval(id);
 }
 
+/* ============ P1-3.4 交互式表单组件（触摸屏反馈收集） ============ */
+
+/** 渲染星级评分控件 */
+function renderStars(container, opts = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'form-stars';
+  wrap.style.cssText = 'display:flex;gap:8px;justify-content:center;';
+  let rating = 0;
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    const s = document.createElement('span');
+    s.textContent = '★';
+    s.style.cssText = `font-size:${opts.size || 36}px;color:${i <= rating ? '#F5B544' : 'rgba(255,255,255,.2)'};cursor:pointer;transition:transform .15s,color .2s;line-height:1;`;
+    s.dataset.v = i;
+    s.addEventListener('click', () => { rating = i; stars.forEach((st, idx) => st.style.color = idx < i ? '#F5B544' : 'rgba(255,255,255,.2)'); if (opts.onChange) opts.onChange(i); });
+    s.addEventListener('mouseenter', () => { stars.forEach((st, idx) => st.style.color = idx < i ? '#F5B544' : 'rgba(255,255,255,.2)'); });
+    s.addEventListener('mouseleave', () => { stars.forEach((st, idx) => st.style.color = idx < rating ? '#F5B544' : 'rgba(255,255,255,.2)'); });
+    stars.push(s);
+    wrap.appendChild(s);
+  }
+  container.appendChild(wrap);
+  return { getRating: () => rating };
+}
+
+/**
+ * 交互式表单：支持 satisfaction（满意度评分）、message（留言板）、phone（电话收集）
+ * 提交后 POST /api/t/form-feedback，带终端鉴权
+ */
+function renderForm(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-form';
+  d.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;gap:16px;overflow:auto;';
+  holder.appendChild(d);
+
+  const formType = item.formType || 'satisfaction'; // satisfaction | message | phone
+  const title = item.formTitle || (formType === 'satisfaction' ? '您对我们的服务满意吗？' : formType === 'message' ? '留言板' : '留下联系方式');
+  const color = item.color || '#ffffff';
+
+  // 标题
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = `font-size:${item.titleSize || 28}px;font-weight:600;color:${color};text-align:center;`;
+  titleEl.textContent = title;
+  d.appendChild(titleEl);
+
+  let getValue;
+  const statusEl = document.createElement('div');
+  statusEl.style.cssText = 'font-size:16px;opacity:0;height:0;overflow:hidden;transition:opacity .3s;';
+  d.appendChild(statusEl);
+
+  const showStatus = (msg, ok) => {
+    statusEl.textContent = msg;
+    statusEl.style.color = ok ? '#2DD4A7' : '#FF6B6E';
+    statusEl.style.opacity = '1'; statusEl.style.height = 'auto';
+    setTimeout(() => { statusEl.style.opacity = '0'; statusEl.style.height = '0'; }, 3000);
+  };
+
+  const submitFeedback = async (payload) => {
+    try {
+      const r = await fetch('/api/t/form-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) { showStatus('提交成功，感谢！', true); return true; }
+      showStatus('提交失败，请稍后重试', false);
+    } catch { showStatus('网络异常', false); }
+    return false;
+  };
+
+  if (formType === 'satisfaction') {
+    const { getRating } = renderStars(d, { size: item.starSize || 48 });
+    getValue = () => ({ rating: getRating() });
+    const btn = document.createElement('button');
+    btn.textContent = '提交评价';
+    btn.className = 'form-btn';
+    btn.style.cssText = 'margin-top:8px;padding:12px 40px;font-size:20px;background:#2563EB;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;';
+    btn.onclick = async () => {
+      const v = getValue();
+      if (!v.rating) return showStatus('请先选择星级', false);
+      await submitFeedback({ formType, layoutId: item._layoutId, itemId: item.id, ...v });
+    };
+    d.appendChild(btn);
+  } else if (formType === 'message') {
+    const ta = document.createElement('textarea');
+    ta.placeholder = item.placeholder || '请输入您的意见或建议…';
+    ta.style.cssText = 'width:min(480px,90%);height:120px;padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:18px;resize:none;font-family:inherit;outline:none;';
+    ta.addEventListener('focus', () => { ta.style.borderColor = '#2563EB'; });
+    ta.addEventListener('blur', () => { ta.style.borderColor = 'rgba(255,255,255,.25)'; });
+    d.appendChild(ta);
+    getValue = () => ({ message: ta.value.trim() });
+    const btn = document.createElement('button');
+    btn.textContent = '提交留言';
+    btn.className = 'form-btn';
+    btn.style.cssText = 'margin-top:8px;padding:12px 40px;font-size:20px;background:#2563EB;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;';
+    btn.onclick = async () => {
+      const v = getValue();
+      if (!v.message) return showStatus('请输入内容', false);
+      btn.disabled = true; btn.textContent = '提交中…';
+      const ok = await submitFeedback({ formType, layoutId: item._layoutId, itemId: item.id, ...v });
+      if (ok) { ta.value = ''; }
+      btn.disabled = false; btn.textContent = '提交留言';
+    };
+    d.appendChild(btn);
+  } else if (formType === 'phone') {
+    const row = (label, pholder) => {
+      const w = document.createElement('div'); w.style.cssText = 'display:flex;flex-direction:column;gap:4px;width:min(400px,90%);';
+      const l = document.createElement('label'); l.textContent = label; l.style.cssText = 'font-size:15px;opacity:.7;';
+      const i = document.createElement('input'); i.type = pholder === '电话' ? 'tel' : 'text'; i.placeholder = pholder;
+      i.style.cssText = 'padding:12px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:18px;outline:none;';
+      i.addEventListener('focus', () => { i.style.borderColor = '#2563EB'; });
+      i.addEventListener('blur', () => { i.style.borderColor = 'rgba(255,255,255,.25)'; });
+      w.append(l, i); return { wrap: w, input: i };
+    };
+    const nameRow = row('姓名（选填）', '您的姓名');
+    const phoneRow = row('联系电话', '手机号码');
+    d.append(nameRow.wrap, phoneRow.wrap);
+    getValue = () => ({ name: nameRow.input.value.trim(), phone: phoneRow.input.value.trim() });
+    const btn = document.createElement('button');
+    btn.textContent = '提交';
+    btn.className = 'form-btn';
+    btn.style.cssText = 'margin-top:8px;padding:12px 40px;font-size:20px;background:#2563EB;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;';
+    btn.onclick = async () => {
+      const v = getValue();
+      if (!v.phone) return showStatus('请输入联系电话', false);
+      btn.disabled = true; btn.textContent = '提交中…';
+      await submitFeedback({ formType, layoutId: item._layoutId, itemId: item.id, ...v });
+      btn.disabled = false; btn.textContent = '提交';
+    };
+    d.appendChild(btn);
+  }
+
+  return () => {};
+}
+
 const RENDERERS = {
   image: renderImage,
   video: renderVideo,
@@ -306,6 +441,7 @@ const RENDERERS = {
   'data-text': renderDataText,
   'data-number': renderDataNumber,
   'data-chart': renderDataChart,
+  'form': renderForm,
 };
 
 export function renderWidget(holder, item, resolver, onEnd) {

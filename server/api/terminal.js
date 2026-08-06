@@ -336,6 +336,35 @@ export function registerTerminalApi(router, ctx) {
     if (b.terminalId) bus.send(b.terminalId, 'audience', { gender: b.gender, age: b.age, count: b.count }, { ack: false });
     ok(res);
   });
+
+  /* ---------------- P1-3.4 交互式表单反馈（终端提交） ---------------- */
+  router.post('/api/t/form-feedback', async (req, res) => {
+    const t = authTerminal(req, new URL(req.url, 'http://localhost'), null);
+    if (!t) return fail(res, '终端鉴权失败', 401);
+    const b = await readJson(req);
+    const fb = S('form_feedbacks').insert({
+      id: uid('fb'),
+      terminalId: t.id,
+      terminalName: t.name || t.serial || '未知',
+      formType: b.formType || 'satisfaction',
+      layoutId: b.layoutId || null,
+      itemId: b.itemId || null,
+      payload: { rating: b.rating, message: (b.message || '').slice(0, 2000), name: (b.name || '').slice(100), phone: (b.phone || '').slice(20) },
+      createdAt: Date.now(),
+    });
+    logger.info(`表单反馈[${b.formType}] 终端=${t.id} item=${b.itemId}`);
+    bus.broadcastAdmin('form-feedback:new', fb);
+    json(res, { ok: true, id: fb.id });
+  });
+
+  /* 管理端读取表单反馈列表 */
+  router.get('/api/admin/form-feedbacks', async (req, res) => {
+    const user = ctx.auth.userFromReq(req);
+    if (!user) return fail(res, '未登录', 401);
+    if (!ctx.auth.can(user, 'feedback:view')) return fail(res, '无权限', 403);
+    const list = S('form_feedbacks').all().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    json(res, { ok: true, items: list.slice(0, 500), total: list.length });
+  });
 }
 
 /* ================= 工具 ================= */
