@@ -508,6 +508,7 @@ async function renderLayouts() {
   function buildTable(items) {
     const rows = items.map(l => el('tr', {},
       el('td', { text: l.name }),
+      el('td', { text: l.customer || '-' }),
       el('td', { class: 'mono', text: `${l.width}×${l.height}` }),
       el('td', { text: l.orientation === 'portrait' ? '竖屏' : '横屏' }),
       el('td', {}, approvalBadge(l.approval?.state)),
@@ -525,6 +526,7 @@ async function renderLayouts() {
     table.append(
       el('thead', {}, el('tr', {},
         el('th', { text: '名称' }),
+        el('th', { text: '客户' }),
         el('th', { text: '分辨率' }),
         el('th', { text: '方向' }),
         el('th', { text: '审批' }),
@@ -568,6 +570,7 @@ async function renderLayouts() {
 
 async function createLayout() {
   const name = el('input', { class: 't-input', placeholder: '节目名称', value: '新节目' });
+  const customer = el('input', { class: 't-input', placeholder: '客户名称（可选，用于播放证明归集）' });
   const orient = el('select', { class: 't-input' },
     el('option', { value: 'landscape', text: '横屏 1920×1080' }),
     el('option', { value: 'portrait', text: '竖屏 1080×1920' }),
@@ -575,11 +578,13 @@ async function createLayout() {
   const box = el('div', { class: 'page-layouts' },
     el('h2', { text: '新建节目', style: { marginBottom: '16px' } }),
     el('div', { class: 't-field' }, el('label', { text: '名称' }), name),
+    el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '客户' }), customer),
     el('div', { class: 't-field', style: { marginTop: '12px' } }, el('label', { text: '画布' }), orient),
     el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '20px' } },
       el('button', { class: 't-btn primary', onclick: async () => {
         const portrait = orient.value === 'portrait';
         const body = { name: name.value || '新节目', width: portrait ? 1080 : 1920, height: portrait ? 1920 : 1080 };
+        if (customer.value.trim()) body.customer = customer.value.trim();
         try {
           const d = await api.post('/api/layouts', body);
           document.querySelector('.modal-mask')?._close?.();
@@ -915,6 +920,7 @@ function renderEditor(params) {
       // 顶栏
       el('div', { class: 'ed-topbar' },
         el('span', { class: 'ed-title', text: `编辑 · ${L.name}` }),
+        el('input', { class: 't-input', style: { width: '140px', height: '28px', fontSize: '12px' }, placeholder: '客户（可选）', value: L.customer || '', oninput: (e) => { L.customer = e.target.value.trim() || undefined; } }),
         el('div', { class: 'ed-actions' },
           el('button', { class: 'ed-btn ed-btn-icon', title: '撤销', onclick: undo }, '↶'),
           el('button', { class: 'ed-btn ed-btn-icon', title: '重做', onclick: redo }, '↷'),
