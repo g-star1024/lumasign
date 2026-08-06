@@ -616,7 +616,8 @@ function renderEditor(params) {
     const L = JSON.parse(JSON.stringify(d.item));
     let dsList = [];
     try { dsList = (await api.get('/api/admin/datasources')).items || []; } catch {}
-    ed = { L, id, selRegion: L.regions?.[0]?.id || null, selItem: null, iframe: null, history: [], historyIdx: -1 };
+    ed = { L, id, selRegion: L.regions?.[0]?.id || null, selItem: null, iframe: null, history: [], historyIdx: -1,
+      hsMode: false, selHsId: null, layoutsList: [], mediaList: [] };
 
     /* ── iframe 画布 ── */
     const iframe = el('iframe', { src: '/player/index.html' });
@@ -704,6 +705,8 @@ function renderEditor(params) {
     /* ── 右栏：属性面板 ── */
     const propsPanel = el('div', { class: 'ed-props' });
     function buildProps() {
+      if (ed.hsMode) { buildHotspotPanel(); return; }
+
       const r = L.regions.find(x => x.id === ed.selRegion);
       const it = r ? r.items.find(x => x.id === ed.selItem) : null;
 
@@ -934,6 +937,70 @@ function renderEditor(params) {
       propsPanel.appendChild(el('div', { class: 'ed-props-body' }, ...children));
     }
 
+    /* ── 交互热区属性面板（P1） ── */
+    function buildHotspotPanel() {
+      const list = L.hotspots || [];
+      const sel = list.find(h => h.id === ed.selHsId);
+      const children = [];
+
+      children.push(el('div', { class: 'ed-hint', text: '在画布上按住拖拽即可绘制热区；点击热区可选中，拖动移动、拖右下角把手缩放。' }));
+      children.push(el('button', { class: 't-btn ghost', style: { width: '100%', marginBottom: '10px' },
+        onclick: () => iframe.contentWindow?.postMessage({ type: 'luma:hs-add-center' }, '*') }, '+ 在中心添加热区'));
+
+      children.push(el('div', { class: 'ed-field-label', style: { marginTop: '4px', marginBottom: '6px' }, text: `热区列表 (${list.length})` }));
+      if (list.length) {
+        children.push(el('div', { class: 'ed-region-list' }, ...list.map(h =>
+          el('div', { class: 'ed-region-item ' + (h.id === ed.selHsId ? 'active' : ''), onclick: () => { ed.selHsId = h.id; refreshProps(); } },
+            el('span', {}, (h.action && h.action.label) || (h.action && h.action.type) || '热区'),
+            el('span', { class: 'del', text: '✕', onclick: (e) => { e.stopPropagation(); iframe.contentWindow?.postMessage({ type: 'luma:hs-remove', id: h.id }, '*'); if (ed.selHsId === h.id) ed.selHsId = null; refreshProps(); } }),
+          )
+        )));
+      } else {
+        children.push(el('div', { style: { textAlign: 'center', color: 'var(--c-text-3)', padding: '16px', fontSize: '12px' } }, '暂无热区，先绘制一个吧'));
+      }
+
+      if (sel) {
+        const a = sel.action || (sel.action = { type: 'popup', target: '', label: '', duration: 10 });
+        const send = (patch) => { iframe.contentWindow?.postMessage({ type: 'luma:hs-update', id: sel.id, patch }, '*'); };
+        const sendAction = (na) => send({ action: na });
+        children.push(el('div', { style: { marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--c-border)' } }));
+        children.push(el('div', { class: 'ed-field' },
+          el('label', { class: 'ed-field-label', text: '标签（显示名）' }),
+          el('input', { class: 'ed-input', value: a.label || '', oninput: e => { a.label = e.target.value; sendAction({ ...a, label: e.target.value }); } })));
+
+        const typeSel = el('select', { class: 'ed-select', onchange: (e) => {
+          const t = e.target.value;
+          const na = { type: t, target: '', label: a.label, duration: 10, mediaId: '', text: '' };
+          sendAction(na); refreshProps();
+        } }, ...['none', 'popup', 'url', 'layout'].map(o => el('option', { value: o, selected: o === (a.type || 'popup'), text: o === 'none' ? '无操作' : o === 'popup' ? '弹窗' : o === 'url' ? '打开链接' : '跳转节目' })));
+        children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '动作类型' }), typeSel));
+
+        if (a.type === 'popup') {
+          const mediaOpts = [el('option', { value: '', text: '— 纯文本 —' })].concat((ed.mediaList || []).map(m => el('option', { value: m.id, selected: m.id === a.mediaId, text: m.name || m.id })));
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '弹窗素材（留空则用文本）' }),
+            el('select', { class: 'ed-select', onchange: e => sendAction({ ...a, mediaId: e.target.value }) }, ...mediaOpts)));
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '弹窗文本（无素材时显示）' }),
+            el('textarea', { class: 'ed-input', rows: 2, value: a.text || '', oninput: e => { a.text = e.target.value; sendAction({ ...a, text: e.target.value }); } })));
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '自动关闭(秒, 0=不自动)' }),
+            el('input', { class: 'ed-input', type: 'number', value: a.duration ?? 10, oninput: e => sendAction({ ...a, duration: parseInt(e.target.value, 10) || 0 }) })));
+        } else if (a.type === 'url') {
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '链接 URL' }),
+            el('input', { class: 'ed-input', value: a.target || '', placeholder: 'https://...', oninput: e => sendAction({ ...a, target: e.target.value }) })));
+        } else if (a.type === 'layout') {
+          const lopts = [el('option', { value: '', text: '— 选择节目 —' })].concat((ed.layoutsList || []).map(l => el('option', { value: l.id, selected: l.id === a.target, text: l.name || l.id })));
+          children.push(el('div', { class: 'ed-field' }, el('label', { class: 'ed-field-label', text: '跳转到的节目' }),
+            el('select', { class: 'ed-select', onchange: e => sendAction({ ...a, target: e.target.value }) }, ...lopts)));
+        }
+
+        children.push(el('button', { class: 't-btn danger', style: { width: '100%', marginTop: '12px' },
+          onclick: () => { iframe.contentWindow?.postMessage({ type: 'luma:hs-remove', id: sel.id }, '*'); ed.selHsId = null; refreshProps(); } }, '删除此热区'));
+      }
+
+      propsPanel.innerHTML = '';
+      propsPanel.appendChild(el('div', { class: 'ed-props-head', text: '交互热区' }));
+      propsPanel.appendChild(el('div', { class: 'ed-props-body' }, ...children));
+    }
+
     /* ── 素材库选择器（弹窗） ── */
     async function openMediaPicker(targetItem) {
       let md; try { md = await api.get('/api/media'); } catch (e) { toast('加载素材失败：' + e.message, 'err'); return; }
@@ -989,6 +1056,34 @@ function renderEditor(params) {
 
     iframe.addEventListener('load', () => { pushPreview(); saveHistory(); });
 
+    /* ── 交互热区（P1）：选项懒加载 + 消息桥 ── */
+    async function loadHsOptions() {
+      try { ed.layoutsList = (await api.get('/api/layouts?type=program')).items || []; } catch {}
+      try { ed.mediaList = (await api.get('/api/media')).items || []; } catch {}
+    }
+
+    const hsToggle = el('button', { class: 'ed-btn', title: '交互热区', onclick: () => {
+      ed.hsMode = !ed.hsMode;
+      ed.selHsId = null;
+      hsToggle.classList.toggle('active', ed.hsMode);
+      hsToggle.textContent = ed.hsMode ? '✕ 退出热区' : '◉ 交互热区';
+      iframe.contentWindow?.postMessage({ type: 'luma:hs-mode', on: ed.hsMode }, '*');
+      if (ed.hsMode) loadHsOptions();
+      refreshProps();
+    } }, '◉ 交互热区');
+
+    // 接收来自播放 iframe 的热区选择/变更回传
+    window.addEventListener('message', (ev) => {
+      const d = ev.data; if (!d || !d.type) return;
+      if (d.type === 'luma:hs-select') {
+        ed.selHsId = d.hs ? d.hs.id : null;
+        if (ed.hsMode) refreshProps();
+      } else if (d.type === 'luma:hs-change') {
+        L.hotspots = d.hotspots || [];
+        if (ed.hsMode) { saveHistory(); updateStatus(); refreshProps(); }
+      }
+    });
+
     /* ── 提交审批 ── */
     const doSubmitForApproval = async () => {
       try {
@@ -1008,6 +1103,7 @@ function renderEditor(params) {
           el('button', { class: 'ed-btn ed-btn-icon', title: '撤销', onclick: undo }, '↶'),
           el('button', { class: 'ed-btn ed-btn-icon', title: '重做', onclick: redo }, '↷'),
           el('a', { class: 'ed-btn', href: `/player/index.html?layoutId=${id}`, target: '_blank', text: '新窗口预览' }),
+          hsToggle,
           el('button', { class: 'ed-btn primary', onclick: async () => {
             try { await api.put(`/api/layouts/${id}`, L); saveHistory(); toast('已保存', 'ok'); updateStatus(); }
             catch (e) { toast(e.message, 'err'); }

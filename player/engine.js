@@ -95,7 +95,7 @@ class Player {
     if (this.es) { try { this.es.close(); } catch {} this.es = null; }
     if (this._dsTimer) { clearInterval(this._dsTimer); this._dsTimer = null; }
     app.innerHTML = '';
-    this.stage = null; this.regionCtls = [];
+    this.stage = null; this.regionCtls = []; this.hotspotsLayer = null;
   }
 
   /** opts.resolver: (mediaId)=>url */
@@ -111,6 +111,7 @@ class Player {
     this.buildStage(layout);
     this.startRegions(layout);
     this.primeDataSources().catch(() => {}).finally(() => this.startDataSourcePolling());
+    if (this._keepEditMode) this.setEditMode(true);
     if (this.mode === 'term') { this.startPolling(); this.startCommands(); this.startHeartbeat(); }
   }
 
@@ -188,6 +189,8 @@ class Player {
       stage.appendChild(el);
       r._el = el;
     }
+    this.hotspotsLayer = null;
+    this.renderHotspots();
     this.rescale();
     window.addEventListener('resize', this._onResize = () => this.rescale());
   }
@@ -206,6 +209,238 @@ class Player {
       for (const it of (r.items || [])) it._getData = (id) => this.dsCache[id];
       if (r._el) this.runRegion(r);
     }
+  }
+
+  /* ================= P1 交互式触摸热区 ================= */
+  /** 编辑器可挂载的回调：选中热区 / 热区变更（用于同步侧栏面板与持久化） */
+  onHotspotSelect(hs) { if (this._onSelect) this._onSelect(hs); }
+  onHotspotChange() { if (this._onChange) this._onChange(); }
+
+  setHotspotHandlers({ onSelect, onChange }) { this._onSelect = onSelect; this._onChange = onChange; }
+
+  setEditMode(on) {
+    this.editMode = !!on;
+    this._keepEditMode = !!on;
+    if (this.hotspotsLayer) {
+      this.hotspotsLayer.classList.toggle('editing', this.editMode);
+      this.renderHotspots();
+    }
+  }
+
+  ensureHotspotLayer() {
+    if (this.hotspotsLayer) return this.hotspotsLayer;
+    const layer = document.createElement('div');
+    layer.className = 'hotspot-layer';
+    layer.classList.toggle('editing', this.editMode);
+    this.stage.appendChild(layer);
+    this.hotspotsLayer = layer;
+    // 编辑模式下，在空白区域按下即开始绘制新热区
+    layer.addEventListener('pointerdown', (e) => {
+      if (!this.editMode || e.target !== layer) return;
+      e.preventDefault();
+      const rect = this.stage.getBoundingClientRect();
+      const sx = this.layout.width / rect.width, sy = this.layout.height / rect.height;
+      const ox = (e.clientX - rect.left) * sx, oy = (e.clientY - rect.top) * sy;
+      const tmp = { x: ox, y: oy, w: 0, h: 0 };
+      const move = (ev) => {
+        tmp.w = Math.max(0, (ev.clientX - rect.left) * sx - ox);
+        tmp.h = Math.max(0, (ev.clientY - rect.top) * sy - oy);
+        const el = layer.querySelector('.hs-draft');
+        if (el) { el.style.width = tmp.w + 'px'; el.style.height = tmp.h + 'px'; }
+      };
+      const up = (ev) => {
+        layer.removeEventListener('pointermove', move);
+        layer.removeEventListener('pointerup', up);
+        const draft = layer.querySelector('.hs-draft'); if (draft) draft.remove();
+        const w = Math.max(0, (ev.clientX - rect.left) * sx - ox);
+        const h = Math.max(0, (ev.clientY - rect.top) * sy - oy);
+        if (w < 20 || h < 20) return; // 太小忽略
+        const hs = {
+          id: 'hs_' + Math.random().toString(36).slice(2, 9),
+          x: Math.round(ox), y: Math.round(oy), w: Math.round(w), h: Math.round(h),
+          shape: 'rect', action: { type: 'popup', target: '', label: '', duration: 10 },
+        };
+        this.layout.hotspots = this.layout.hotspots || [];
+        this.layout.hotspots.push(hs);
+        this.renderHotspots();
+        this.onHotspotSelect(hs);
+        this.onHotspotChange();
+      };
+      const draft = document.createElement('div');
+      draft.className = 'hotspot hs-draft';
+      draft.style.left = ox + 'px'; draft.style.top = oy + 'px';
+      layer.appendChild(draft);
+      layer.addEventListener('pointermove', move);
+      layer.addEventListener('pointerup', up);
+    });
+    return layer;
+  }
+
+  renderHotspots() {
+    if (!this.stage) return;
+    const layer = this.ensureHotspotLayer();
+    layer.innerHTML = '';
+    const interactive = this.editMode || this.mode === 'term';
+    layer.style.pointerEvents = interactive ? 'auto' : 'none';
+    layer.classList.toggle('editing', this.editMode);
+    const list = (this.layout && this.layout.hotspots) || [];
+    for (const hs of list) {
+      const el = document.createElement('div');
+      el.className = 'hotspot' + (hs.shape === 'circle' ? ' circle' : '');
+      el.dataset.id = hs.id;
+      el.style.left = hs.x + 'px'; el.style.top = hs.y + 'px';
+      el.style.width = hs.w + 'px'; el.style.height = hs.h + 'px';
+      el.style.pointerEvents = interactive ? 'auto' : 'none';
+      if (this.editMode) {
+        el.classList.add('editing');
+        const lbl = document.createElement('span');
+        lbl.className = 'hs-label';
+        lbl.textContent = (hs.action && hs.action.label) || (hs.action && hs.action.type) || '热区';
+        el.appendChild(lbl);
+        const handle = document.createElement('div');
+        handle.className = 'hs-handle';
+        el.appendChild(handle);
+        this._bindHotspotInteractions(el, hs);
+      } else if (this.mode === 'term') {
+        el.addEventListener('click', (e) => { e.stopPropagation(); this.dispatchHotspot(hs); });
+      }
+      layer.appendChild(el);
+    }
+  }
+
+  _bindHotspotInteractions(el, hs) {
+    const startMove = (e) => {
+      if (e.target.classList.contains('hs-handle')) return; // 由缩放处理
+      e.preventDefault(); e.stopPropagation();
+      this.onHotspotSelect(hs);
+      const rect = this.stage.getBoundingClientRect();
+      const sx = this.layout.width / rect.width, sy = this.layout.height / rect.height;
+      const ox = e.clientX, oy = e.clientY;
+      const orig = { x: hs.x, y: hs.y };
+      const move = (ev) => {
+        hs.x = Math.round(orig.x + (ev.clientX - ox) * sx);
+        hs.y = Math.round(orig.y + (ev.clientY - oy) * sy);
+        el.style.left = hs.x + 'px'; el.style.top = hs.y + 'px';
+      };
+      const up = () => {
+        layer_unbind();
+        this.onHotspotChange();
+      };
+      const layer_unbind = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    };
+    const handle = el.querySelector('.hs-handle');
+    const startResize = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const rect = this.stage.getBoundingClientRect();
+      const sx = this.layout.width / rect.width, sy = this.layout.height / rect.height;
+      const ox = e.clientX, oy = e.clientY;
+      const orig = { x: hs.x, y: hs.y, w: hs.w, h: hs.h };
+      const move = (ev) => {
+        hs.w = Math.max(20, Math.round(orig.w + (ev.clientX - ox) * sx));
+        hs.h = Math.max(20, Math.round(orig.h + (ev.clientY - oy) * sy));
+        el.style.width = hs.w + 'px'; el.style.height = hs.h + 'px';
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        this.onHotspotChange();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    };
+    el.addEventListener('pointerdown', startMove);
+    if (handle) handle.addEventListener('pointerdown', startResize);
+  }
+
+  addHotspot(hs) {
+    this.layout.hotspots = this.layout.hotspots || [];
+    this.layout.hotspots.push(hs);
+    this.renderHotspots(); this.onHotspotChange();
+  }
+  updateHotspot(id, patch) {
+    const hs = (this.layout.hotspots || []).find(x => x.id === id);
+    if (!hs) return;
+    Object.assign(hs, patch);
+    this.renderHotspots(); this.onHotspotChange();
+  }
+  removeHotspot(id) {
+    this.layout.hotspots = (this.layout.hotspots || []).filter(x => x.id !== id);
+    this.renderHotspots(); this.onHotspotChange();
+  }
+  addHotspotCenter() {
+    const W = this.layout.width || 1920, H = this.layout.height || 1080;
+    const w = Math.round(W * 0.3), h = Math.round(H * 0.2);
+    const hs = {
+      id: 'hs_' + Math.random().toString(36).slice(2, 9),
+      x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w, h,
+      shape: 'rect', action: { type: 'popup', target: '', label: '热区', duration: 10 },
+    };
+    this.addHotspot(hs);
+    this.onHotspotSelect(hs);
+  }
+
+  dispatchHotspot(hs) {
+    const a = hs.action || { type: 'none' };
+    if (a.type === 'url') {
+      const url = a.target || '';
+      if (!url) return;
+      if (window.LumaBridge && window.LumaBridge.openUrl) window.LumaBridge.openUrl(url);
+      else window.open(url, '_blank');
+    } else if (a.type === 'layout') {
+      if (a.target) this.gotoLayout(a.target);
+    } else if (a.type === 'popup') {
+      this.showPopup(a);
+    }
+    // type 'none' → 无操作
+  }
+
+  async gotoLayout(id) {
+    const base = (this.mode === 'term' && this.terminalId)
+      ? `/api/t/layout/${encodeURIComponent(id)}?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`
+      : `/api/layouts/${encodeURIComponent(id)}`;
+    try {
+      const r = await fetch(base, { credentials: 'same-origin' });
+      if (!r.ok) { console.warn('gotoLayout failed', r.status); return; }
+      const d = await r.json();
+      const item = d.item || d;
+      if (item && item.regions) this.load(item, { resolver: this.resolver, mode: this.mode });
+    } catch (e) { console.warn('gotoLayout error', e); }
+  }
+
+  showPopup(a) {
+    if (!this.stage) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'hs-popup';
+    const box = document.createElement('div');
+    box.className = 'hs-popup-box';
+    const close = () => { overlay.remove(); };
+    const mediaId = a.mediaId || a.target || '';
+    if (mediaId) {
+      const url = this.resolver ? this.resolver(mediaId) : `/api/media/${mediaId}/raw`;
+      const m = document.createElement('img');
+      m.src = url; m.className = 'hs-popup-media';
+      box.appendChild(m);
+    } else if (a.text) {
+      const t = document.createElement('div');
+      t.className = 'hs-popup-text';
+      t.textContent = a.text;
+      box.appendChild(t);
+    } else {
+      const t = document.createElement('div');
+      t.className = 'hs-popup-text';
+      t.textContent = (a.label || '提示');
+      box.appendChild(t);
+    }
+    overlay.appendChild(box);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    this.stage.appendChild(overlay);
+    const dur = Number(a.duration) || 0;
+    if (dur > 0) setTimeout(close, dur * 1000);
   }
 
   runRegion(region) {
@@ -521,9 +756,24 @@ async function bootstrap() {
   // 编辑器实时预览：监听 postMessage
   window.addEventListener('message', e => {
     const d = e.data;
-    if (d && d.type === 'luma:preview' && d.layout) {
+    if (!d || !d.type) return;
+    if (d.type === 'luma:preview' && d.layout) {
       player.load(d.layout, { resolver: id => `/api/media/${id}/raw`, mode: 'preview' });
+    } else if (d.type === 'luma:hs-mode') {
+      player.setEditMode(!!d.on);
+    } else if (d.type === 'luma:hs-update') {
+      player.updateHotspot(d.id, d.patch || {});
+    } else if (d.type === 'luma:hs-remove') {
+      player.removeHotspot(d.id);
+    } else if (d.type === 'luma:hs-add-center') {
+      player.addHotspotCenter();
     }
+  });
+
+  // 交互热区：把选择/变更回传给编辑器父窗口
+  player.setHotspotHandlers({
+    onSelect: (hs) => { try { window.parent.postMessage({ type: 'luma:hs-select', hs }, '*'); } catch {} },
+    onChange: () => { try { window.parent.postMessage({ type: 'luma:hs-change', hotspots: player.layout.hotspots || [] }, '*'); } catch {} },
   });
 
   // 1) 内联数据

@@ -560,6 +560,7 @@ export function registerAdminApi(router, ctx) {
       validFrom: b.validFrom || null, validUntil: b.validUntil ?? b.validTo ?? null,
       playMode: b.playMode || 'default',
       background: b.background || { color: '#000000', mediaId: null },
+      hotspots: Array.isArray(b.hotspots) ? b.hotspots : [],
       regions: b.regions || [{ id: 'r_1', name: '主区', x: 0, y: 0, w: b.width || 1920, h: b.height || 1080, z: 1, loop: true, transition: 'fade', items: [] }],
       approval: { state: lv === 0 ? 'approved' : 'draft', level: lv, records: [] },
       // 命中 review 级 → 即使系统设为"免审批"，该节目也必须人工复核
@@ -594,6 +595,7 @@ export function registerAdminApi(router, ctx) {
       playMode: b.playMode ?? before.playMode,
       background: b.background ?? before.background,
       regions: b.regions ?? before.regions,
+      hotspots: Array.isArray(b.hotspots) ? b.hotspots : (before.hotspots || []),
     };
     if (contentChanged && lv > 0)
       patch.approval = { state: 'draft', level: lv, records: before.approval?.records || [] };

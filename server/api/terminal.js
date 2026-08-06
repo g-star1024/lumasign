@@ -164,6 +164,15 @@ export function registerTerminalApi(router, ctx) {
     json(res, body);
   });
 
+  /* 终端按 id 拉取单个节目（交互热区「跳转节目」用，终端鉴权，不暴露管理端） */
+  router.get('/api/t/layout/:id', (req, res, { id }, url) => {
+    const t = authTerminal(req, url);
+    if (!t) return fail(res, '终端未注册或令牌无效', 401);
+    const l = store.col('layouts').byId(id);
+    if (!l) return fail(res, '节目不存在', 404);
+    json(res, { ok: true, item: l, media: [] });
+  });
+
   /* ---------------- SSE 指令通道 ---------------- */
   router.get('/api/t/events', async (req, res, p, url) => {
     const t = authTerminal(req, url);
