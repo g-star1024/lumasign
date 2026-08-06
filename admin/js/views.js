@@ -412,28 +412,34 @@ async function renderMedia() {
       mediaBox.style.minHeight = '240px';
       mediaBox.append(el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '520px', display: 'block' } }));
     } else if (m.kind === 'video') {
-      // HEVC/H.265 浏览器不解码 → 直接显示说明卡片，避免"有控件但全黑"
-      if (m.codec === 'hevc' || m.browserPlayable === false) {
-        const hevcCard = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)' } },
-          el('div', { style: { fontSize:'32px', marginBottom:'12px' }, text: '🎬' }),
-          el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: '该视频为 H.265/HEVC 编码' }),
-          el('p', { style: { fontSize:'13px', color:'var(--c-text-2)', lineHeight:'1.6', maxWidth:'380px', margin:'0 auto 16px' },
-            text: '浏览器不支持 HEVC 解码，无法在此预览。请在安卓终端上验证播放效果。如需浏览器预览，建议转码为 H.264 (AVC)。' }
+      // 先尝试用 <video> 直接播放：H.264 正常预览；装了 HEVC 扩展的浏览器也能播 HEVC。
+      // 仅在"确实无法解码"时（error 事件 / 超时无时长）降级为说明卡片，避免一律拦截导致能播的也看不了。
+      const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
+      const isHevc = m.codec === 'hevc' || m.browserPlayable === false;
+      const degrade = (reason) => {
+        if (ve.parentNode !== mediaBox) return; // 已降级或已被替换
+        const card = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)', maxWidth:'440px' } },
+          el('div', { style: { fontSize:'32px', marginBottom:'12px' }, text: isHevc ? '🎬' : '⚠' }),
+          el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: isHevc ? '该视频为 H.265/HEVC 编码' : '视频加载失败' }),
+          el('p', { style: { fontSize:'13px', color:'var(--c-text-2)', lineHeight:'1.6', marginBottom:'16px' },
+            text: isHevc
+              ? '当前浏览器未启用 HEVC 解码（Windows 版 Chrome/Edge 默认不支持）。可在 Microsoft Store 安装「HEVC 视频扩展」后预览，或直接用安卓终端播放。'
+              : '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' }
           ),
           el('a', { href: `/api/media/${m.id}/raw`, target: '_blank', class: 't-btn', style: { display:'inline-block', textDecoration:'none' }, text: '⬇ 下载原文件' })
         );
-        mediaBox.append(hevcCard);
-      } else {
-        const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
-        ve.addEventListener('error', function onVErr() {
-          const errEl = el('div', { style: { padding:'40px', textAlign:'center', color:'var(--c-text-2)', background:'var(--c-surface-2)', borderRadius:'8px' } },
-            el('p', { style: { fontWeight:600, marginBottom:'8px' }, text: '⚠ 视频加载失败' }),
-            el('p', { style: { fontSize:'13px' }, text: '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' })
-          );
-          ve.replaceWith(errEl);
-        });
-        mediaBox.append(ve);
+        ve.replaceWith(card);
+      };
+      ve.addEventListener('error', () => degrade('error'));
+      // HEVC 在无扩展浏览器可能不触发 error，而是长时间黑屏无时长 → 超时探测降级
+      if (isHevc) {
+        let done = false;
+        const probe = () => { if (done) return; if (!ve.duration || isNaN(ve.duration)) { done = true; degrade('timeout'); } };
+        ve.addEventListener('loadedmetadata', () => setTimeout(probe, 800));
+        ve.addEventListener('stalled', () => setTimeout(probe, 1500));
+        setTimeout(probe, 3000);
       }
+      mediaBox.append(ve);
     } else if (m.kind === 'audio') {
       mediaBox.append(el('audio', { src: `/api/media/${m.id}/raw`, controls: true, style: { width: '100%', marginTop: '40px', marginBottom: '40px' } }));
     } else {
