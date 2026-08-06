@@ -412,15 +412,28 @@ async function renderMedia() {
       mediaBox.style.minHeight = '240px';
       mediaBox.append(el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '520px', display: 'block' } }));
     } else if (m.kind === 'video') {
-      const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
-      ve.addEventListener('error', function onVErr() {
-        const errEl = el('div', { style: { padding:'40px', textAlign:'center', color:'var(--c-text-2)', background:'var(--c-surface-2)', borderRadius:'8px' } },
-          el('p', { style: { fontWeight:600, marginBottom:'8px' }, text: '⚠ 视频加载失败' }),
-          el('p', { style: { fontSize:'13px' }, text: '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' })
+      // HEVC/H.265 浏览器不解码 → 直接显示说明卡片，避免"有控件但全黑"
+      if (m.codec === 'hevc' || m.browserPlayable === false) {
+        const hevcCard = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)' } },
+          el('div', { style: { fontSize:'32px', marginBottom:'12px' }, text: '🎬' }),
+          el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: '该视频为 H.265/HEVC 编码' }),
+          el('p', { style: { fontSize:'13px', color:'var(--c-text-2)', lineHeight:'1.6', maxWidth:'380px', margin:'0 auto 16px' },
+            text: '浏览器不支持 HEVC 解码，无法在此预览。请在安卓终端上验证播放效果。如需浏览器预览，建议转码为 H.264 (AVC)。' }
+          ),
+          el('a', { href: `/api/media/${m.id}/raw`, target: '_blank', class: 't-btn', style: { display:'inline-block', textDecoration:'none' }, text: '⬇ 下载原文件' })
         );
-        ve.replaceWith(errEl);
-      });
-      mediaBox.append(ve);      mediaBox.append(ve);
+        mediaBox.append(hevcCard);
+      } else {
+        const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
+        ve.addEventListener('error', function onVErr() {
+          const errEl = el('div', { style: { padding:'40px', textAlign:'center', color:'var(--c-text-2)', background:'var(--c-surface-2)', borderRadius:'8px' } },
+            el('p', { style: { fontWeight:600, marginBottom:'8px' }, text: '⚠ 视频加载失败' }),
+            el('p', { style: { fontSize:'13px' }, text: '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' })
+          );
+          ve.replaceWith(errEl);
+        });
+        mediaBox.append(ve);
+      }
     } else if (m.kind === 'audio') {
       mediaBox.append(el('audio', { src: `/api/media/${m.id}/raw`, controls: true, style: { width: '100%', marginTop: '40px', marginBottom: '40px' } }));
     } else {

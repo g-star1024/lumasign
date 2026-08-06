@@ -18,7 +18,7 @@ import { buildManifest, detectConflicts, MODE_PRIORITY } from '../lib/schedule.j
 import { validityOf } from '../lib/lifecycle.js';
 import { lanIPs, primaryIP } from '../lib/discovery.js';
 import { builtinTemplates } from '../lib/seed.js';
-import { sniffFile, passwordStrength } from '../lib/security.js';
+import { sniffFile, passwordStrength, probeVideoCodec, isBrowserPlayableCodec } from '../lib/security.js';
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mkv|avi|flv|ts|mov|m4v)$/i;
@@ -456,12 +456,20 @@ export function registerAdminApi(router, ctx) {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(f.tmpPath, dest);
 
+        // 视频：嗅探编码，HEVC/H.265 在浏览器 <video> 里会静默黑屏，打标以便预览/编辑器给出明确提示
+        let codec = null, browserPlayable = true;
+        if (mediaKind(ext) === 'video') {
+          codec = probeVideoCodec(dest);
+          browserPlayable = isBrowserPlayableCodec(codec);
+        }
+
         const row = S('media').insert({
           id: uid('m_'), name: safeName, hash, ext,
           rel: rel.split(path.sep).join('/'),
           size: f.size, mime: sniff.mime,
           kind: mediaKind(ext), folderId,
           duration: null, width: null, height: null, pages: null,
+          codec, browserPlayable,
           uploadedBy: user.id, refCount: 0,
         });
         out.push(row);

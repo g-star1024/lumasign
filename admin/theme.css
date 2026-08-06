@@ -128,7 +128,8 @@ a { color: var(--accent); text-decoration: none; }
   max-width: 1240px;
   margin: 0 auto;
   width: 100%;
-  padding: 0 8px;
+  padding: 16px 24px;
+  box-sizing: border-box;
 }
 
 /* ---------------- 动态数据源（P1） ---------------- */
@@ -607,7 +608,7 @@ tbody tr:hover { background: var(--hover); }
 .page-health .h-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; }
 .page-health .h-leg { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--c-text-2); }
 .page-health .h-leg i { width:10px; height:10px; border-radius:3px; display:inline-block; }
-.page-health .h-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+.page-health .h-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; margin-top: 20px; }
 .page-health .h-card { background:var(--c-surface); border:1px solid var(--c-border); border-radius:var(--c-radius-lg); box-shadow:var(--c-shadow); padding:16px; cursor:pointer; transition:transform .15s ease, box-shadow .15s ease, border-color .15s; }
 .page-health .h-card:hover { transform:translateY(-2px); border-color:var(--c-primary); box-shadow:var(--c-shadow-lg); }
 .page-health .h-card-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }

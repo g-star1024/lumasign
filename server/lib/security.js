@@ -354,6 +354,39 @@ export function sniffFile(filePath, { allow = [], maxSniff = 4096 } = {}) {
   return { ok: true, ext: hit.ext, mime: hit.mime };
 }
 
+/**
+ * 视频编码嗅探（零依赖，纯读 box 里的 fourcc）。
+ * 背景：HTML5 <video> 在多数浏览器（尤其 Windows 上的 Chrome/Edge）**不解码 H.265/HEVC**，
+ * 表现为「控件、进度条都在，但画面全黑」。这类素材会在管理端预览与 WebView 能力弱的终端上静默黑屏。
+ * 通过识别 moov/trak 中 stsd 的编码条目 fourcc 判定：
+ *   - avc1 / avc3 → H.264（浏览器可播）
+ *   - hvc1 / hev1 → H.265/HEVC（多数浏览器不可播）
+ *   - vp09 → VP9、av01 → AV1（Chrome 可播，Safari 多不可）
+ * @returns { 'h264'|'hevc'|'vp9'|'av1'|'other'|null } 非视频或无法判定返回 null
+ */
+export function probeVideoCodec(filePath) {
+  let buf;
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    // HEVC/AVC 的 fourcc 都在 moov box 内，文件头几千字节通常已经够；读前 2MB 足够覆盖绝大多数文件
+    const size = Math.min(2 * 1024 * 1024, fs.fstatSync(fd).size);
+    buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, 0);
+    fs.closeSync(fd);
+  } catch { return null; }
+  const s = buf.toString('latin1');
+  if (s.includes('hvc1') || s.includes('hev1')) return 'hevc';
+  if (s.includes('avc1') || s.includes('avc3')) return 'h264';
+  if (s.includes('vp09')) return 'vp9';
+  if (s.includes('av01')) return 'av1';
+  return 'other';
+}
+
+/** 浏览器 <video> 能否直接解码该编码（用于预览与编辑器提示） */
+export function isBrowserPlayableCodec(codec) {
+  return codec === 'h264' || codec === 'vp9' || codec === 'av1';
+}
+
 /* ══════════════════════════════════════════════════════════
  * 6) 审计哈希链（防篡改）
  * ════════════════════════════════════════════════════════ */
