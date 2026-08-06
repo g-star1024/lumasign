@@ -128,6 +128,7 @@ a { color: var(--accent); text-decoration: none; }
   max-width: 1240px;
   margin: 0 auto;
   width: 100%;
+  padding: 0 8px;
 }
 
 /* ---------------- 动态数据源（P1） ---------------- */

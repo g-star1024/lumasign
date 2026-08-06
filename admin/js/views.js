@@ -412,7 +412,15 @@ async function renderMedia() {
       mediaBox.style.minHeight = '240px';
       mediaBox.append(el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '520px', display: 'block' } }));
     } else if (m.kind === 'video') {
-      mediaBox.append(el('video', { src: `/api/media/${m.id}/raw`, controls: true, style: { maxWidth: '100%', maxHeight: '520px', display: 'block', background: '#000' } }));
+      const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
+      ve.addEventListener('error', function onVErr() {
+        const errEl = el('div', { style: { padding:'40px', textAlign:'center', color:'var(--c-text-2)', background:'var(--c-surface-2)', borderRadius:'8px' } },
+          el('p', { style: { fontWeight:600, marginBottom:'8px' }, text: '⚠ 视频加载失败' }),
+          el('p', { style: { fontSize:'13px' }, text: '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' })
+        );
+        ve.replaceWith(errEl);
+      });
+      mediaBox.append(ve);      mediaBox.append(ve);
     } else if (m.kind === 'audio') {
       mediaBox.append(el('audio', { src: `/api/media/${m.id}/raw`, controls: true, style: { width: '100%', marginTop: '40px', marginBottom: '40px' } }));
     } else {
@@ -2473,15 +2481,17 @@ async function renderDataSources() {
         enabledI, el('span', { text: '启用（关闭后不再自动拉取）' })),
     );
 
-    const close = openModal(el('div', { class: 'page-datasource' },
+    let close;
+    const modalBody = el('div', { class: 'page-datasource' },
       el('h2', { text: isEdit ? '编辑数据源' : '新建数据源', style: { marginBottom: '10px' } }),
       el('div', { class: 't-dnote', text: '拉取结果由服务端缓存，播放端经终端鉴权读取，不直连外网、不暴露 token。' }),
       form,
       el('div', { class: 'ds-actions' },
         saveBtn,
-        el('button', { class: 't-btn', onclick: close }, '取消'),
+        el('button', { class: 't-btn', onclick: () => close?.(), text: '取消' }),
       ),
-    ));
+    );
+    close = openModal(modalBody);
 
     saveBtn.onclick = async () => {
       const payload = {

@@ -310,7 +310,10 @@ export function registerAdminApi(router, ctx) {
     const ALLOW = ['reboot', 'restart_app', 'volume', 'screenshot', 'sync_time', 'clear_cache',
       'power_schedule', 'refresh_manifest', 'pull_info', 'screen_on', 'screen_off',
       'set_brightness', 'insert_message', 'stop_insert', 'play_now', 'upgrade_apk'];
-    if (!ALLOW.includes(type)) return fail(res, `不支持的指令：${type}`);
+    if (!ALLOW.includes(type)) {
+      const hints = { reload: '请使用「刷新内容」代替（重新拉取节目单与素材）', restart: '请使用「重启」代替（重启播放端 App）', shutdown: '关机指令需要通过「定时开关机」配置下发' };
+      return fail(res, hints[type] || `不支持的指令：${type}`);
+    }
     if (type === 'insert_message' && !auth.can(user, 'message:insert')) return fail(res, '没有插播权限', 403);
     if (type === 'upgrade_apk' && !auth.can(user, 'terminal:upgrade')) return fail(res, '没有升级权限', 403);
 
