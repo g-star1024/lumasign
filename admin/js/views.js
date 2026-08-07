@@ -1625,6 +1625,7 @@ async function renderSettings() {
     const hb = el('input', { class: 'input', type: 'number', value: s.heartbeatInterval || 15 });
     const off = el('input', { class: 'input', type: 'number', value: s.offlineThreshold || 60 });
     const auto = el('input', { type: 'checkbox', checked: !!s.autoApproveTerminal });
+    const maxTerm = el('input', { class: 'input', type: 'number', min: '0', value: s.maxTerminals || 0, style: { width: '120px' } });
     const approvalLv = el('select', { class: 'input' },
       el('option', { value: '0', text: '免审批（直接发布）' }),
       el('option', { value: '1', text: '一级审批' }),
@@ -1635,9 +1636,9 @@ async function renderSettings() {
       pageHead('系统设置'),
       el('div', { class: 'card', style: { maxWidth: '560px' } },
         field('服务名称', name), field('心跳间隔(秒)', hb), field('离线判定(秒)', off),
-        field('新终端自动准入', auto), field('节目审批级别', approvalLv),
+        field('新终端自动准入', auto), field('终端授权上限（0=无限制）', maxTerm), field('节目审批级别', approvalLv),
         el('div', { style: { marginTop: '16px' } }, el('button', { class: 'btn primary', onclick: async () => {
-          try { await api.put('/api/settings', { serverName: name.value, heartbeatInterval: +hb.value, offlineThreshold: +off.value, autoApproveTerminal: auto.checked, approvalLevel: +approvalLv.value }); toast('已保存', 'ok'); }
+          try { await api.put('/api/settings', { serverName: name.value, heartbeatInterval: +hb.value, offlineThreshold: +off.value, autoApproveTerminal: auto.checked, maxTerminals: Math.max(0, +maxTerm.value || 0), approvalLevel: +approvalLv.value }); toast('已保存', 'ok'); }
           catch (e) { toast(e.message, 'err'); }
         } }, '保存设置')),
       ),

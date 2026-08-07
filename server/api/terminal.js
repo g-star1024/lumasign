@@ -56,6 +56,11 @@ export function registerTerminalApi(router, ctx) {
     if (t) {
       S('terminals').update(t.id, { hardware, net, appVersion: b.appVersion || t.appVersion, lastHeartbeat: Date.now() });
     } else {
+      // 终端授权上限拦截：0=无限制；>0 时达上限即拒绝新设备（已存在终端重连不受影响）
+      const maxTerminals = settings().maxTerminals || 0;
+      if (maxTerminals > 0 && S('terminals').count() >= maxTerminals) {
+        return fail(res, `终端授权数量已达上限（${maxTerminals} 台），无法接入新设备`, 403);
+      }
       const auto = settings().autoApproveTerminal;
       const seq = S('terminals').count() + 1;
       t = S('terminals').insert({

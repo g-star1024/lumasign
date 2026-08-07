@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = {
   heartbeatInterval: 15,
   offlineThreshold: 60,            // 秒，超过则判离线
   autoApproveTerminal: false,      // 新终端是否自动准入
+  maxTerminals: 0,                 // 终端授权上限，0=无限制；>0 时新终端注册达上限即拒绝
   approvalLevel: 0,                // 0=不审批 1=一级 2=二级
   monitorToken: crypto.randomBytes(10).toString('hex'),  // 监看墙只读 token（大屏端用）
   downloadLimitKBps: 0,            // 全局下发限速，0=不限
