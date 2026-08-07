@@ -62,8 +62,12 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
   win.on('close', (e) => {
-    if (process.platform === 'darwin' && !forceQuit) {
-      e.preventDefault(); win.hide();
+    // 关闭窗口 = 最小化到托盘（而非退出）。服务端同进程托管，必须常驻后台。
+    // 仅托盘「退出」或 before-quit 会置 forceQuit=true，届时不再拦截、真正退出。
+    if (!forceQuit) {
+      e.preventDefault();
+      win.hide();
+      maybeHintTray();
     }
   });
   return win;
@@ -131,7 +135,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // 不自动退出：服务端同进程托管，需常驻后台持续运行。
+  // 窗口「关闭」实为隐藏到托盘（见 win.on('close')）；仅托盘「退出」或 before-quit 才真正退出。
 });
 
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWin = createWindow(); });
@@ -180,6 +185,21 @@ function installHevcExtension() {
 ipcMain.handle('detect-hevc', () => detectHevcWindows());
 ipcMain.handle('install-hevc', () => installHevcExtension());
 ipcMain.on('open-store-hevc', () => { try { shell.openExternal(HEVC_STORE_URL); } catch {} });
+
+// 首次「关闭窗口最小化到托盘」时提示一次，避免 Windows 用户误以为程序已退出/崩溃
+function maybeHintTray() {
+  if (!isWin) return;
+  const flag = path.join(app.getPath('userData'), 'tray-hinted.json');
+  if (fs.existsSync(flag)) return;
+  try { fs.writeFileSync(flag, '1'); } catch {}
+  dialog.showMessageBox(undefined, {
+    type: 'info',
+    title: '已最小化到系统托盘',
+    message: '管理端窗口已最小化到系统托盘，灵屏服务端仍在后台运行（设备可继续连接）。',
+    detail: '如需完全退出程序，请在系统托盘（任务栏右下角）的灵屏图标上右键选择「退出」。',
+    buttons: ['知道了'], defaultId: 0,
+  });
+}
 
 // 首次启动（仅 Windows、仅提示一次）：缺失则引导安装 HEVC 扩展
 async function maybePromptHevc() {
