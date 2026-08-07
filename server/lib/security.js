@@ -115,6 +115,12 @@ export function lanOnlyGuard(req, cfg = {}) {
 /** IP 黑白名单（白名单优先；支持 192.168.1.* 与 CIDR 前缀写法） */
 export function ipListGuard(req, cfg = {}) {
   const ip = clientIp(req);
+  // 回环地址（127.0.0.1 / ::1 / localhost）永远放行：
+  // ① 桌面客户端的管理后台用 http://127.0.0.1:7788 打开，若 allowIps
+  //    不含回环会被自己的守卫 403 锁死；
+  // ② 本机 curl / 冒烟脚本测试也走回环，不应被白名单挡住；
+  // ③ 回环无法从网络抵达，豁免不削弱局域网安全。
+  if (isLoopback(ip)) return { allowed: true };
   const match = (list) => (list || []).some((rule) => {
     const r = String(rule).trim();
     if (!r) return false;
