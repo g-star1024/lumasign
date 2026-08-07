@@ -24,10 +24,12 @@ const execFileAsync = promisify(execFile);
 
 /**
  * 多源镜像列表 —— 按优先级排列，installFFmpeg() 依次尝试，失败自动 fallback。
+ *
+ * 注意：GHProxy (mirror.ghproxy.com) 已实测不可用（HTTP 000），已移除。
+ * gh-proxy.com 和 GitHub 官方经测试均可通过代理访问。
  */
 const MIRRORS = [
   { name: 'GitHub 官方',    prefix: '' },
-  { name: 'GHProxy 镜像',   prefix: 'https://mirror.ghproxy.com' },
   { name: 'gh-proxy 镜像',  prefix: 'https://gh-proxy.com' },
 ];
 
@@ -130,7 +132,10 @@ export async function installFFmpeg(ctx) {
         continue;
       }
     }
-    if (lastError) throw new Error(`所有 ${MIRRORS.length} 个下载源均失败。最后一个错误：${lastError.message || lastError}`);
+    if (lastError) {
+      const proxyHint = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '(Windows 注册表自动探测)';
+      throw new Error(`所有 ${MIRRORS.length} 个下载源均失败。最后错误：${lastError.message || lastError}（代理：${proxyHint}）`);
+    }
 
     // 2) 解压
     _state.stage = 'extracting'; _state.percent = 100; _state.message = '正在解压…';
@@ -170,11 +175,37 @@ export async function installFFmpeg(ctx) {
   }
 }
 
-/** 流式下载（带进度），支持 HTTP(S)_PROXY 环境变量 */
+/** 流式下载（带进度），支持 HTTP(S)_PROXY 环境变量 + Windows 系统代理注册表 */
 async function downloadWithProgress(url, dest, onPct) {
-  // 企业网/代理环境：跟随 HTTP(S)_PROXY 环境变量（Node fetch 默认不读代理）
+  // 1) 优先使用环境变量显式设置的代理
+  let proxy = process.env.HTTPS_PROXY || process.env.https_proxy
+           || process.env.HTTP_PROXY  || process.env.http_proxy;
+
+  // 2) 若无环境变量，Windows 平台尝试从系统注册表读取 IE/Edge 代理设置
+  if (!proxy && process.platform === 'win32') {
+    try {
+      const { execFileSync: execSync } = await import('node:child_process');
+      const enabled = execSync('reg', [
+        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v', 'ProxyEnable',
+      ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+      if (/0x1/i.test(enabled)) {
+        const proxyResult = execSync('reg', [
+          'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+          '/v', 'ProxyServer',
+        ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const match = proxyResult.match(/ProxyServer\s+REG_SZ\s+(.+)/);
+        if (match && match[1].trim()) {
+          proxy = 'http://' + match[1].trim();
+        }
+      }
+    } catch {
+      /* 注册表读取失败时静默降级为直连 */
+    }
+  }
+
+  // 3) 构建 undici dispatcher（有代理则走 ProxyAgent，否则直连）
   let dispatcher = undefined;
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
   if (proxy) {
     try {
       const { ProxyAgent } = await import('undici');
@@ -182,10 +213,14 @@ async function downloadWithProgress(url, dest, onPct) {
     } catch { /* undici 不可用则直连 */ }
   }
 
-  const res = await fetch(url, { redirect: 'follow', dispatcher });
-  if (!res.ok) throw new Error(`下载失败：HTTP ${res.status} ${res.statusText}`);
+  const res = await fetch(url, {
+    redirect: 'follow',
+    dispatcher,
+    signal: AbortSignal.timeout(120_000),  // 单源总超时 2 分钟（大文件 ~80MB 需要时间）
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const total = parseInt(res.headers.get('content-length') || '0', 10);
-  if (!res.body) throw new Error('下载失败：无响应体');
+  if (!res.body) throw new Error('无响应体');
 
   const file = fs.createWriteStream(dest);
   let received = 0;
@@ -195,7 +230,7 @@ async function downloadWithProgress(url, dest, onPct) {
     if (total) onPct(Math.min(99, Math.round((received / total) * 100)));
   });
   await pipeline(body, file);
-  if (total && received < total) throw new Error('下载不完整，请重试');
+  if (total && received < total) throw new Error('下载不完整');
 }
 
 /** 解压：zip 用系统工具（Windows→Expand-Archive，其他→unzip），txz→tar */
