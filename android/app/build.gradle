@@ -50,6 +50,30 @@ android {
     buildFeatures {
         viewBinding true
     }
+
+    // ── 多版本 APK：按 CPU 架构拆分，兼容新旧设备 ──
+    // 产物示例：app-armeabi-v7a-release.apk（32位老设备如 rk312x/Android 4.4）
+    //         app-arm64-v8a-release.apk   （64位现代设备）
+    //         app-universal-release.apk     （全架构合一，体积大但省心）
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a'   // 覆盖 99%+ 安卓标牌设备
+            universalApk true                       // 额外输出一个 universal 包
+        }
+    }
+
+    // versionCode 自动按 ABI 偏移，避免 Google Play / 更新检测冲突
+    project.ext.versionCodes = ['armeabi-v7a': 1, 'arm64-v8a': 2, 'universal': 3]
+    android.applicationVariants.all { variant ->
+        variant.outputs.each { output ->
+            def baseVersionCode = project.ext.versionCodes.get(output.getFilter(
+                com.android.build.OutputFile.ABI
+            ), 0)
+            output.versionCodeOverride = defaultConfig.versionCode * 10 + baseVersionCode
+        }
+    }
 }
 
 dependencies {

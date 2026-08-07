@@ -67,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lumasign-android-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/debug/**/*.apk
           retention-days: 30
 
       # Release build requires signing key; this uses debug key for CI
@@ -102,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lumasign-android-release
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/release/**/*.apk
           retention-days: 30
 
   # Tag push → 自动发布到 GitHub Releases
