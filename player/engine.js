@@ -15,9 +15,11 @@ import { renderWidget } from './widgets.js';
 
 const app = document.getElementById('app');
 const fallback = document.getElementById('fallback');
+const welcome = document.getElementById('welcome');
 
 const showFallback = msg => { fallback.innerHTML = `<div class="big">灵屏 LumaSign</div><div>${msg}</div>`; fallback.classList.remove('hidden'); };
 const hideFallback = () => fallback.classList.add('hidden');
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -101,6 +103,28 @@ class Player {
     this.stage = null; this.regionCtls = []; this.hotspotsLayer = null;
     if (this.navBar && this.navBar.parentNode) this.navBar.remove();
     this.navBar = null; this.cancelNavTimer();
+  }
+
+  /* ---------------- 欢迎页（终端无展示任务时展示） ---------------- */
+  hideWelcome() { if (welcome) welcome.classList.add('hidden'); }
+
+  async showWelcome() {
+    this.stop();
+    hideFallback();
+    if (!welcome) return;
+    let ip = '';
+    try { if (native('getIpAddress')) { const r = window.LumaBridge.getIpAddress(); ip = (typeof r === 'string') ? r.trim() : ''; } } catch (e) { /* 桥不可用则留空 */ }
+    const hw = this._hwInfo || {};
+    const model = hw.model || '';
+    welcome.innerHTML =
+      '<div class="welcome-ip">本机IP：' + (ip || '未连接') + '</div>' +
+      '<div class="welcome-center">' +
+        '<div class="welcome-title">灵屏电子屏管理用系统</div>' +
+        '<div class="welcome-sub">LumaSign · 局域网数字标牌</div>' +
+        (model ? '<div class="welcome-sub" style="font-size:16px;opacity:.4;margin-top:8px">' + escapeHtml(model) + '</div>' : '') +
+        '<div class="welcome-pulse"></div>' +
+      '</div>';
+    welcome.classList.remove('hidden');
   }
 
   /** opts.resolver: (mediaId)=>url; opts.fromNav=true 表示来自导航栈跳转（不清空栈） */
@@ -668,8 +692,12 @@ class Player {
     const id = sch ? sch.scheduleId : null;
     if (id !== this.currentScheduleId) {
       this.currentScheduleId = id;
-      const layout = sch ? sch.layout : fallbackLayout();
-      this.load(layout, { resolver: this.resolver, mode: 'term' });
+      if (sch) {
+        this.hideWelcome();
+        this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
+      } else {
+        this.showWelcome();
+      }
     }
   }
 
@@ -701,6 +729,7 @@ class Player {
         const raw = (r && typeof r.then === 'function') ? await r : r;
         const hw = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (hw) {
+          this._hwInfo = hw;
           Object.assign(body, {
             mac: hw.mac || '', serial: hw.serial || serial, model: hw.model || 'Android',
             androidVersion: hw.androidVersion || '', resolution: hw.resolution || `${W}x${H}`,
@@ -816,6 +845,7 @@ class Player {
           break;
         case 'show': case 'play':
           if (cmd.payload?.layoutId) {
+            this.hideWelcome();
             const r = await fetch(`/api/layouts/${encodeURIComponent(cmd.payload.layoutId)}`);
             if (r.ok) { const data = await r.json(); this.load(data.item || data, { resolver: this.resolver, mode: 'term' }); }
           }
@@ -861,15 +891,6 @@ class Player {
       await fetch('/api/t/shot', { method: 'POST', body: fd, credentials: 'same-origin' });
     } catch {}
   }
-}
-
-function fallbackLayout() {
-  return {
-    width: 1920, height: 1080, background: { color: '#0b0f17' },
-    regions: [{ id: 'r1', x: 0, y: 0, w: 1920, h: 1080, items: [
-      { widget: 'text', html: '<div style="font-size:64px;color:#fff;font-weight:600">灵屏 LumaSign</div><div style="font-size:28px;opacity:.7;margin-top:12px">当前暂无排期节目</div>' }
-    ] }],
-  };
 }
 
 /* ---------------- 启动 ---------------- */
@@ -937,8 +958,12 @@ async function bootstrap() {
     player.lastManifest = man;
     const sch = pickActiveSchedule(man);
     player.currentScheduleId = sch ? sch.scheduleId : null;
-    const layout = sch ? sch.layout : fallbackLayout();
-    player.load(layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
+    if (sch) {
+      player.hideWelcome();
+      player.load(sch.layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
+    } else {
+      player.showWelcome();
+    }
     return;
   }
 

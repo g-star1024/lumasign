@@ -31,6 +31,10 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -80,9 +84,13 @@ class MainActivity : AppCompatActivity() {
 
         // 累计崩溃计数（持久化），供健康度上报
         crashCount = prefs.getInt("crash_count", 0)
-        Thread.setDefaultUncaughtExceptionHandler { _, _ ->
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             crashCount++
             prefs.edit().putInt("crash_count", crashCount).apply()
+            writeCrashLog(throwable)
+            // 链式调用原 handler，让进程按系统默认方式退出（避免被静默吞掉导致 ANR/诡异闪退）
+            prevHandler?.uncaughtException(thread, throwable)
         }
 
         setupOverlay()
@@ -343,8 +351,29 @@ class MainActivity : AppCompatActivity() {
             or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
             or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         )
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
+        // statusBarColor / navigationBarColor 仅在 API 21+ 可用，低版本调用会 NoSuchMethodError 崩溃
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.statusBarColor = Color.BLACK
+            window.navigationBarColor = Color.BLACK
+        }
+    }
+
+    /** 把崩溃堆栈写入外部存储日志，便于用户反馈诊断（Android 4.4 仍可访问 getExternalFilesDir） */
+    private fun writeCrashLog(t: Throwable?) {
+        try {
+            val dir = File(getExternalFilesDir(null), "logs")
+            dir.mkdirs()
+            val f = File(dir, "crash.log")
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val sb = StringBuilder()
+            sb.append("=== crash @ $ts ===\n")
+            sb.append("model=${Build.MODEL} android=${Build.VERSION.RELEASE} sdk=${Build.VERSION.SDK_INT}\n")
+            sb.append("${t?.javaClass?.name ?: "Throwable"}: ${t?.message ?: ""}\n")
+            t?.stackTrace?.forEach { sb.append("  at $it\n") }
+            // 保留最近若干次，避免无限增长
+            val old = if (f.exists()) f.readText() else ""
+            f.writeText(sb.toString() + "\n" + old.take(6000))
+        } catch (_: Exception) { /* 日志写入失败也不应再抛异常 */ }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

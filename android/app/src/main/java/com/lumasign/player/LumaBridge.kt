@@ -224,6 +224,31 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     @JavascriptInterface
     fun setBrightness(level: Int) { activity.setBrightness(level) }
 
+    /** 局域网 IP（wlan0/eth0 优先），供播放端欢迎页展示本机地址 */
+    @JavascriptInterface
+    fun getIpAddress(): String {
+        return try {
+            val nis = java.net.NetworkInterface.getNetworkInterfaces()
+            val all = mutableListOf<String>()
+            val preferred = mutableListOf<String>()
+            while (nis.hasMoreElements()) {
+                val ni = nis.nextElement()
+                if (ni.isLoopback || !ni.isUp) continue
+                val addrs = ni.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val a = addrs.nextElement()
+                    if (a is java.net.Inet4Address && !a.isLoopbackAddress) {
+                        val host = a.hostAddress ?: continue
+                        if (host == "0.0.0.0" || host == "127.0.0.1") continue
+                        all.add(host)
+                        if (ni.name == "wlan0" || ni.name == "eth0") preferred.add(host)
+                    }
+                }
+            }
+            preferred.firstOrNull() ?: all.firstOrNull() ?: ""
+        } catch (_: Exception) { "" }
+    }
+
     /** 定时开关机：JSON 数组 [{on:"07:00", off:"22:00"}, ...] */
     @JavascriptInterface
     fun setPowerSchedule(json: String) {
