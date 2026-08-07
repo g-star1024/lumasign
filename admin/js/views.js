@@ -1286,11 +1286,11 @@ async function renderSchedules() {
           el('td', {}, lcBadge(s.lifecycleState, s.daysLeft, s.validFrom, s.validUntil)),
           el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '已发布' : '草稿' })),
           el('td', {},
-            !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: () => openPublishModal(s) }, '发布') : '',
+            !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: () => openPublishModal(s, reload) }, '发布') : '',
             s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: async () => {
               try { await api.put(`/api/schedules/${s.id}`, { enabled: false }); toast('已停用', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
             } }, '停用') : '',
-            can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: () => openDeployHistory(s) }, '版本记录') : '',
+            can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: () => openDeployHistory(s, reload) }, '版本记录') : '',
             can('schedule:edit') ? el('button', { class: 'btn sm danger', style: { marginLeft: '6px' }, onclick: async () => {
               if (await confirmModal({ title: '删除排期', body: `确认删除「${esc(s.name)}」？`, danger: true })) {
                 try { await api.del(`/api/schedules/${s.id}`); toast('已删除', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
@@ -1341,7 +1341,7 @@ function deployModeBadge(mode) {
   return el('span', { class: `t-badge ${DEPLOY_MODE_TONE[mode] || 'off'}`, text: DEPLOY_MODE_LABEL[mode] || mode });
 }
 
-function openPublishModal(s) {
+function openPublishModal(s, onRefresh) {
   const all = el('input', { type: 'radio', name: 'pmode', value: 'full', checked: 'checked' });
   const pilot = el('input', { type: 'radio', name: 'pmode', value: 'pilot' });
   const selWrap = el('div', { style: { display: 'none', marginTop: '10px' } });
@@ -1364,7 +1364,7 @@ function openPublishModal(s) {
         try {
           const d = await api.post(`/api/schedules/${s.id}/publish`, { pilotTerminalIds: pilotIds });
           toast(isPilot ? `已灰度下发到 ${d.pushed} 台试点，确认无误后可在「版本记录」中推广全量` : `已全量下发到 ${d.pushed} 台终端`, 'ok');
-          document.querySelector('.modal-mask')?._close?.(); reload();
+          document.querySelector('.modal-mask')?._close?.(); onRefresh?.();
         } catch (e) { toast(e.message, 'err'); }
       } }, '发布'),
     ),
@@ -1380,7 +1380,7 @@ function openPublishModal(s) {
   openModal(box);
 }
 
-function openDeployHistory(s) {
+function openDeployHistory(s, onRefresh) {
   const box = el('div', {}, el('h2', { text: `下发版本记录 · ${s.name}` }),
     el('div', { class: 't-dnote', text: '每次发布/灰度/回滚都会留痕，可一键回到任意正常版本。' }), spinner());
   openModal(box);
@@ -1402,11 +1402,11 @@ function openDeployHistory(s) {
       el('div', { style: { marginTop: '10px', display: 'flex', gap: '8px' } },
         can('schedule:publish') ? el('button', { class: 't-btn ghost', onclick: async () => {
           if (await confirmModal({ title: '一键回滚', body: '确认回滚到该版本？将还原当时的排期与节目内容并重新推送。', danger: true })) {
-            try { const r = await api.post('/api/deploy/rollback', { versionId: v.id }); toast(`已回滚，重新推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s); reload(); } catch (e) { toast(e.message, 'err'); }
+            try { const r = await api.post('/api/deploy/rollback', { versionId: v.id }); toast(`已回滚，重新推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s, onRefresh); onRefresh?.(); } catch (e) { toast(e.message, 'err'); }
           }
         } }, '回滚到此版本') : '',
         (v.mode === 'pilot' && can('schedule:publish')) ? el('button', { class: 't-btn primary', onclick: async () => {
-          try { const r = await api.post('/api/deploy/promote', { versionId: v.id }); toast(`已推广全量，推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s); reload(); } catch (e) { toast(e.message, 'err'); }
+          try { const r = await api.post('/api/deploy/promote', { versionId: v.id }); toast(`已推广全量，推送 ${r.pushed} 台`, 'ok'); openDeployHistory(s, onRefresh); onRefresh?.(); } catch (e) { toast(e.message, 'err'); }
         } }, '推广全量') : '',
         can('schedule:publish') ? el('button', { class: 't-btn ghost', onclick: async () => {
           try { const r = await api.post('/api/deploy/retry', { versionId: v.id }); toast(`已重推 ${r.pushed} 台`, 'ok'); } catch (e) { toast(e.message, 'err'); }
