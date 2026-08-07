@@ -23,8 +23,23 @@ import { clearFFmpegCache } from './transcode.js';
 const execFileAsync = promisify(execFile);
 
 /**
- * BtbN/FFmpeg-Builds 稳定静态构建（latest 标签下的资产名长期稳定）。
- * 这些是完整的命令行二进制（含 GPL 滤镜），适合服务端转码。
+ * 多源镜像列表 —— 按优先级排列，installFFmpeg() 依次尝试，失败自动 fallback。
+ */
+const MIRRORS = [
+  { name: 'GitHub 官方',    prefix: '' },
+  { name: 'GHProxy 镜像',   prefix: 'https://mirror.ghproxy.com' },
+  { name: 'gh-proxy 镜像',  prefix: 'https://gh-proxy.com' },
+];
+
+/** 根据镜像前缀将原始 GitHub URL 重定向到对应镜像 */
+function mirrorUrl(githubUrl, mirror) {
+  return mirror.prefix ? mirror.prefix + githubUrl : githubUrl;
+}
+
+/**
+ * 各平台 ffmpeg 静态构建规格（基于 GitHub 官方 URL 模板）。
+ * 实际下载时用 MIRRORS[i].prefix + url 拼出完整地址；
+ * 所有镜像分发同一份 BtbN 构建，binInArchive / ext 等元数据跨源不变。
  */
 const BUILDS = {
   'win32-x64':    { url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',      ext: 'zip', binInArchive: 'bin/ffmpeg.exe', probeInArchive: 'bin/ffprobe.exe', exe: 'ffmpeg.exe' },
@@ -93,11 +108,29 @@ export async function installFFmpeg(ctx) {
   _state = { stage: 'downloading', percent: 0, message: '正在下载 ffmpeg 静态构建…', startedAt: Date.now(), finishedAt: null, version: null, path: null, error: null };
 
   try {
-    // 1) 下载（流式 + 进度）
-    await downloadWithProgress(build.url, archivePath, (pct) => {
-      _state.percent = pct;
-      _state.message = `下载中 ${pct}%`;
-    });
+    // 1) 多源下载：依次尝试每个镜像，第一个成功即停止
+    let lastError = null;
+    for (let mi = 0; mi < MIRRORS.length; mi++) {
+      const m = MIRRORS[mi];
+      const dlUrl = mirrorUrl(build.url, m);
+      _state.message = `正在下载（${m.name}，${mi + 1}/${MIRRORS.length}）…`;
+      try {
+        await downloadWithProgress(dlUrl, archivePath, (pct) => {
+          _state.percent = pct;
+          _state.message = `下载中 ${pct}%（${m.name}）`;
+        });
+        // 下载成功，跳出镜像循环
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        _state.message = `${m.name} 下载失败：${e.message || e}，尝试下一源…`;
+        // 删掉可能写了一半的文件，避免影响下一个源
+        try { fs.unlinkSync(archivePath); } catch { /* ignore */ }
+        continue;
+      }
+    }
+    if (lastError) throw new Error(`所有 ${MIRRORS.length} 个下载源均失败。最后一个错误：${lastError.message || lastError}`);
 
     // 2) 解压
     _state.stage = 'extracting'; _state.percent = 100; _state.message = '正在解压…';
