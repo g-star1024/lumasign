@@ -168,11 +168,57 @@ function openPasswordModal() {
 function showServerAddr() {
   const host = location.host || 'localhost';
   const proto = location.protocol || 'http:';
-  const addr = el('div', { class: 'server-addr', title: `当前连接：${proto}//${host}` },
+  const isLocal = /^(localhost|127\.0\.0\.1|::1|\[::1\])$/i.test(location.hostname);
+
+  const addr = el('div', {
+    class: 'server-addr' + (isLocal ? ' is-local' : ''),
+    title: isLocal
+      ? '⚠️ 当前是本机访问（127.0.0.1），安卓端不能填此地址！\n请填写这台电脑的局域网 IP（如 192.168.x.x:7788）'
+      : `当前连接：${proto}//${host}`,
+  },
     el('span', { class: 'server-addr-dot' }),
-    el('span', { class: 'server-addr-text', text: host }),
+    el('div', { class: 'server-addr-info' },
+      el('span', { class: 'server-addr-text', text: host }),
+      isLocal ? el('span', { class: 'server-addr-hint', text: '本机地址 · 安卓端不可用' }) : null,
+    ),
   );
   document.body.appendChild(addr);
+
+  // 本机访问时，尝试通过 WebRTC 获取局域网 IP 显示给用户
+  if (isLocal) tryDiscoverLanIp(addr);
+}
+
+/** 用 WebRTC ICE 候选探测本机局域网 IP（纯前端，无需后端配合） */
+function tryDiscoverLanIp(addrEl) {
+  // 避免重复探测
+  if (addrEl.dataset.lanDone) return;
+  addrEl.dataset.lanDone = '1';
+
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    pc.createDataChannel('_');
+    let resolved = false;
+    const timer = setTimeout(() => { if (!resolved) { resolved = true; pc.close(); } }, 3000);
+    pc.onicecandidate = (e) => {
+      if (!e.candidate || resolved) return;
+      const parts = e.candidate.candidate.split(' ');
+      const ip = parts[4];
+      // 只要不是回环/链路本地/映射地址的 IPv4，大概率是局域网 IP
+      if (ip && /^(?!127\.|0\.|169\.254\.|::1?|fe80:)/.test(ip) && /\d+\.\d+\.\d+\.\d+/.test(ip)) {
+        resolved = true;
+        clearTimeout(timer);
+        pc.close();
+        // 更新显示：主文字改为局域网 IP，hint 改为可复制提示
+        const textEl = addrEl.querySelector('.server-addr-text');
+        const hintEl = addrEl.querySelector('.server-addr-hint');
+        if (textEl) textEl.textContent = ip + ':7788';
+        if (hintEl) hintEl.textContent = '局域网 IP · 安卓端填此地址';
+        addrEl.classList.remove('is-local');
+        addrEl.title = `局域网地址：http://${ip}:7788\n安卓端 / 其他设备请填此地址`;
+      }
+    };
+    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+  } catch {}
 }
 
 /* 实时事件（SSE）：用于在线/离线、指令回执等轻量提示 */

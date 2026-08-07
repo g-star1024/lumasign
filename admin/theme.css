@@ -560,10 +560,24 @@ tbody tr:hover { background: var(--hover); }
   border: 1px solid var(--border, rgba(0,0,0,.08));
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   pointer-events: none; user-select: none;
-  transition: opacity .2s, transform .15s;
+  transition: opacity .2s, transform .15s, border-color .3s;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
 }
 .server-addr:hover { opacity: 1 !important; }
+/* 本机访问警告态 */
+.server-addr.is-local {
+  border-color: color-mix(in srgb, var(--c-warning, #f59e0b) 45%, transparent);
+  background: color-mix(in srgb, var(--c-warning, #f59e0b) 10%, var(--bg-elev, rgba(255,255,255,.85)));
+}
+.server-addr.is-local .server-addr-dot {
+  background: var(--c-warning, #f59e0b);
+  box-shadow: 0 0 5px rgba(245,158,11,.45);
+  animation: addr-pulse-warning 1.2s ease-in-out infinite;
+}
+@keyframes addr-pulse-warning {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(.85); }
+}
 .server-addr-dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: #22c55e; flex-shrink: 0;
@@ -574,9 +588,17 @@ tbody tr:hover { background: var(--hover); }
   0%, 100% { opacity: 1; }
   50% { opacity: .35; }
 }
+.server-addr-info {
+  display: flex; flex-direction: column; gap: 1px; line-height: 1.3;
+}
 .server-addr-text {
   font-variant-numeric: tabular-nums; letter-spacing: .02em;
   font-weight: 500;
+}
+.server-addr-hint {
+  font-size: 10px; font-weight: 400;
+  color: var(--c-warning, #f59e0b); opacity: .8;
+  font-style: italic;
 }
 
 [data-theme="dark"] .server-addr {
@@ -584,6 +606,10 @@ tbody tr:hover { background: var(--hover); }
   border-color: rgba(255,255,255,.08);
   color: rgba(255,255,255,.45);
   box-shadow: 0 1px 6px rgba(0,0,0,.2);
+}
+[data-theme="dark"] .server-addr.is-local {
+  border-color: color-mix(in srgb, var(--c-warning, #f59e0b) 35%, transparent);
+  background: color-mix(in srgb, var(--c-warning, #f59e0b) 8%, rgba(15,18,25,.82));
 }
 
 .t-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:nowrap; }
