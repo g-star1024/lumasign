@@ -69,8 +69,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // 开机/重启后自动点亮屏幕并越过锁屏（kiosk 无人值守关键）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
         window.addFlags(
-            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
         )
@@ -112,7 +114,9 @@ class MainActivity : AppCompatActivity() {
         ws.mediaPlaybackRequiresUserGesture = false
         ws.allowFileAccess = true
         ws.allowContentAccess = true
-        ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
         ws.useWideViewPort = true
         ws.loadWithOverviewMode = true
         // 离线韧性：优先用缓存，服务端重启/短暂断网时播放壳不白屏

@@ -168,7 +168,12 @@ export async function adbInstall(adbPath, ip, apkPath) {
   const device = `${ip}:5555`;
   const conn = await runAdb(adbPath, ['connect', device], { timeout: 12000 });
   if (!conn.ok && !/connected|already/.test(conn.output)) {
-    return { ok: false, stage: 'connect', output: conn.output || `无法连接 ${device}（设备可能未开启网络 ADB）` };
+    return { ok: false, stage: 'connect', output: `无法连接 ${device}：${conn.output || '网络不可达'}` +
+      `\n\n可能原因：` +
+      `\n① 设备未开启「开发者选项 → 网络 ADB 调试」（需在设备上手动开启端口 5555）；` +
+      `\n② 设备与服务器不在同一局域网；` +
+      `\n③ 防火墙拦截了 5555 端口。` +
+      `\n\n替代方案：通过厂商 Web 配置页上传 APK，或用 U 盘拷贝到设备本地安装。` };
   }
   // 校验 APK 存在
   let size = 0;
@@ -205,11 +210,22 @@ export async function vendorPush(ip, apkPath, { ports = [80, 8080, 8000] } = {})
     const r = await httpBanner(ip, p, 4000);
     attempts.push({ port: p, reachable: r.ok, title: r.title || '', server: r.server || '' });
   }
+  // 尝试检测是否为 CHUTO/触拓 等已知厂商
+  const knownVendor = attempts.find(a => {
+    const t = (a.title + a.server).toLowerCase();
+    return t.includes('chuto') || t.includes('触拓') || t.includes('液晶互动');
+  });
+  const vendorName = knownVendor ? '触拓(CHUTO)' : '未知厂商';
   return {
     ok: false,
     method: 'vendor',
-    output: '厂商 API 端点尚未确认。请在设备上打开「设置→关于/网络」确认其远程升级端口，' +
-      '或将设备 Web 配置页地址告知我们以适配。当前可用的最稳路径为 ADB（端口 5555）。',
+    output: `设备 ${ip} 未开启网络 ADB（端口 5555 未开放），无法通过 ADB 远程安装。` +
+      `\n当前检测到 ${vendorName} Web 配置页（端口 ${attempts.filter(a => a.reachable).map(a => a.port).join(',')}），` +
+      `但该厂商的远程安装 API 尚未适配。` +
+      `\n\n解决方案：` +
+      `\n① 在设备上开启「开发者选项 → 网络 ADB 调试」（端口 5555），然后重试「开通主推」；` +
+      `\n② 或通过厂商 Web 配置页手动上传 APK；` +
+      `\n③ 或用 U 盘/SD 卡拷贝 APK 到设备本地安装。`,
     probe: attempts,
   };
 }
