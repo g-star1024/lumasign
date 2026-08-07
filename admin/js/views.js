@@ -127,6 +127,20 @@ function attentionCount(items) {
   return items.filter(t => (t.healthLevel || 'good') !== 'good').length;
 }
 
+/**
+ * 终端类型判定（唯一区分信号，绝不误判）：
+ *   device = 真实硬件（安卓屏）；web = 浏览器预览。
+ * - 新版引擎注册时显式带 kind 字段，100% 可靠。
+ * - 兼容历史数据：有真实 MAC（非全零）的视为 device，其余视为 web。
+ *   旧版浏览器条目往往 MAC 全零，会默认归入 web 隐藏；真实安卓设备有真实 MAC，必为 device。
+ */
+function terminalKind(t) {
+  if (t.kind) return t.kind;
+  const mac = (t.hardware?.mac || '').toUpperCase();
+  if (mac && mac !== '00:00:00:00:00:00') return 'device';
+  return 'web';
+}
+
 async function renderTerminals() {
   const root = el('div', { class: 'page-terminals' });
   let all = [];
@@ -145,7 +159,9 @@ async function renderTerminals() {
         el('th', { text: '健康度' }), el('th', { text: '' }),
       )),
       el('tbody', {}, ...items.map(t => el('tr', { style: { cursor: 'pointer' }, onclick: () => openTerminalDetail(t) },
-        el('td', { text: t.name || t.code || t.id }),
+        el('td', {}, el('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+          document.createTextNode(t.name || t.code || t.id),
+          terminalKind(t) === 'web' ? el('span', { class: 't-badge web', text: '浏览器' }) : '')),
         el('td', { class: 'mono', text: t.code || '-' }),
         el('td', {}, statusBadge(t.status)),
         el('td', { class: 'mono', text: `${t.net?.ip || '-'} · ${t.hardware?.mac || '-'}` }),
@@ -165,23 +181,35 @@ async function renderTerminals() {
     el('option', { value: 'online', text: '在线' }),
     el('option', { value: 'offline', text: '离线' }),
   );
+  // 浏览器预览隐藏开关：默认隐藏，避免污染真实设备统计
+  let showWeb = false;
+  const webToggle = el('label', { class: 't-toggle', title: '显示浏览器预览终端（如用浏览器打开播放器调试）' },
+    el('input', { type: 'checkbox', onchange: (e) => { showWeb = e.target.checked; paint(searchInput.value, statusSel.value); } }),
+    el('span', { text: '显示浏览器预览' }),
+  );
 
   function paint(filterText = '', filterStatus = 'all') {
     const txt = (filterText || '').trim().toLowerCase();
-    const items = all.filter(t => {
+    // 真实设备永远参与过滤；浏览器预览仅在 showWeb 时纳入
+    const pool = all.filter(t => showWeb || terminalKind(t) === 'device');
+    const items = pool.filter(t => {
       const m = !txt || [t.name, t.code, t.net?.ip, t.hardware?.mac].some(v => (v || '').toLowerCase().includes(txt));
       const s = filterStatus === 'all' || t.status === filterStatus;
       return m && s;
     });
-    const total = all.length;
-    const online = all.filter(t => t.status === 'online').length;
+    // 统计口径只算真实设备：浏览器预览不计入总数/在线/需关注
+    const devices = all.filter(t => terminalKind(t) === 'device');
+    const total = devices.length;
+    const online = devices.filter(t => t.status === 'online').length;
     const offline = total - online;
+    const webCount = all.length - total;
     statsRow.innerHTML = '';
     statsRow.appendChild(statCard('终端总数', total, '', ''));
     statsRow.appendChild(statCard('在线', online, '运行正常', 'g'));
     statsRow.appendChild(statCard('离线', offline, offline ? '需关注' : '全部在线', 'd'));
-    const attention = attentionCount(all);
+    const attention = attentionCount(devices);
     statsRow.appendChild(statCard('需关注', attention, attention ? '健康度非良好' : '全部健康', attention ? 'd' : 'g'));
+    statsRow.appendChild(statCard('浏览器预览', webCount, webCount ? '已隐藏，可在右上角开启' : '无', webCount ? 'w' : ''));
     statsRow.appendChild(statCard('当前筛选', items.length, '条结果', ''));
     tableWrap.innerHTML = '';
     tableWrap.appendChild(buildTable(items));
@@ -192,6 +220,7 @@ async function renderTerminals() {
   root.appendChild(el('div', { class: 't-toolbar' },
     el('div', { class: 't-search' }, el('span', { text: '🔍' }), searchInput),
     statusSel,
+    webToggle,
     el('div', { class: 't-spacer' }),
     can('terminal:edit') ? el('button', { class: 't-btn primary', onclick: () => toast('新终端上电后自动发现，无需手动添加') }, '+ 添加终端') : '',
   ));
@@ -216,6 +245,9 @@ function openTerminalDetail(t) {
       field('名称', t.name || t.code || t.id),
       field('编号', t.code || '-'),
       field('状态', statusBadge(t.status)),
+      field('类型', terminalKind(t) === 'web'
+        ? el('span', { class: 't-badge web', text: '浏览器预览' })
+        : el('span', { class: 't-badge s', text: '真实设备' })),
       field('IP', t.net?.ip || '-'),
       field('MAC', t.hardware?.mac || '-'),
       field('型号', t.hardware?.model || '-'),

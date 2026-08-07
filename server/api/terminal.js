@@ -52,9 +52,12 @@ export function registerTerminalApi(router, ctx) {
       storageTotal: b.storageTotal || 0, storageFree: b.storageFree || 0,
     };
     const net = { ip: realIP(req), wifi: b.wifi || '', rssi: b.rssi ?? null };
+    // kind: 终端类型。device=真实硬件（安卓屏），web=浏览器预览。
+    // 旧版引擎不传此字段，按 model 回退推断（Browser 视为 web，其余视为 device）。
+    const kind = b.kind || (b.model === 'Browser' ? 'web' : 'device');
 
     if (t) {
-      S('terminals').update(t.id, { hardware, net, appVersion: b.appVersion || t.appVersion, lastHeartbeat: Date.now() });
+      S('terminals').update(t.id, { hardware, net, kind, appVersion: b.appVersion || t.appVersion, lastHeartbeat: Date.now() });
     } else {
       // 终端授权上限拦截：0=无限制；>0 时达上限即拒绝新设备（已存在终端重连不受影响）
       const maxTerminals = settings().maxTerminals || 0;
@@ -69,7 +72,7 @@ export function registerTerminalApi(router, ctx) {
         code: `LS-${String(seq).padStart(4, '0')}`,
         token: crypto.randomBytes(32).toString('hex'),
         orgId: 'org_root', groupIds: ['g_default'],
-        approved: !!auto, hardware, net,
+        approved: !!auto, hardware, net, kind,
         appVersion: b.appVersion || '', lastHeartbeat: Date.now(),
         onlineSeconds: 0, volume: 60, powerSchedule: [],
         syncGroupId: null, videoWall: null, floorPlan: null,

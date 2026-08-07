@@ -721,7 +721,9 @@ class Player {
     }
     const W = this.layout?.width || window.screen.width || 1920;
     const H = this.layout?.height || window.screen.height || 1080;
-    const body = { serial, name: 'Web 播放器', model: 'Browser', resolution: `${W}x${H}` };
+    // kind 是唯一可靠的区分信号：安卓原生端（有 LumaBridge）为 device，纯浏览器为 web。
+    // 即便安卓拿不到 MAC/序列号，只要走了 LumaBridge 就仍是 device——绝不误判真实设备。
+    const body = { serial, name: 'Web 播放器', model: 'Browser', resolution: `${W}x${H}`, kind: 'web', platform: 'web' };
     // 安卓原生端：用桥上报真实硬件信息（mac/serial 作为幂等键，重装不重复）
     if (native('getHardwareInfo')) {
       try {
@@ -736,6 +738,8 @@ class Player {
             orientation: hw.orientation || 'landscape', firmware: hw.firmware || '',
             storageTotal: hw.storageTotal || 0, storageFree: hw.storageFree || 0,
           });
+          body.kind = 'device';
+          body.platform = 'android';
           this.native = true;
         }
       } catch {}

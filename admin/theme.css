@@ -618,6 +618,11 @@ tbody tr:hover { background: var(--hover); }
 .t-search input { background:transparent; border:none; outline:none; flex:1; font-size:13px; color:var(--c-text); font-family:var(--c-font); }
 .t-select { appearance:none; -webkit-appearance:none; height:36px; padding:0 30px 0 10px; border-radius:var(--c-radius-md); background:var(--c-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%239CA3AF' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center; border:1px solid var(--c-border); font-size:13px; color:var(--c-text); cursor:pointer; font-family:var(--c-font); }
 .t-spacer { flex:1; }
+/* 浏览器预览隐藏开关 */
+.t-toggle { display:inline-flex; align-items:center; gap:6px; height:36px; padding:0 12px; border-radius:var(--c-radius-md); background:var(--c-surface); border:1px solid var(--c-border); color:var(--c-text-2); font-size:13px; cursor:pointer; user-select:none; white-space:nowrap; flex-shrink:0; transition:border-color .15s, color .15s; }
+.t-toggle:hover { border-color:var(--c-primary); color:var(--c-text); }
+.t-toggle input { width:15px; height:15px; accent-color:var(--c-primary); cursor:pointer; }
+
 
 .t-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 14px; border-radius:var(--c-radius-md); font-size:13px; font-weight:500; border:1px solid var(--c-border-2); background:var(--c-surface); color:var(--c-text); cursor:pointer; font-family:var(--c-font); transition:all .15s; }
 .t-btn:hover { background:var(--c-surface-2); }
@@ -642,6 +647,8 @@ tbody tr:hover { background: var(--hover); }
 .t-badge.s { background:var(--c-success-soft); color:var(--c-success); }
 .t-badge.w { background:var(--c-warning-soft); color:var(--c-warning); }
 .t-badge.d { background:var(--c-danger-soft); color:var(--c-danger); }
+/* 浏览器预览终端：中性灰蓝，与真实设备（绿/红）明显区分 */
+.t-badge.web { background:var(--c-text-3-soft, rgba(100,116,139,.14)); color:var(--c-text-2); border:1px solid var(--c-border); }
 
 /* 生命周期页专用 */
 .t-grid-2 { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px 18px; align-items:start; }
