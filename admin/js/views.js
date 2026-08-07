@@ -1726,27 +1726,43 @@ async function renderSettings() {
     }
     renderFfmpegStatus();
 
+    /* 设置页联动提示框：关闭窗口=最小化托盘 ↔ 开机自启 */
+    function linkHint(kind, icon, html) {
+      return el('div', { class: 'link-hint ' + kind },
+        el('span', { class: 'lh-icon', text: icon }),
+        el('span', { class: 'lh-text', html }),
+      );
+    }
     /* 开机自启：仅在桌面客户端内提供开关 */
     function renderStartup() {
       startupBody.replaceChildren(spinner());
+      const hintFor = on => on
+        ? linkHint('ok', '🔒', '已开启开机自启：关闭窗口只会<b>最小化到托盘，服务端不会退出</b>。开机/重启后自动拉起，与「关闭=最小化托盘」组合即实现断电重启自愈的 7×24 常驻。要完全退出请右键托盘图标 → 退出。')
+        : linkHint('info', '💡', '关闭窗口默认<b>最小化到托盘（服务端不退出）</b>。开启上方「开机自动启动」即可实现电脑开机自动拉起 + 服务常驻，无需手动打开。');
+      const renderBox = (enabled) => startupBody.replaceChildren(
+        el('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } }, cb,
+          el('span', { text: '登录系统（Windows）时自动启动灵屏（服务端随桌面端常驻后台）' })),
+        hintFor(enabled),
+      );
       if (!(window.lumaDesktop && typeof window.lumaDesktop.getStartupEnabled === 'function')) {
-        startupBody.replaceChildren(el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '该功能仅在灵屏桌面客户端（Electron）中可用。以纯浏览器访问管理端时，请通过桌面客户端系统托盘菜单配置开机自启。' }));
+        startupBody.replaceChildren(
+          el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '该功能仅在灵屏桌面客户端（Electron）中可用。以纯浏览器访问管理端时，请通过桌面客户端系统托盘菜单配置开机自启。' }),
+          linkHint('info', 'ℹ️', '无论以何种方式开启开机自启，关闭窗口都将<b>最小化到托盘（服务端不退出）</b>。彻底退出请右键托盘图标 → 退出。'),
+        );
         return;
       }
+      let cb;
       window.lumaDesktop.getStartupEnabled().then(enabled => {
-        const cb = el('input', { type: 'checkbox', checked: !!enabled, style: { width: '16px', height: '16px' } });
+        cb = el('input', { type: 'checkbox', checked: !!enabled, style: { width: '16px', height: '16px' } });
         cb.addEventListener('change', () => {
           cb.disabled = true;
           window.lumaDesktop.setStartupEnabled(cb.checked).then(ok => {
             cb.checked = !!ok; cb.disabled = false;
             toast(ok ? '已开启开机自动启动' : '已关闭开机自动启动', 'ok');
+            renderBox(cb.checked); // 同步联动提示
           }).catch(err => { cb.disabled = false; toast(err.message, 'err'); });
         });
-        startupBody.replaceChildren(
-          el('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } }, cb,
-            el('span', { text: '登录系统（Windows）时自动启动灵屏（服务端随桌面端常驻后台）' })),
-          el('p', { class: 'sub', style: { margin: '8px 0 0', color: 'var(--c-text-2)' }, text: '开启后电脑开机/重启会自动拉起灵屏，无需手动打开。配合「关闭窗口最小化托盘」，即可实现 7×24 服务常驻。' }),
-        );
+        renderBox(enabled);
       }).catch(e => {
         startupBody.replaceChildren(el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '加载失败：' + e.message }));
       });
