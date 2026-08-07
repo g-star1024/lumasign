@@ -115,8 +115,10 @@ async function init(opts = {}) {
     limiter,
     secret: crypto.randomBytes(32).toString('hex'),
     apiGuard, auditChain, moderator,
-    transcodeQueue: new TranscodeQueue(ctx),
   };
+
+  // transcodeQueue 需要 ctx 引用自身，必须在 const 赋值完成后挂载（避免 TDZ）
+  ctx.transcodeQueue = new TranscodeQueue(ctx);
 
   // ffmpeg 一键安装落盘目录：data/ffmpeg（运行时目录，不参与版本管理）
   setFFmpegInstallDir(path.join(ctx.paths.data, 'ffmpeg'));
