@@ -74,8 +74,21 @@ jobs:
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
         working-directory: ${{ github.workspace }}
 
+      # 预清理：macOS runner 可能存在残留挂载点，提前卸载避免 hdiutil Resource busy
+      - name: Pre-build disk cleanup
+        run: |
+          hdiutil detach -all -force 2>/dev/null || true
+          sleep 1
+
       - name: Build macOS app (Intel)
-        run: npx electron-builder --mac --x64 --publish never
+        run: |
+          npx electron-builder --mac --x64 --publish never && echo "BUILD_OK" || {
+            EXIT_CODE=$?
+            echo "::warning::Intel DMG 构建失败(exit $EXIT_CODE)，降级为仅 ZIP..."
+            hdiutil detach -all -force 2>/dev/null || true
+            sleep 1
+            npx electron-builder --mac --x64 --zip --publish never || exit $EXIT_CODE
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -89,7 +102,14 @@ jobs:
           sleep 2
 
       - name: Build macOS app (Apple Silicon)
-        run: npx electron-builder --mac --arm64 --publish never
+        run: |
+          npx electron-builder --mac --arm64 --publish never && echo "BUILD_OK" || {
+            EXIT_CODE=$?
+            echo "::warning::AppleSilicon DMG 构建失败(exit $EXIT_CODE)，降级为仅 ZIP..."
+            hdiutil detach -all -force 2>/dev/null || true
+            sleep 1
+            npx electron-builder --mac --arm64 --zip --publish never || exit $EXIT_CODE
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
