@@ -81,6 +81,13 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         working-directory: ${{ github.workspace }}
 
+      # 清理：electron-builder 创建 DMG 后会残留挂载的磁盘镜像，
+      # 不卸载会导致后续 arm64 构建的 hdiutil detach 报 Resource busy (exit 16)
+      - name: Cleanup mounted disk images
+        run: |
+          hdiutil detach -all -force 2>/dev/null || true
+          sleep 2
+
       - name: Build macOS app (Apple Silicon)
         run: npx electron-builder --mac --arm64 --publish never
         env:
