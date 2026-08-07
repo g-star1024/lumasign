@@ -56,6 +56,7 @@ export function mountShell(root, { onNavigate }) {
   buildNav(sidebar, onNavigate);
   applyTheme(state.theme);
   connectEvents();
+  initSidebarCollapse(sidebar);
 
   return {
     viewEl: content.querySelector('#view'),
@@ -76,13 +77,37 @@ function buildNav(sidebar, onNavigate) {
     if (!visible.length) continue;
     sidebar.appendChild(el('div', { class: 'nav-group', text: grp.group }));
     for (const it of visible) {
-      sidebar.appendChild(el('div', { class: 'nav-item', dataset: { id: it.id }, onclick: () => onNavigate(it.hash) },
+      sidebar.appendChild(el('div', { class: 'nav-item', dataset: { id: it.id, label: it.label }, onclick: () => onNavigate(it.hash) },
         el('span', { class: 'ico', text: it.icon }),
         el('span', { text: it.label }),
       ));
     }
   }
   sidebar.appendChild(el('div', { class: 'sidebar-foot', text: 'v1.0.0 · 局域网数字标牌' }));
+}
+
+/* 侧栏折叠 */
+function initSidebarCollapse(sidebar) {
+  const key = 'luma_sidebar_collapsed';
+  const collapsed = localStorage.getItem(key) === 'true';
+  // 小屏（≤1000px）由 CSS 媒体查询自动折叠，JS 不重复处理
+  const isSmall = window.matchMedia('(max-width: 1000px)').matches;
+  if (collapsed && !isSmall) sidebar.classList.add('collapsed');
+
+  const btn = el('button', { class: 'sidebar-toggle', title: '收起/展开侧栏', onclick: () => {
+    sidebar.classList.toggle('collapsed');
+    const c = sidebar.classList.contains('collapsed');
+    localStorage.setItem(key, c);
+    btn.textContent = c ? '▶' : '◀';
+  }}, collapsed && !isSmall ? '▶' : '◀');
+  sidebar.appendChild(btn);
+
+  // 窗口尺寸变化时同步状态
+  window.matchMedia('(max-width: 1000px)').addEventListener('change', e => {
+    if (!e.matches && localStorage.getItem(key) !== 'true') {
+      sidebar.classList.remove('collapsed');
+    }
+  });
 }
 
 export function setActiveNav(id) {
