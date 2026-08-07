@@ -32,9 +32,13 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
@@ -99,7 +103,7 @@ class MainActivity : AppCompatActivity() {
 
         handleIntent(intent)
         val server = prefs.getString(KEY_SERVER, "") ?: ""
-        if (server.isBlank()) showConfigDialog() else loadPlayer(server)
+        if (server.isBlank()) showDiscoveringThenConfig() else loadPlayer(server)
         applyScreenIntent(intent)
 
         registerConnectivity()
@@ -268,6 +272,87 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         handleIntent(intent)
         applyScreenIntent(intent)
+    }
+
+    /**
+     * 零配置发现：UDP 广播 LUMASIGN_DISCOVER 到 :7789，服务端应答自身 http 地址。
+     * 成功回调完整 URL（如 http://192.168.1.10:7788），失败回调 null。全程后台线程。
+     */
+    private fun tryDiscoverServer(timeoutMs: Int = 2500, onResult: (String?) -> Unit) {
+        Thread {
+            var socket: DatagramSocket? = null
+            try {
+                socket = DatagramSocket()
+                socket.soTimeout = timeoutMs
+                socket.broadcast = true
+                val data = "LUMASIGN_DISCOVER".toByteArray(Charsets.UTF_8)
+                val targets = linkedSetOf("255.255.255.255")
+                // 同时按当前 WiFi 子网发定向广播，规避部分 ROM 禁 255.255.255.255 的情况
+                try {
+                    val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                    val ipInt = wm.connectionInfo.ipAddress
+                    if (ipInt != 0) {
+                        val ip = String.format("%d.%d.%d.%d",
+                            ipInt and 0xff, ipInt shr 8 and 0xff, ipInt shr 16 and 0xff, ipInt shr 24 and 0xff)
+                        val seg = ip.split(".")
+                        targets.add("${seg[0]}.${seg[1]}.${seg[2]}.255")
+                    }
+                } catch (_: Exception) {}
+                var found: String? = null
+                for (target in targets) {
+                    try {
+                        val addr = InetAddress.getByName(target)
+                        socket.send(DatagramPacket(data, data.size, addr, 7789))
+                    } catch (_: Exception) { continue }
+                    try {
+                        val buf = ByteArray(1024)
+                        val recv = DatagramPacket(buf, buf.size)
+                        socket.receive(recv)
+                        val json = JSONObject(String(recv.data, 0, recv.length, Charsets.UTF_8))
+                        if (json.optString("product") == "LumaSign") {
+                            val host = json.optString("host")
+                            val port = json.optInt("port", 7788)
+                            if (host.isNotBlank()) { found = "http://$host:$port"; break }
+                        }
+                    } catch (_: Exception) { /* 超时/解析失败，尝试下一个 target */ }
+                }
+                onResult(found)
+            } catch (_: Exception) {
+                onResult(null)
+            } finally {
+                try { socket?.close() } catch (_: Exception) {}
+            }
+        }.start()
+    }
+
+    /** 首次无配置：先尝试零配置发现，发现不到再弹手填框 */
+    private fun showDiscoveringThenConfig() {
+        val spinner = android.widget.ProgressBar(this).apply {
+            isIndeterminate = true
+            val p = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+            p.gravity = android.view.Gravity.CENTER
+            layoutParams = p
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.config_title)
+            .setMessage("正在自动搜寻同局域网内的灵屏管理端…")
+            .setView(spinner)
+            .setCancelable(false)
+            .setNegativeButton("手动配置") { _, _ -> showConfigDialog() }
+            .show()
+        tryDiscoverServer { url ->
+            runOnUiThread {
+                dialog.dismiss()
+                if (url != null) {
+                    prefs.edit().putString(KEY_SERVER, url).apply()
+                    loadPlayer(url)
+                } else {
+                    showConfigDialog()
+                }
+            }
+        }
     }
 
     private fun showConfigDialog() {
