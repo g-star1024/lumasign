@@ -1676,6 +1676,15 @@ async function renderSettings() {
       el('div', { class: 'ffmpeg-body', style: { minHeight: '40px' } }, spinner()),
     );
     view.append(ffmpegCard);
+
+    /* 开机自动启动（仅桌面端 Electron 内显示） */
+    const startupCard = el('div', { class: 'card', style: { maxWidth: '560px', marginTop: '16px' } },
+      el('h3', { text: '开机自动启动', style: { margin: '0 0 12px', fontSize: '15px', color: 'var(--c-text-1)' } }),
+      el('div', { class: 'startup-body', style: { minHeight: '40px' } }, spinner()),
+    );
+    view.append(startupCard);
+    const startupBody = startupCard.querySelector('.startup-body');
+
     const ffmpegBody = ffmpegCard.querySelector('.ffmpeg-body');
     function renderFfmpegStatus() {
       ffmpegBody.replaceChildren(spinner());
@@ -1716,6 +1725,33 @@ async function renderSettings() {
       }).catch(e => toast(e.message, 'err'));
     }
     renderFfmpegStatus();
+
+    /* 开机自启：仅在桌面客户端内提供开关 */
+    function renderStartup() {
+      startupBody.replaceChildren(spinner());
+      if (!(window.lumaDesktop && typeof window.lumaDesktop.getStartupEnabled === 'function')) {
+        startupBody.replaceChildren(el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '该功能仅在灵屏桌面客户端（Electron）中可用。以纯浏览器访问管理端时，请通过桌面客户端系统托盘菜单配置开机自启。' }));
+        return;
+      }
+      window.lumaDesktop.getStartupEnabled().then(enabled => {
+        const cb = el('input', { type: 'checkbox', checked: !!enabled, style: { width: '16px', height: '16px' } });
+        cb.addEventListener('change', () => {
+          cb.disabled = true;
+          window.lumaDesktop.setStartupEnabled(cb.checked).then(ok => {
+            cb.checked = !!ok; cb.disabled = false;
+            toast(ok ? '已开启开机自动启动' : '已关闭开机自动启动', 'ok');
+          }).catch(err => { cb.disabled = false; toast(err.message, 'err'); });
+        });
+        startupBody.replaceChildren(
+          el('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } }, cb,
+            el('span', { text: '登录系统（Windows）时自动启动灵屏（服务端随桌面端常驻后台）' })),
+          el('p', { class: 'sub', style: { margin: '8px 0 0', color: 'var(--c-text-2)' }, text: '开启后电脑开机/重启会自动拉起灵屏，无需手动打开。配合「关闭窗口最小化托盘」，即可实现 7×24 服务常驻。' }),
+        );
+      }).catch(e => {
+        startupBody.replaceChildren(el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '加载失败：' + e.message }));
+      });
+    }
+    renderStartup();
 
     box.replaceWith(view);
   })();

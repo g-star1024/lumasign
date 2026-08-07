@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('lumaDesktop', {
   installHevc: () => ipcRenderer.invoke('install-hevc'),
   detectHevc: () => ipcRenderer.invoke('detect-hevc'),
   openStoreHevc: () => ipcRenderer.send('open-store-hevc'),
+  getStartupEnabled: () => ipcRenderer.invoke('get-startup-enabled'),
+  setStartupEnabled: (b) => ipcRenderer.invoke('set-startup-enabled', b),
 });

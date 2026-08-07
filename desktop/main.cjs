@@ -76,23 +76,47 @@ function createWindow() {
 let forceQuit = false;
 app.on('before-quit', () => { forceQuit = true; });
 
+/* ---------------- 开机自动启动 ---------------- */
+// 写入系统登录项（Windows 写注册表 Run，macOS 写 LoginItems）。
+// 额外把用户意图持久化到 userData/startup.json，避免系统状态被外部改动时 UI 不一致。
+function applyStartupEnabled(enabled) {
+  try {
+    const opts = { openAtLogin: !!enabled };
+    if (!isPackaged) opts.path = process.execPath; // 开发态显式指定 path，否则登录项会指向 electron 壳
+    app.setLoginItemSettings(opts);
+  } catch (e) { console.error('[startup] setLoginItemSettings failed:', e); }
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'startup.json'),
+      JSON.stringify({ startAtLogin: !!enabled, updatedAt: Date.now() }));
+  } catch {}
+}
+
 /* ---------------- 托盘 ---------------- */
+function buildTrayMenu() {
+  const items = [
+    { label: '打开管理端', click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
+    { label: '打开数据目录', click: () => shell.showItemInFolder(DATA_DIR) },
+  ];
+  if (isWin) items.push({
+    label: '安装 HEVC 视频扩展',
+    click: () => { const r = installHevcExtension(); if (!r.ok) dialog.showErrorBox('安装未自动完成', (r.message || '') + '\n请手动在 Microsoft Store 搜索「HEVC 视频扩展」安装。'); },
+  });
+  let startupOn = false;
+  try { startupOn = !!app.getLoginItemSettings().openAtLogin; } catch {}
+  items.push({
+    label: '开机自动启动', type: 'checkbox', checked: startupOn,
+    click: (item) => { applyStartupEnabled(item.checked); tray.setContextMenu(buildTrayMenu()); },
+  });
+  items.push({ type: 'separator' }, { label: '退出', click: () => { forceQuit = true; app.quit(); } });
+  return Menu.buildFromTemplate(items);
+}
+
 function createTray() {
   try {
     tray = new Tray(path.join(__dirname, 'tray.png'));
   } catch { return; } // 缺图标不致命
-  const trayItems = [
-    { label: '打开管理端', click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
-    { label: '打开数据目录', click: () => shell.showItemInFolder(DATA_DIR) },
-  ];
-  if (isWin) trayItems.push({
-    label: '安装 HEVC 视频扩展',
-    click: () => { const r = installHevcExtension(); if (!r.ok) dialog.showErrorBox('安装未自动完成', (r.message || '') + '\n请手动在 Microsoft Store 搜索「HEVC 视频扩展」安装。'); },
-  });
-  trayItems.push({ type: 'separator' }, { label: '退出', click: () => { forceQuit = true; app.quit(); } });
-  const ctx = Menu.buildFromTemplate(trayItems);
   tray.setToolTip('灵屏 LumaSign');
-  tray.setContextMenu(ctx);
+  tray.setContextMenu(buildTrayMenu());
   tray.on('click', () => { if (mainWin) { mainWin.show(); mainWin.focus(); } });
 }
 
@@ -185,6 +209,21 @@ function installHevcExtension() {
 ipcMain.handle('detect-hevc', () => detectHevcWindows());
 ipcMain.handle('install-hevc', () => installHevcExtension());
 ipcMain.on('open-store-hevc', () => { try { shell.openExternal(HEVC_STORE_URL); } catch {} });
+
+ipcMain.handle('get-startup-enabled', () => {
+  try {
+    const file = path.join(app.getPath('userData'), 'startup.json');
+    let saved = null;
+    try { saved = JSON.parse(fs.readFileSync(file, 'utf8')).startAtLogin; } catch {}
+    const sys = app.getLoginItemSettings().openAtLogin;
+    return saved ?? sys; // 以持久化意图优先，回退到系统真实状态
+  } catch { return false; }
+});
+
+ipcMain.handle('set-startup-enabled', (e, enabled) => {
+  applyStartupEnabled(enabled);
+  try { return !!app.getLoginItemSettings().openAtLogin; } catch { return !!enabled; }
+});
 
 // 首次「关闭窗口最小化到托盘」时提示一次，避免 Windows 用户误以为程序已退出/崩溃
 function maybeHintTray() {
