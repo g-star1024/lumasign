@@ -57,6 +57,7 @@ export function mountShell(root, { onNavigate }) {
   applyTheme(state.theme);
   connectEvents();
   initSidebarCollapse(sidebar);
+  showServerAddr();
 
   return {
     viewEl: content.querySelector('#view'),
@@ -161,6 +162,17 @@ function openPasswordModal() {
     );
     openModal(box);
   });
+}
+
+/* 右下角服务器地址指示器 */
+function showServerAddr() {
+  const host = location.host || 'localhost';
+  const proto = location.protocol || 'http:';
+  const addr = el('div', { class: 'server-addr', title: `当前连接：${proto}//${host}` },
+    el('span', { class: 'server-addr-dot' }),
+    el('span', { class: 'server-addr-text', text: host }),
+  );
+  document.body.appendChild(addr);
 }
 
 /* 实时事件（SSE）：用于在线/离线、指令回执等轻量提示 */

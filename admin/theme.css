@@ -549,6 +549,43 @@ tbody tr:hover { background: var(--hover); }
   color: var(--c-text-1);
 }
 
+/* 右下角服务器地址指示器 */
+.server-addr {
+  position: fixed; right: 16px; bottom: 16px; z-index: 40;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 8px;
+  font-size: 11.5px; font-family: var(--c-font, ui-sans-serif, system-ui);
+  color: var(--c-text-3, #9ca3af);
+  background: var(--bg-elev, rgba(255,255,255,.85));
+  border: 1px solid var(--border, rgba(0,0,0,.08));
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  pointer-events: none; user-select: none;
+  transition: opacity .2s, transform .15s;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.server-addr:hover { opacity: 1 !important; }
+.server-addr-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #22c55e; flex-shrink: 0;
+  box-shadow: 0 0 5px rgba(34,197,94,.45);
+  animation: addr-pulse 2.2s ease-in-out infinite;
+}
+@keyframes addr-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+.server-addr-text {
+  font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  font-weight: 500;
+}
+
+[data-theme="dark"] .server-addr {
+  background: rgba(15,18,25,.82);
+  border-color: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.45);
+  box-shadow: 0 1px 6px rgba(0,0,0,.2);
+}
+
 .t-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:nowrap; }
 .t-toolbar .t-btn { white-space:nowrap; flex-shrink:0; }
 .t-search { display:flex; align-items:center; gap:8px; width:300px; min-width:0; height:36px; padding:0 10px; border-radius:var(--c-radius-md); background:var(--c-surface); border:1px solid var(--c-border); color:var(--c-text-3); font-size:13px; flex-shrink:1; }
