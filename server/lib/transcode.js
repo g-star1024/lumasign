@@ -29,8 +29,14 @@ export async function detectFFmpeg() {
   if (_ffmpegPath !== null) return { ok: !!_ffmpegPath, ffmpeg: _ffmpegPath || null, probe: _probePath || null };
   const platform = process.platform;
   const candidates = platform === 'win32'
-    ? ['ffmpeg.exe', 'C:\\Program Data\\chocolatey\\bin\\ffmpeg.exe', 'C:\\ffmpeg\\bin\\ffmpeg.exe']
-    : ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg'];
+    ? [
+        'ffmpeg.exe',
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',                       // gyan.dev 官方构建默认解压位置
+        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',        // 常见手动安装位置
+        'C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe',
+        'C:\\Program Data\\chocolatey\\bin\\ffmpeg.exe',     // chocolatey
+      ]
+    : ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/ffmpeg/bin/ffmpeg'];
   for (const c of candidates) {
     try {
       await execFileAsync(c, ['-version'], { timeout: 5000 });
@@ -116,16 +122,18 @@ export async function transcode(opts) {
   if (!ok || !ffmpeg) throw new Error('ffmpeg 不可用，无法转码');
 
   const { input, output, profile, onProgress } = opts;
+  const hasAudio = profile.hasAudio !== false; // 默认保留音频（电子屏可静音播放，有配音需求也能用）
   const args = [
     '-y',                                    // 覆盖输出
     '-i', input,
     '-c:v', profile.codec === 'h264' ? 'libx264' : 'copy',
     '-preset', profile.preset || 'medium',
     '-crf', String(profile.crf || 23),
-    '-vf', `scale=min(${profile.maxWidth || '\\w'},iw):-2`,  // 保持宽高比
+    '-vf', `scale=min(${profile.maxWidth || 'iw'},iw):-2`,  // 保持宽高比
     '-movflags', '+faststart',              // MP4 快速开始（流式播放）
-    '-an',                                   // 先不处理音频（电子屏通常静音）
   ];
+  if (hasAudio) args.push('-c:a', 'aac', '-b:a', '128k'); // 源有音频则转 AAC
+  else args.push('-an');                                     // 源无音频则禁用音频流
 
   // 确保输出目录存在
   const outDir = path.dirname(output);
@@ -196,12 +204,13 @@ export class TranscodeQueue {
     this.timer = null;
   }
 
-  /** 入队一个转码任务 */
+  /** 入队一个转码任务。task.onDone(entry) 在任务完成/失败时回调，用于回写业务记录。 */
   enqueue(task) {
     const id = task.id || ('tc_' + Date.now().toString(36));
     const entry = {
       id, input: task.input, output: task.output, profile: task.profile || {},
       type: task.type || 'video', status: 'queued',
+      mediaId: task.mediaId || null, onDone: task.onDone || null,
       createdAt: Date.now(), startedAt: null, finishedAt: null,
       error: null, size: null, tookMs: null,
     };
@@ -246,6 +255,10 @@ export class TranscodeQueue {
     } catch (e) {
       next.status = 'error'; next.finishedAt = Date.now();
       next.error = e.message || String(e);
+    }
+    // 回调业务层（如回写 media.transcodedRel），失败不影响队列继续
+    if (next.onDone) {
+      try { next.onDone(next); } catch (cbErr) { /* 业务回写失败仅记录 */ console.error('[transcode] onDone error:', cbErr); }
     }
     this.processing = false;
     // 处理下一个

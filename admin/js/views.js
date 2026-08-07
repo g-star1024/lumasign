@@ -442,26 +442,28 @@ async function renderMedia() {
       mediaBox.style.minHeight = '240px';
       mediaBox.append(el('img', { src: `/api/media/${m.id}/raw`, style: { maxWidth: '100%', maxHeight: '520px', display: 'block' } }));
     } else if (m.kind === 'video') {
-      // 先尝试用 <video> 直接播放：H.264 正常预览；装了 HEVC 扩展的浏览器也能播 HEVC。
-      // 仅在"确实无法解码"时（error 事件 / 超时无时长）降级为说明卡片，避免一律拦截导致能播的也看不了。
-      const ve = el('video', { src: `/api/media/${m.id}/raw`, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
-      const isHevc = m.codec === 'hevc' || m.browserPlayable === false;
+      // 优先播放服务端转码后的 H.264 版本（HEVC 等不可播编码上传后会自动转）；无转码产物时回退原始文件。
+      const useTranscoded = !!m.transcodedRel;
+      const playSrc = useTranscoded ? `/api/media/${m.id}/transcoded` : `/api/media/${m.id}/raw`;
+      const ve = el('video', { src: playSrc, controls: true, preload: 'metadata', playsInline: true, style: { maxWidth:'100%', maxHeight:'520px', display:'block', background:'#000', borderRadius:'8px' } });
+      // 有转码产物则视为可播；否则沿用旧 HEVC 判定逻辑
+      const isHevc = !useTranscoded && (m.codec === 'hevc' || m.browserPlayable === false);
       const degrade = (reason) => {
         if (ve.parentNode !== mediaBox) return; // 已降级或已被替换
         const card = el('div', { style: { padding:'36px 24px', textAlign:'center', borderRadius:'8px', background:'var(--c-surface-2)', maxWidth:'460px' } },
           el('div', { style: { fontSize:'32px', marginBottom:'12px' }, text: isHevc ? '🎬' : '⚠' }),
-          el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: isHevc ? '该视频为 H.265/HEVC 编码' : '视频加载失败' }),
+          el('p', { style: { fontWeight:600, fontSize:'15px', marginBottom:'8px', color:'var(--c-text-1)' }, text: isHevc ? '该视频为 H.265/HEVC 编码' : (useTranscoded ? '转码版本加载失败' : '视频加载失败') }),
           el('p', { style: { fontSize:'13px', color:'var(--c-text-2)', lineHeight:'1.6', marginBottom:'16px' },
             text: isHevc
-              ? '当前浏览器未启用 HEVC 解码（Windows 版 Chrome/Edge 默认不支持）。点击下方一键安装「HEVC 视频扩展」后即可预览，或直接用安卓终端播放。'
-              : '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。' }
+              ? '当前浏览器未启用 HEVC 解码（Windows 版 Chrome/Edge 默认不支持）。该视频正在服务端转码为 H.264，稍后刷新即可预览；或点下方下载原文件到本地播放。'
+              : (useTranscoded ? '转码文件可能损坏，请重新上传或在终端验证播放。' : '文件可能损坏或格式不受浏览器支持，请在终端上验证播放。') }
           ),
           el('div', { style: { display:'flex', gap:'8px', justifyContent:'center', flexWrap:'wrap', marginBottom:'8px' } },
             isHevc ? el('button', { class: 't-btn primary', onclick: () => installHevcFromAdmin(), text: '⚡ 一键安装 HEVC 扩展' }) : null,
             el('a', { href: `/api/media/${m.id}/raw`, target: '_blank', class: 't-btn', style: { textDecoration:'none' }, text: '⬇ 下载原文件' }),
           ),
           isHevc ? el('p', { style: { fontSize:'12px', color:'var(--c-text-3)', marginTop:'10px', marginBottom:'0' },
-            text: '安装方式类似 ADB：点击后弹出 Microsoft Store，点「获取」即完成，刷新页面即可预览。' }) : null,
+            text: '服务端转码完成后将自动可用；安装 Windows HEVC 扩展仅对本机浏览器预览有效，安卓终端仍走转码版本。' }) : null,
         );
         ve.replaceWith(card);
       };

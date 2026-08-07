@@ -49,6 +49,7 @@ import { DataSourceManager } from './lib/datasource.js';
 import { registerDataSourceApi } from './api/datasource.js';
 import { registerInteractionApi } from './api/interaction.js';
 import { registerTranscodeApi } from './api/transcode.js';
+import { TranscodeQueue } from './lib/transcode.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -114,6 +115,7 @@ async function init(opts = {}) {
     limiter,
     secret: crypto.randomBytes(32).toString('hex'),
     apiGuard, auditChain, moderator,
+    transcodeQueue: new TranscodeQueue(ctx),
   };
 
   /* 首次运行初始化默认数据 */

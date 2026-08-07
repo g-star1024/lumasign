@@ -19,6 +19,7 @@ import { validityOf } from '../lib/lifecycle.js';
 import { lanIPs, primaryIP } from '../lib/discovery.js';
 import { builtinTemplates } from '../lib/seed.js';
 import { sniffFile, passwordStrength, probeVideoCodec, isBrowserPlayableCodec } from '../lib/security.js';
+import { detectFFmpeg, needsTranscode, probeMedia } from '../lib/transcode.js';
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mkv|avi|flv|ts|mov|m4v)$/i;
@@ -456,12 +457,10 @@ export function registerAdminApi(router, ctx) {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(f.tmpPath, dest);
 
-        // 视频：嗅探编码，HEVC/H.265 在浏览器 <video> 里会静默黑屏，打标以便预览/编辑器给出明确提示
-        let codec = null, browserPlayable = true;
-        if (mediaKind(ext) === 'video') {
-          codec = probeVideoCodec(dest);
-          browserPlayable = isBrowserPlayableCodec(codec);
-        }
+        // 视频：用 ffprobe 取真实编码/宽高/时长；非 H.264（如 HEVC）自动入队转码为 H.264，
+        // 保证管理端 / 桌面端 / 安卓播放端全部原生可播。ffmpeg 不可用时降级为旧嗅探打标，不阻塞上传。
+        let codec = null, browserPlayable = true, width = null, height = null, duration = null;
+        const isVideo = mediaKind(ext) === 'video';
 
         const row = S('media').insert({
           id: uid('m_'), name: safeName, hash, ext,
@@ -469,10 +468,61 @@ export function registerAdminApi(router, ctx) {
           size: f.size, mime: sniff.mime,
           kind: mediaKind(ext), folderId,
           duration: null, width: null, height: null, pages: null,
-          codec, browserPlayable,
+          codec, browserPlayable, transcodedRel: null,
           uploadedBy: user.id, refCount: 0,
         });
-        out.push(row);
+
+        if (isVideo) {
+          const ff = await detectFFmpeg();
+          if (ff.ok && ff.probe) {
+            try {
+              const info = await probeMedia(dest);
+              const vs = info.streams?.find(s => s.codec_type === 'video');
+              const as = info.streams?.find(s => s.codec_type === 'audio');
+              codec = vs?.codec_name?.toLowerCase() || null;
+              width = parseInt(vs?.width) || null;
+              height = parseInt(vs?.height) || null;
+              duration = parseFloat(info.format?.duration) || null;
+              browserPlayable = isBrowserPlayableCodec(codec);
+
+              const need = await needsTranscode(dest);
+              if (need.needed && need.profiles?.length) {
+                const prof = need.profiles[0];
+                const outRel = hash + '_h264.mp4';          // 与原始文件同目录：xx/<hash>_h264.mp4
+                const outPath = path.join(paths.media, outRel);
+                // 转码异步进行；完成回调把转码产物地址回填 media，预览即优先使用
+                ctx.transcodeQueue.enqueue({
+                  id: 'tc_' + row.id,
+                  input: dest,
+                  output: outPath,
+                  profile: { ...prof, hasAudio: !!as },
+                  type: 'video',
+                  mediaId: row.id,
+                  onDone: (e) => {
+                    if (e.status === 'done' && e.outputPath) {
+                      const trel = path.relative(paths.media, e.outputPath).split(path.sep).join('/');
+                      S('media').update(row.id, { transcodedRel: trel, transcodedAt: Date.now(), codec: 'h264', browserPlayable: true });
+                    }
+                  },
+                });
+                browserPlayable = false; // 转码未完成前标记不可直播，完成后 onDone 置 true
+              }
+              S('media').update(row.id, { codec, browserPlayable, width, height, duration });
+            } catch (probeErr) {
+              // ffprobe 异常不阻塞上传，回退旧嗅探打标
+              codec = probeVideoCodec(dest);
+              browserPlayable = isBrowserPlayableCodec(codec);
+              S('media').update(row.id, { codec, browserPlayable });
+            }
+          } else {
+            // ffmpeg 不可用：保持旧逻辑（仅打标，不转码），提示用户需服务端安装 ffmpeg
+            codec = probeVideoCodec(dest);
+            browserPlayable = isBrowserPlayableCodec(codec);
+            S('media').update(row.id, { codec, browserPlayable });
+          }
+        }
+
+        out.push(S('media').byId(row.id));
       } catch (e) {
         logger.system({ event: 'upload_error', file: f.filename, message: e.message });
         out.push({ name: f.filename, error: e.message });
@@ -486,6 +536,15 @@ export function registerAdminApi(router, ctx) {
     const m = S('media').byId(id);
     if (!m) return fail(res, '素材不存在', 404);
     sendFile(req, res, path.join(paths.media, m.rel), { mime: m.mime, cache: 'public, max-age=31536000' });
+  }));
+
+  // 转码产物（H.264）优先播放地址；上传后若原始为 HEVC 等不可播编码，转码完成即由此返回
+  router.get('/api/media/:id/transcoded', guard('media:view', async (req, res, { id }) => {
+    const m = S('media').byId(id);
+    if (!m || !m.transcodedRel) return fail(res, '转码版本不存在', 404);
+    const fp = path.join(paths.media, m.transcodedRel);
+    if (!fs.existsSync(fp)) return fail(res, '转码文件缺失', 404);
+    sendFile(req, res, fp, { mime: 'video/mp4', cache: 'public, max-age=31536000' });
   }));
 
   router.put('/api/media/:id', guard('media:upload', async (req, res, { id }, u, user) => {

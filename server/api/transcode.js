@@ -20,21 +20,17 @@ export function registerTranscodeApi(router, ctx) {
     return handler(req, res, params, url, user);
   };
 
-  // 延迟初始化队列（首次访问时）
-  let _queue = null;
-  function queue() {
-    if (!_queue) _queue = new TranscodeQueue(ctx);
-    return _queue;
-  }
+  // 使用 server.js 注入的共享队列单例（与上传自动转码同一队列）
+  const queue = () => ctx.transcodeQueue;
 
   // ffmpeg 状态检测
   router.get('/api/admin/transcode/status', guard('media:manage', (req, res) => {
-    const q = _queue ? _queue.list() : [];
+    const q = queue().list();
     json(res, {
       ok: true,
       ffmpeg: { detected: _ffmpegCache != null, ...(_ffmpegCache || {}) },
       queue: q.map(t => ({ id: t.id, type: t.type, status: t.status, progress: t.progress || 0,
-        error: t.error, size: t.size, tookMs: t.tookMs, createdAt: t.createdAt })),
+        error: t.error, size: t.size, tookMs: t.tookMs, createdAt: t.createdAt, mediaId: t.mediaId || null })),
       queueLen: q.length,
     });
   }));
@@ -52,16 +48,32 @@ export function registerTranscodeApi(router, ctx) {
     const media = S('media').byId(b.mediaId);
     if (!media) return fail(res, '素材不存在', 404);
 
-    const filePath = pathJoin(ctx.paths.mediaDir, media.hash + (media.ext || ''));
+    const filePath = pathJoin(ctx.paths.media, media.hash + (media.ext || ''));
     if (!require('fs').existsSync(filePath)) return fail(res, '源文件不存在');
+
+    const ext = b.type === 'image_webp' ? '.webp' : '.mp4';
+    const outRel = media.hash + '_' + (b.profile?.name || 'transcoded') + ext;
+    const output = pathJoin(ctx.paths.media, outRel);
 
     const task = {
       id: 'tc_' + Date.now().toString(36),
       input: filePath,
-      output: pathJoin(ctx.paths.mediaDir, media.hash + '_' + (b.profile?.name || 'transcoded') + (b.type === 'image_webp' ? '.webp' : '.mp4')),
+      output,
       profile: b.profile || {},
       type: b.type || 'video',
       mediaId: b.mediaId,
+      // 转码完成自动回填 media 记录的转码产物地址
+      onDone: (e) => {
+        if (e.status === 'done' && e.outputPath) {
+          const trel = path.relative(ctx.paths.media, e.outputPath).split(path.sep).join('/');
+          S('media').update(b.mediaId, {
+            transcodedRel: trel,
+            transcodedAt: Date.now(),
+            codec: 'h264',
+            browserPlayable: true,
+          });
+        }
+      },
     };
     const entry = queue().enqueue(task);
     json(res, { ok: true, task: entry });
@@ -69,13 +81,13 @@ export function registerTranscodeApi(router, ctx) {
 
   // 队列列表
   router.get('/api/admin/transcode/queue', guard('media:manage', (req, res) => {
-    const q = _queue ? _queue.list() : [];
+    const q = queue().list();
     json(res, { ok: true, items: q });
   }));
 
   // 清理过期记录
   router.post('/api/admin/transcode/prune', guard('media:manage', (req, res) => {
-    if (_queue) { _queue.prune(); }
+    queue().prune();
     json(res, { ok: true });
   }));
 }
