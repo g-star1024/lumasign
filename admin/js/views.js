@@ -1669,6 +1669,54 @@ async function renderSettings() {
       );
     })();
     view.append(hevcCard);
+
+    /* 服务端转码引擎（ffmpeg）一键安装 */
+    const ffmpegCard = el('div', { class: 'card', style: { maxWidth: '560px', marginTop: '16px' } },
+      el('h3', { text: '服务端转码引擎（ffmpeg）', style: { margin: '0 0 12px', fontSize: '15px', color: 'var(--c-text-1)' } }),
+      el('div', { class: 'ffmpeg-body', style: { minHeight: '40px' } }, spinner()),
+    );
+    view.append(ffmpegCard);
+    const ffmpegBody = ffmpegCard.querySelector('.ffmpeg-body');
+    function renderFfmpegStatus() {
+      ffmpegBody.replaceChildren(spinner());
+      api.get('/api/admin/ffmpeg/status').then(d => {
+        const s = d || {};
+        const body = [];
+        const st = s.installState || {};
+        if (s.detected) {
+          body.push(field('状态', el('span', { class: 'badge ok', text: '已就绪' })));
+          body.push(field('版本', el('span', { text: s.version || '—' })));
+          body.push(field('路径', el('code', { style: { fontSize: '12px', wordBreak: 'break-all' }, text: s.path || '' })));
+          body.push(el('p', { class: 'sub', style: { margin: '8px 0 0', color: 'var(--c-text-2)' }, text: 'HEVC/H.265 等非常规编码的视频上传后会自动转码为 H.264，管理端、桌面端、安卓播放端均可原生播放。' }));
+        } else if (s.installBusy) {
+          body.push(field('状态', el('span', { class: 'badge warn', text: '安装中…' })));
+          body.push(el('div', { style: { height: '8px', background: 'var(--c-surface-2)', borderRadius: '4px', overflow: 'hidden', margin: '6px 0' } },
+            el('div', { style: { width: (st.percent || 0) + '%', height: '100%', background: 'var(--c-primary)', transition: 'width .3s' } })));
+          body.push(el('p', { class: 'sub', style: { margin: '4px 0 0', color: 'var(--c-text-2)' }, text: (st.percent || 0) + '% · ' + (st.message || '') }));
+        } else {
+          body.push(field('状态', el('span', { class: 'badge warn', text: '未安装' })));
+          if (st.error) body.push(el('p', { class: 'sub', style: { margin: '0 0 10px', color: 'var(--c-danger, #d33)' }, text: '上次安装失败：' + st.error }));
+          if (s.installSupported) {
+            body.push(el('p', { class: 'sub', style: { margin: '0 0 12px', color: 'var(--c-text-2)' }, text: '转码能力尚未启用。点击下方按钮，服务端将自动从官方源下载并安装 ffmpeg（约 40–90MB，需联网）。' }));
+            body.push(el('button', { class: 'btn primary', onclick: startFfmpegInstall }, '⚡ 一键安装 ffmpeg'));
+          } else {
+            body.push(el('p', { class: 'sub', style: { margin: '0', color: 'var(--c-text-2)' }, text: '当前平台（' + (s.buildKey || '未知') + '）暂不支持自动安装，请手动下载 ffmpeg 放入 PATH 或 ' + (s.installDir || 'data/ffmpeg') + ' 目录。' }));
+          }
+        }
+        ffmpegBody.replaceChildren(...body);
+        if (s.installBusy) setTimeout(renderFfmpegStatus, 1500);
+      }).catch(e => {
+        ffmpegBody.replaceChildren(el('p', { class: 'sub', style: { color: 'var(--c-text-2)' }, text: '加载失败：' + e.message }));
+      });
+    }
+    function startFfmpegInstall() {
+      api.post('/api/admin/ffmpeg/install').then(() => {
+        toast('已开始安装，请稍候（可在本卡片查看进度）', 'ok');
+        renderFfmpegStatus();
+      }).catch(e => toast(e.message, 'err'));
+    }
+    renderFfmpegStatus();
+
     box.replaceWith(view);
   })();
   return box;

@@ -10,6 +10,10 @@
  */
 import { json, fail, readJson } from '../lib/http.js';
 import { detectFFmpeg, needsTranscode, TranscodeQueue } from '../lib/transcode.js';
+import {
+  installFFmpeg, getInstallState, isInstallBusy,
+  getInstallDir, isPlatformSupported, getPlatformKey, ffmpegVersion,
+} from '../lib/ffmpegInstall.js';
 
 export function registerTranscodeApi(router, ctx) {
   const S = n => ctx.store.col(n);
@@ -23,12 +27,13 @@ export function registerTranscodeApi(router, ctx) {
   // 使用 server.js 注入的共享队列单例（与上传自动转码同一队列）
   const queue = () => ctx.transcodeQueue;
 
-  // ffmpeg 状态检测
-  router.get('/api/admin/transcode/status', guard('media:manage', (req, res) => {
+  // ffmpeg 状态检测（实时探测，不再依赖手动 detect 缓存）
+  router.get('/api/admin/transcode/status', guard('media:manage', async (req, res) => {
+    const det = await detectFFmpeg();
     const q = queue().list();
     json(res, {
       ok: true,
-      ffmpeg: { detected: _ffmpegCache != null, ...(_ffmpegCache || {}) },
+      ffmpeg: { detected: det.ok, ffmpeg: det.ffmpeg, probe: det.probe },
       queue: q.map(t => ({ id: t.id, type: t.type, status: t.status, progress: t.progress || 0,
         error: t.error, size: t.size, tookMs: t.tookMs, createdAt: t.createdAt, mediaId: t.mediaId || null })),
       queueLen: q.length,
@@ -89,6 +94,42 @@ export function registerTranscodeApi(router, ctx) {
   router.post('/api/admin/transcode/prune', guard('media:manage', (req, res) => {
     queue().prune();
     json(res, { ok: true });
+  }));
+
+  /* ---------------- ffmpeg 一键安装（服务端） ---------------- */
+
+  // 查看 ffmpeg 状态 + 安装可行性 + 安装进度
+  router.get('/api/admin/ffmpeg/status', guard('media:manage', async (req, res) => {
+    const det = await detectFFmpeg();
+    const key = getPlatformKey();
+    const st = getInstallState();
+    const version = det.ok && det.ffmpeg ? await ffmpegVersion(det.ffmpeg) : (st.version || null);
+    json(res, {
+      ok: true,
+      detected: det.ok,
+      version,
+      path: det.ffmpeg || null,
+      platform: process.platform,
+      arch: process.arch,
+      buildKey: key,
+      installSupported: isPlatformSupported(),
+      installDir: getInstallDir(ctx),
+      installBusy: isInstallBusy(),
+      installState: st,
+    });
+  }));
+
+  // 触发安装（异步，立即返回；进度用 status 轮询）
+  router.post('/api/admin/ffmpeg/install', guard('media:manage', async (req, res) => {
+    if (isInstallBusy()) return fail(res, '正在安装中，请稍候', 409);
+    // 后台异步执行，不阻塞请求
+    installFFmpeg(ctx).catch(() => { /* 错误已写入 _state，前端轮询可见 */ });
+    json(res, { ok: true, started: true });
+  }));
+
+  // 安装进度（独立端点，便于轻量轮询）
+  router.get('/api/admin/ffmpeg/progress', guard('media:manage', (req, res) => {
+    json(res, { ok: true, state: getInstallState(), busy: isInstallBusy() });
   }));
 }
 

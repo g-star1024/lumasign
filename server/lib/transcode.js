@@ -23,20 +23,33 @@ const execFileAsync = promisify(execFile);
 /** 全局单例：ffmpeg 可用性缓存 */
 let _ffmpegPath = null; // null = 未检测, '' = 不可用, string = 路径
 let _probePath = null;
+let _ffmpegInstallDir = null; // 本系统「一键安装」落盘目录（由 server.js 注入）
+
+/** 设置一键安装目录（server.js 在 ctx 初始化后调用） */
+export function setFFmpegInstallDir(dir) { _ffmpegInstallDir = dir; }
+
+/** 清除探测缓存，强制下次重新探测（安装完成后调用，让 detectFFmpeg 立刻认到新装的二进制） */
+export function clearFFmpegCache() { _ffmpegPath = null; _probePath = null; }
 
 /** 检测系统是否安装了 ffmpeg / ffprobe */
 export async function detectFFmpeg() {
   if (_ffmpegPath !== null) return { ok: !!_ffmpegPath, ffmpeg: _ffmpegPath || null, probe: _probePath || null };
   const platform = process.platform;
-  const candidates = platform === 'win32'
-    ? [
-        'ffmpeg.exe',
-        'C:\\ffmpeg\\bin\\ffmpeg.exe',                       // gyan.dev 官方构建默认解压位置
-        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',        // 常见手动安装位置
-        'C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe',
-        'C:\\Program Data\\chocolatey\\bin\\ffmpeg.exe',     // chocolatey
-      ]
-    : ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/ffmpeg/bin/ffmpeg'];
+  const exeName = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const candidates = [];
+  // 本系统一键安装的落盘目录（最高优先级，装完立即认到）
+  if (_ffmpegInstallDir) candidates.push(path.join(_ffmpegInstallDir, exeName));
+  if (platform === 'win32') {
+    candidates.push(
+      'ffmpeg.exe',
+      'C:\\ffmpeg\\bin\\ffmpeg.exe',                       // gyan.dev 官方构建默认解压位置
+      'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',        // 常见手动安装位置
+      'C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe',
+      'C:\\Program Data\\chocolatey\\bin\\ffmpeg.exe',     // chocolatey
+    );
+  } else {
+    candidates.push('/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/ffmpeg/bin/ffmpeg');
+  }
   for (const c of candidates) {
     try {
       await execFileAsync(c, ['-version'], { timeout: 5000 });

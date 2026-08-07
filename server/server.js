@@ -49,7 +49,7 @@ import { DataSourceManager } from './lib/datasource.js';
 import { registerDataSourceApi } from './api/datasource.js';
 import { registerInteractionApi } from './api/interaction.js';
 import { registerTranscodeApi } from './api/transcode.js';
-import { TranscodeQueue } from './lib/transcode.js';
+import { TranscodeQueue, setFFmpegInstallDir } from './lib/transcode.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +117,9 @@ async function init(opts = {}) {
     apiGuard, auditChain, moderator,
     transcodeQueue: new TranscodeQueue(ctx),
   };
+
+  // ffmpeg 一键安装落盘目录：data/ffmpeg（运行时目录，不参与版本管理）
+  setFFmpegInstallDir(path.join(ctx.paths.data, 'ffmpeg'));
 
   /* 首次运行初始化默认数据 */
   seed(store, logger);
