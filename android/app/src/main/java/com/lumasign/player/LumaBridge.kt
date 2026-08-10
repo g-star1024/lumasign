@@ -118,9 +118,18 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     @JavascriptInterface
     fun clearCache() {
         try {
-            activity.cacheDir?.listFiles()?.forEach { it.deleteRecursively() }
+            activity.cacheDir?.listFiles()?.forEach { deleteRecursive(it) }
             webView.clearCache(true)
         } catch (_: Exception) { }
+    }
+
+    /** 递归删除目录（API 26+ 才有 File.deleteRecursively()；此处手写递归兼容 Android 4.4） */
+    @Suppress("DEPRECATION")
+    private fun deleteRecursive(file: File) {
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { deleteRecursive(it) }
+        }
+        file.delete()
     }
 
     /** 截屏：优先 PixelCopy 抓合成帧（含硬解视频，避免 webView.draw 黑屏），降级 webView.draw */
@@ -328,8 +337,10 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     private fun storageBytes(): Pair<Long, Long> {
         return try {
             val stat = StatFs(activity.filesDir.absolutePath)
-            val block = stat.blockSizeLong
-            Pair(stat.blockCountLong * block, stat.availableBlocksLong * block)
+            // blockSizeLong / blockCountLong / availableBlocksLong 是 API 26 才有；
+            // 4.4 上调用会 NoSuchMethodError，故用 API 1 的 int 版本并显式转 Long
+            val block = stat.blockSize.toLong()
+            Pair(stat.blockCount.toLong() * block, stat.availableBlocks.toLong() * block)
         } catch (_: Exception) { Pair(0L, 0L) }
     }
 

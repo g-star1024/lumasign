@@ -114,13 +114,20 @@ class MainActivity : AppCompatActivity() {
         registerConnectivity()
     }
 
-    /** 启动前台服务：防 OOM Kill + 保持 CPU 不休眠 */
+    /** 启动前台服务：防 OOM Kill + 保持 CPU 不休眠（非致命，服务失败不连累主界面） */
     private fun startWatchdogService() {
-        val intent = Intent(this, CrashWatchdogService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            val intent = Intent(this, CrashWatchdogService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            android.util.Log.i("LumaSign", "WatchdogService started")
+        } catch (e: Exception) {
+            // Android 4.4 上极少数 ROM 可能拒绝启动前台服务（如电量优化/ROM 限制），
+            // 此处吞掉异常，不让服务失败拖累主界面启动
+            android.util.Log.w("LumaSign", "WatchdogService start failed (non-fatal): ${e.message}")
         }
     }
 

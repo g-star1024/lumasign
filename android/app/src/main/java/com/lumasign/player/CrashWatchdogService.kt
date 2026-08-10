@@ -51,9 +51,11 @@ class CrashWatchdogService : Service() {
 
     private fun buildNotification(): Notification {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val flag = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
         val pendingIntent = PendingIntent.getActivity(
             this, 0, launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            flag
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("灵屏播放端")
