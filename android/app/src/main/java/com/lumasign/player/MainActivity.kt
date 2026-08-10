@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -34,6 +35,7 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -88,9 +90,6 @@ class MainActivity : AppCompatActivity() {
         )
         hideSystemUI()
 
-        // 启动崩溃守望前台服务（防 OOM Kill + 保持 CPU 不休眠）
-        startWatchdogService()
-
         // 累计崩溃计数（持久化），供健康度上报
         crashCount = prefs.getInt("crash_count", 0)
         val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -103,6 +102,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupOverlay()
+
+        // ── 崩溃复盘：上次崩溃过 → 自动把日志发到管理端 + 屏幕显示 10 秒 ──
+        // 即使 APP 没崩溃但计数 > 0，也能主动把日志送到服务端，后台「终端管理」可查看
+        if (crashCount > 0) {
+            showCrashDebugScreen()
+            uploadCrashLogToServer()
+        }
+
         webView = findViewById(R.id.webview)
         setupWebView()
 
@@ -125,10 +132,99 @@ class MainActivity : AppCompatActivity() {
             }
             android.util.Log.i("LumaSign", "WatchdogService started")
         } catch (e: Exception) {
-            // Android 4.4 上极少数 ROM 可能拒绝启动前台服务（如电量优化/ROM 限制），
-            // 此处吞掉异常，不让服务失败拖累主界面启动
             android.util.Log.w("LumaSign", "WatchdogService start failed (non-fatal): ${e.message}")
         }
+    }
+
+    /**
+     * 崩溃复盘屏：上次崩溃过 → 全屏显示崩溃日志（10 秒后自动关闭）
+     * 内嵌墙设备无需 USB/ADB/文件管理器，谁路过都能看到崩溃原因
+     */
+    private fun showCrashDebugScreen() {
+        val logText = readCrashLogText() ?: return
+        runOnUiThread {
+            val dialogView = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setBackgroundColor(Color.BLACK)
+                setPadding(40, 40, 40, 40)
+            }
+            val titleTv = TextView(this).apply {
+                setTextColor(Color.WHITE)
+                textSize = 18f
+                text = "⚠ 灵屏播放端 崩溃诊断\n(上次崩溃 $crashCount 次)"
+            }
+            val logTv = TextView(this).apply {
+                setTextColor(Color.parseColor("#fbbf24"))
+                textSize = 12f
+                typeface = Typeface.MONOSPACE
+                text = logText.take(4000)
+                setPadding(0, 16, 0, 0)
+            }
+            dialogView.addView(titleTv)
+            dialogView.addView(logTv)
+
+            val dialog = AlertDialog.Builder(this)
+                .setView(dialogView)
+                .setTitle("崩溃诊断（10 秒后自动关闭）")
+                .setCancelable(false)
+                .show()
+
+            uiHandler.postDelayed({
+                dialog.dismiss()
+                // 复盘后清零计数（下次再崩才显示，避免刷屏）
+                crashCount = 0
+                prefs.edit().putInt("crash_count", 0).apply()
+            }, 10000)
+        }
+    }
+
+    /**
+     * 崩溃日志主动上传到管理端：POST /api/terminals/:code/logs
+     * 即使 APP 闪退，崩溃日志也会通过下一启动时的 HTTP 请求发送到管理端
+     */
+    private fun uploadCrashLogToServer() {
+        val logText = readCrashLogText() ?: return
+        val serverUrl = prefs.getString(KEY_SERVER, "") ?: ""
+        val code = prefs.getString(KEY_CODE, "") ?: ""
+        if (serverUrl.isBlank()) return
+        val url = serverUrl.trimEnd('/') + "/api/t/crash"
+        Thread {
+            try {
+                val conn = java.net.URL(url).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("X-Luma-Product", "LumaSign")
+                conn.setConnectTimeout(5000)
+                conn.setReadTimeout(10000)
+                val payload = JSONObject().apply {
+                    put("token", prefs.getString(KEY_CODE, "") ?: "")
+                    put("model", Build.MODEL)
+                    put("androidVersion", Build.VERSION.RELEASE)
+                    put("crashCount", crashCount)
+                    put("log", logText.take(8000))
+                }.toString()
+                conn.doOutput = true
+                conn.outputStream.write(payload.toByteArray(Charsets.UTF_8))
+                val rc = conn.responseCode
+                android.util.Log.i("LumaSign", "crash log uploaded: HTTP $rc")
+                conn.disconnect()
+            } catch (e: Exception) {
+                android.util.Log.w("LumaSign", "crash log upload failed: ${e.message}")
+            }
+        }.start()
+    }
+
+    /** 读取 SD 卡崩溃日志文本（供上传/显示使用） */
+    private fun readCrashLogText(): String? {
+        try {
+            val pubFile = File(Environment.getExternalStorageDirectory(), "LumaSign/crash.log")
+            if (pubFile.exists()) return pubFile.readText().take(8000)
+        } catch (_: Exception) { }
+        try {
+            val appFile = File(getExternalFilesDir(null), "logs/crash.log")
+            if (appFile.exists()) return appFile.readText().take(8000)
+        } catch (_: Exception) { }
+        return null
     }
 
     /** 响应定时/远程开关节指令 */

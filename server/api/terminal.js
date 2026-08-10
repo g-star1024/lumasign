@@ -267,6 +267,28 @@ export function registerTerminalApi(router, ctx) {
     ok(res, { file });
   });
 
+  /* ---------------- 崩溃日志（安卓端主动上报） ---------------- */
+  router.post('/api/t/crash', async (req, res) => {
+    const b = await readJson(req);
+    // 免鉴权：闪退设备可能无法完成正常认证流程，允许按 code 匹配
+    const code = b.code || '';
+    const t = code ? S('terminals').findOne(x => x.code === code) : null;
+    const entry = {
+      terminalId: t?.id || '',
+      terminalName: t?.name || '未知终端',
+      model: b.model || '',
+      androidVersion: b.androidVersion || '',
+      crashCount: b.crashCount || 0,
+      log: b.log || '',
+      at: Date.now(),
+    };
+    try {
+      const logs = S('crashLogs') || store.col('crashLogs');
+      logs.insert(entry);
+    } catch (_e) { /* 存储失败不阻塞上报 */ }
+    ok(res, { received: true });
+  });
+
   /* ---------------- 播放日志（Proof of Play） ---------------- */
   router.post('/api/t/log', async (req, res, p, url) => {
     const b = await readJson(req);
@@ -372,6 +394,31 @@ export function registerTerminalApi(router, ctx) {
     if (!ctx.auth.can(user, 'feedback:view')) return fail(res, '无权限', 403);
     const list = S('form_feedbacks').all().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     json(res, { ok: true, items: list.slice(0, 500), total: list.length });
+  });
+
+  /* 管理端读取崩溃日志列表（按时间倒序） */
+  router.get('/api/admin/crash-logs', async (req, res) => {
+    const user = ctx.auth.userFromReq(req);
+    if (!user) return fail(res, '未登录', 401);
+    if (!ctx.auth.can(user, 'terminal:view')) return fail(res, '无权限', 403);
+    try {
+      const logs = (S('crashLogs') || store.col('crashLogs')).all();
+      const sorted = logs.slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+      json(res, { ok: true, items: sorted.slice(0, 200), total: sorted.length });
+    } catch (_e) {
+      json(res, { ok: true, items: [], total: 0 });
+    }
+  });
+
+  /* 管理端删除单条崩溃日志 */
+  router.post('/api/admin/crash-logs/:id/delete', async (req, res, p) => {
+    const user = ctx.auth.userFromReq(req);
+    if (!user) return fail(res, '未登录', 401);
+    if (!ctx.auth.can(user, 'terminal:edit')) return fail(res, '无权限', 403);
+    try {
+      (S('crashLogs') || store.col('crashLogs')).delete(p.id);
+      ok(res);
+    } catch (_e) { fail(res, '删除失败', 500); }
   });
 }
 
