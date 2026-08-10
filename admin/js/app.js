@@ -9,7 +9,7 @@ import { views } from './views.js';
 const TITLES = {
   dashboard: '仪表盘', terminals: '终端管理', media: '素材库', layouts: '节目制作',
   schedules: '排期下发', approvals: '审批中心', monitor: '监看墙', users: '用户与角色', logs: '日志与播放证明', settings: '系统设置', fleet: '设备开通',
-  security: '安全中心', lifecycle: '内容生命周期', health: '终端健康看板', proof: '播放证明', dataSources: '动态数据源',
+  security: '安全中心', lifecycle: '内容生命周期', health: '终端健康看板', proof: '播放证明', dataSources: '动态数据源', crashLogs: '崩溃日志',
 };
 
 async function loadPerms() {

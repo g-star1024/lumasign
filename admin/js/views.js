@@ -3002,6 +3002,113 @@ async function renderInteractions() {
   return root;
 }
 
+/* ================= 崩溃日志 ================= */
+async function renderCrashLogs() {
+  const root = el('div', { class: 'page-crash' });
+  let logs = [];
+
+  const fmtTime = (ts) => {
+    if (!ts) return '-';
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
+  const crashTable = (items) => {
+    if (!items.length) return el('div', { class: 'empty', text: '暂无崩溃日志。APP 若发生闪退，下次启动时会自动上报' });
+    const headHtml = `<thead><tr>
+      <th>终端</th><th>型号</th><th>版本</th><th>次数</th><th>时间</th><th>堆栈（点击展开）</th><th></th>
+    </tr></thead>`;
+    const rowsHtml = items.map(l => {
+      const id = l.id || '';
+      const snippet = (l.log || '').substring(0, 80).replace(/[\n\r]/g, ' ') + ((l.log || '').length > 80 ? '…' : '');
+      const delBtn = can('terminal:edit') ? `<button class="t-btn ghost" data-del="${id}" style="cursor:pointer">✕</button>` : '';
+      return `<tr data-id="${id}" style="cursor:pointer">
+        <td>${esc(l.terminalName || '未知终端')}</td>
+        <td>${esc(l.model || '-')}</td>
+        <td>${esc(l.androidVersion ? 'Android ' + l.androidVersion : '-')}</td>
+        <td>${l.crashCount || 0}</td>
+        <td>${esc(fmtTime(l.at))}</td>
+        <td style="max-width:300px">${esc(snippet)}</td>
+        <td>${delBtn}</td>
+      </tr>
+      <tr class="crash-detail" data-collapsed="true" style="display:none" data-id="${id}">
+        <td colspan="7"><pre style="font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:360px;overflow:auto;padding:12px;background:var(--c-bg,#111827);color:var(--c-text,#f9fafb);border-radius:8px;border:1px solid var(--c-border,#374151)">${esc(l.log || '(无日志内容)')}</pre></td>
+      </tr>`;
+    }).join('');
+    const table = el('table', { class: 't-table crash-table' });
+    table.innerHTML = headHtml + `<tbody>${rowsHtml}</tbody>`;
+    table.querySelectorAll('tr[data-id]').forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.matches('[data-del]')) {
+          const delId = e.target.dataset.del;
+          if (confirm('确认删除这条崩溃日志？')) {
+            api.post(`/api/admin/crash-logs/${delId}/delete`).then(() => {
+              toast('已删除', 'ok');
+              logs = logs.filter(x => (x.id || '') !== delId);
+              tableWrap.innerHTML = ''; tableWrap.appendChild(spinner()); doFetch();
+            });
+          }
+          return;
+        }
+        const detail = table.querySelector(`tr.crash-detail[data-id="${row.dataset.id}"]`);
+        if (detail.dataset.collapsed === 'true') { detail.dataset.collapsed = 'false'; detail.style.display = 'table-row'; }
+        else { detail.dataset.collapsed = 'true'; detail.style.display = 'none'; }
+      });
+    });
+    return table;
+  };
+
+  const statsRow = el('div', { class: 't-stats', style: { gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' } });
+  const tableWrap = el('div', { class: 't-card' }, spinner());
+  const searchInput = el('input', { placeholder: '搜索终端名称、型号、堆栈…', oninput: (e) => paint(e.target.value) });
+  const refreshBtn = el('button', { class: 't-btn ghost', onclick: () => { tableWrap.innerHTML = ''; tableWrap.appendChild(spinner()); doFetch(); } }, '↻ 刷新');
+
+  const statCard = (label, value, hint, tone) => el('div', { class: 't-stat' },
+    el('div', { class: 'label', text: label }),
+    el('div', { class: 'value', text: String(value) }),
+    el('div', { class: `hint ${tone || ''}`, text: hint || '' }),
+  );
+
+  function paint(filterText = '') {
+    const txt = (filterText || '').trim().toLowerCase();
+    const items = logs.filter(l => !txt || [l.terminalName, l.model, l.androidVersion, l.log].some(v => (v || '').toLowerCase().includes(txt)));
+    const recent = logs.filter(l => Date.now() - (l.at || 0) < 24 * 3600 * 1000);
+    statsRow.innerHTML = '';
+    statsRow.appendChild(statCard('日志总数', logs.length, '', ''));
+    statsRow.appendChild(statCard('近 24h', recent.length, recent.length ? '最近一天' : '无', recent.length ? 'd' : 'g'));
+    statsRow.appendChild(statCard('涉及终端', [...new Set(recent.map(l => l.terminalName))].length, '', ''));
+    statsRow.appendChild(statCard('当前筛选', items.length, '条结果', ''));
+    tableWrap.innerHTML = '';
+    tableWrap.appendChild(crashTable(items));
+  }
+
+  root.appendChild(el('div', { class: 't-head' },
+    el('div', { class: 't-title', text: '崩溃日志' }),
+    el('div', { class: 't-subtitle', style: { fontSize: '13px', color: 'var(--c-text-muted, #9ca3af)', fontWeight: 'normal' }, text: '安卓播放端闪退时自动上报，堆栈可点击展开' }),
+  ));
+  root.appendChild(statsRow);
+  root.appendChild(el('div', { class: 't-toolbar' },
+    el('div', { class: 't-search' }, el('span', { text: '🔍' }), searchInput),
+    el('div', { class: 't-spacer' }),
+    refreshBtn,
+  ));
+  root.appendChild(tableWrap);
+
+  async function doFetch() {
+    try {
+      const d = await api.get('/api/admin/crash-logs');
+      logs = d.items || [];
+      paint();
+    } catch (e) {
+      root.innerHTML = '';
+      root.appendChild(el('div', { class: 'empty', text: `加载失败：${e.message}` }));
+    }
+  }
+  await doFetch();
+  return root;
+}
+
 export const views = {
   security: renderSecurity,
   dashboard: renderDashboard,
@@ -3021,4 +3128,5 @@ export const views = {
   lifecycle: renderLifecycle,
   dataSources: renderDataSources,
   interactions: renderInteractions,
+  crashLogs: renderCrashLogs,
 };
