@@ -92,23 +92,15 @@ class MainActivity : AppCompatActivity() {
 
         // 累计崩溃计数（持久化），供健康度上报
         crashCount = prefs.getInt("crash_count", 0)
-        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            crashCount++
-            prefs.edit().putInt("crash_count", crashCount).apply()
-            writeCrashLog(throwable)
-            // 链式调用原 handler，让进程按系统默认方式退出（避免被静默吞掉导致 ANR/诡异闪退）
-            prevHandler?.uncaughtException(thread, throwable)
-        }
+        // 注意：UncaughtExceptionHandler 已由 LumaApplication 在 attachBaseContext() 注册，
+        // 此处不再重复注册，避免覆盖应用级 handler（更早捕获 theme/layout 异常）
 
         setupOverlay()
 
         // ── 崩溃复盘：上次崩溃过 → 自动把日志发到管理端 + 屏幕显示 10 秒 ──
         // 即使 APP 没崩溃但计数 > 0，也能主动把日志送到服务端，后台「终端管理」可查看
-        if (crashCount > 0) {
-            showCrashDebugScreen()
-            uploadCrashLogToServer()
-        }
+        // 崩溃复盘已由 CrashRecoveryActivity（启动入口）展示，此处不再重复弹窗
+        // 崩溃日志上传也已由 LumaApplication 在 attachBaseContext 阶段完成
 
         webView = findViewById(R.id.webview)
         setupWebView()
