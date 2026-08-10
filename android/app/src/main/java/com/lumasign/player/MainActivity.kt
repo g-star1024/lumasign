@@ -1,6 +1,7 @@
 package com.lumasign.player
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -15,6 +16,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -86,6 +88,9 @@ class MainActivity : AppCompatActivity() {
         )
         hideSystemUI()
 
+        // 启动崩溃守望前台服务（防 OOM Kill + 保持 CPU 不休眠）
+        startWatchdogService()
+
         // 累计崩溃计数（持久化），供健康度上报
         crashCount = prefs.getInt("crash_count", 0)
         val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -109,6 +114,16 @@ class MainActivity : AppCompatActivity() {
         registerConnectivity()
     }
 
+    /** 启动前台服务：防 OOM Kill + 保持 CPU 不休眠 */
+    private fun startWatchdogService() {
+        val intent = Intent(this, CrashWatchdogService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
     /** 响应定时/远程开关节指令 */
     private fun applyScreenIntent(intent: Intent?) {
         when (intent?.getStringExtra("screen")) {
@@ -121,11 +136,20 @@ class MainActivity : AppCompatActivity() {
     private fun setupWebView() {
         val ws = webView.settings
         ws.javaScriptEnabled = true
-        ws.domStorageEnabled = true
-        ws.databaseEnabled = true
         ws.mediaPlaybackRequiresUserGesture = false
         ws.allowFileAccess = true
         ws.allowContentAccess = true
+        // ── 低内存设备保护：domStorage/databaseEnabled 在 64-128MB 内存的
+        // RK312x/Allwinner 板上极易 OOM，仅中端以上设备开启 ──
+        if (activityMemoryMB() >= 256) {
+            ws.domStorageEnabled = true
+            ws.databaseEnabled = true
+        }
+        // ── Android 4.4 (Chromium 30) 硬件加速已知会导致 WebView 静默崩溃，
+        // 强制使用软件渲染。CHUTO e-player 的标配做法（LAYER_TYPE_SOFTWARE） ──
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
@@ -443,22 +467,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 把崩溃堆栈写入外部存储日志，便于用户反馈诊断（Android 4.4 仍可访问 getExternalFilesDir） */
+    /** 把崩溃堆栈写入日志：双位置写入（应用私有目录 + SD 卡公开目录），方便用户自行查看 */
+    @SuppressLint("Deprecated")
     private fun writeCrashLog(t: Throwable?) {
         try {
-            val dir = File(getExternalFilesDir(null), "logs")
-            dir.mkdirs()
-            val f = File(dir, "crash.log")
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
             val sb = StringBuilder()
             sb.append("=== crash @ $ts ===\n")
             sb.append("model=${Build.MODEL} android=${Build.VERSION.RELEASE} sdk=${Build.VERSION.SDK_INT}\n")
+            sb.append("ram=${activityMemoryMB()}MB\n")
             sb.append("${t?.javaClass?.name ?: "Throwable"}: ${t?.message ?: ""}\n")
             t?.stackTrace?.forEach { sb.append("  at $it\n") }
-            // 保留最近若干次，避免无限增长
-            val old = if (f.exists()) f.readText() else ""
-            f.writeText(sb.toString() + "\n" + old.take(6000))
-        } catch (_: Exception) { /* 日志写入失败也不应再抛异常 */ }
+            val entry = sb.toString()
+            // 1) 应用私有目录：/Android/data/com.lumasign.player/files/logs/crash.log
+            val appDir = File(getExternalFilesDir(null), "logs")
+            appDir.mkdirs()
+            val appFile = File(appDir, "crash.log")
+            val oldApp = if (appFile.exists()) appFile.readText() else ""
+            appFile.writeText(entry + "\n" + oldApp.take(6000))
+            // 2) SD 卡公开目录：/sdcard/LumaSign/crash.log（用户可直接用文件管理器找到）
+            val pubDir = File(Environment.getExternalStorageDirectory(), "LumaSign")
+            pubDir.mkdirs()
+            val pubFile = File(pubDir, "crash.log")
+            val oldPub = if (pubFile.exists()) pubFile.readText() else ""
+            pubFile.writeText(entry + "\n" + oldPub.take(6000))
+            // 同时打印到 Logcat 方便调试
+            android.util.Log.e("LumaSign", entry)
+        } catch (_: Exception) { /* 日志写入失败也不能再抛异常 */ }
+    }
+
+    /** 获取设备可用内存 MB（低内存判断依据） */
+    private fun activityMemoryMB(): Int {
+        return try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            (mi.availMem / 1024 / 1024).toInt()
+        } catch (_: Exception) { 256 }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
