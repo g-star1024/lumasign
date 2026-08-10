@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import java.io.File
+import java.io.IOException
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -35,13 +37,25 @@ class LumaApplication : Application() {
     /**
      * attachBaseContext 在 super.onCreate() 之前执行。
      * 在这里注册 crash handler，确保 theme/layout 异常也能捕获。
+     * 
+     * 注意：attachBaseContext 中 getSharedPreferences 在极少数 4.4 ROM 上可能
+     * 因文件系统未就绪而抛 IOException。此处用 try-catch 确保 handler 注册本身
+     * 不会因为读 prefs 失败而跳过——handler 是核心，prefs 只是计数。
      */
+    @android.annotation.SuppressLint("WrongThread")
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
         // 心跳：进程启动时立即写入，标记"这次启动了"
         writeHeartbeat(base)
         // 注册崩溃处理器（必须早于 onCreate）
-        installCrashHandler(base)
+        try { installCrashHandler(base) } catch (e: Exception) {
+            // 极端情况：handler 安装本身失败，用本地文件兜底
+            Log.e(TAG, "installCrashHandler FAILED in attachBaseContext: ${e.message}", e)
+            try {
+                val marker = File(base.filesDir, ".crash_handler_install_failed")
+                marker.writeText(e.message ?: "unknown")
+            } catch (_: Exception) { }
+        }
     }
 
     override fun onCreate() {
@@ -50,33 +64,35 @@ class LumaApplication : Application() {
     }
 
     private fun installCrashHandler(ctx: Context) {
-        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        } catch (e: IOException) {
+            // 4.4 ROM 上文件未就绪，用空文件兜底
+            Log.w(TAG, "getSharedPreferences failed in attachBaseContext, retrying: ${e.message}")
+            try { Thread.sleep(500) } catch (_: Exception) { }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        } catch (e: Exception) {
+            Log.e(TAG, "getSharedPreferences FAILED: ${e.message}", e)
+            return  // handler 核心逻辑在下方，没有 prefs 也能注册
+        }
         val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                // 1) 崩溃标记文件 —— 最小写入，即使磁盘几乎满也能成功
                 writeCrashMarker(ctx)
-
-                // 2) 崩溃计数（同步 commit，进程即将终止）
                 try {
                     prefs.edit().putInt(KEY_CRASH_COUNT, prefs.getInt(KEY_CRASH_COUNT, 0) + 1).commit()
                 } catch (_: Exception) { }
-
-                // 3) 崩溃日志（尽力写，失败不影响标记文件）
                 writeCrashLog(ctx, throwable)
-
                 Log.i(TAG, "uncaught captured: ${throwable.javaClass.simpleName}: ${throwable.message}")
             } catch (e: Exception) {
-                // 最坏情况：handler 本身崩溃。即使这样，crash_marker 也应该写好了
-                android.util.Log.e(TAG, "crash handler itself failed: ${e.message}")
+                Log.e(TAG, "crash handler itself failed: ${e.message}")
             }
-
             prevHandler?.uncaughtException(thread, throwable)
         }
 
         // 上次崩过 → 立即上传日志到管理端（不阻塞启动）
-        val crashCount = prefs.getInt(KEY_CRASH_COUNT, 0)
+        val crashCount = try { prefs.getInt(KEY_CRASH_COUNT, 0) } catch (_: Exception) { 0 }
         if (crashCount > 0) {
             uploadCrashLogToServer(ctx, crashCount)
         }
