@@ -176,16 +176,16 @@ class CrashRecoveryActivity : Activity() {
         }
     }
 
-    private fun makeTitle(text: String, color: Int) {
-        addView(TextView(this).apply {
+    private fun makeTitle(root: LinearLayout, text: String, color: Int) {
+        root.addView(TextView(this).apply {
             setTextColor(color)
             textSize = 18f
-            text = text
+            this.text = text
         })
     }
 
-    private fun makeLog(text: String) {
-        addView(TextView(this).apply {
+    private fun makeLog(root: LinearLayout, text: String) {
+        root.addView(TextView(this).apply {
             setTextColor(Color.parseColor("#f0f6fc"))
             textSize = 12f
             typeface = Typeface.MONOSPACE
@@ -194,8 +194,8 @@ class CrashRecoveryActivity : Activity() {
         })
     }
 
-    private fun makeHint(text: String, color: Int) {
-        addView(TextView(this).apply {
+    private fun makeHint(root: LinearLayout, text: String, color: Int) {
+        root.addView(TextView(this).apply {
             setTextColor(color)
             textSize = 13f
             setPadding(0, 16, 0, 0)
@@ -236,9 +236,9 @@ class CrashRecoveryActivity : Activity() {
     private fun showCrashView(logText: String, crashCount: Int) {
         try {
             val root = makeRoot()
-            makeTitle("灵屏 LumaSign\n上次启动崩溃 ${crashCount} 次，堆栈如下", Color.parseColor("#f0f6fc"))
-            makeLog(logText)
-            makeHint("8 秒后自动进入播放端。若仍闪退请反馈此截图", Color.parseColor("#58a6ff"))
+            makeTitle(root, "灵屏 LumaSign\n上次启动崩溃 ${crashCount} 次，堆栈如下", Color.parseColor("#f0f6fc"))
+            makeLog(root, logText)
+            makeHint(root, "8 秒后自动进入播放端。若仍闪退请反馈此截图", Color.parseColor("#58a6ff"))
             setContentView(root)
             Handler(Looper.getMainLooper()).postDelayed(::launchMain, 8000)
         } catch (e: Exception) {
@@ -250,12 +250,12 @@ class CrashRecoveryActivity : Activity() {
     private fun showNonRecoverableView(crashCount: Int) {
         try {
             val root = makeRoot()
-            makeTitle("灵屏 LumaSign\n上次启动异常退出（${crashCount} 次）", Color.parseColor("#f0f6fc"))
-            addView(TextView(this).apply {
+            makeTitle(root, "灵屏 LumaSign\n上次启动异常退出（${crashCount} 次）", Color.parseColor("#f0f6fc"))
+            root.addView(TextView(this).apply {
                 setTextColor(Color.parseColor("#ffa657"))
                 textSize = 13f
                 setPadding(0, 16, 0, 0)
-                text = "未能获取崩溃堆栈，可能原因：\n" +
+                this.text = "未能获取崩溃堆栈，可能原因：\n" +
                     "• 设备内存不足被系统强制终止 (OOM)\n" +
                     "• 崩溃发生在日志写入之前\n\n" +
                     "设备信息：\n" +
@@ -264,7 +264,7 @@ class CrashRecoveryActivity : Activity() {
                     "  内存：${getAvailableMemoryMB()}MB\n\n" +
                     "建议：重启设备后重试；若持续闪退，请将此屏幕截图发回"
             })
-            makeHint("5 秒后自动进入播放端", Color.parseColor("#58a6ff"))
+            makeHint(root, "5 秒后自动进入播放端", Color.parseColor("#58a6ff"))
             setContentView(root)
             Handler(Looper.getMainLooper()).postDelayed(::launchMain, 5000)
         } catch (e: Exception) {
@@ -276,10 +276,10 @@ class CrashRecoveryActivity : Activity() {
     private fun showBootingView() {
         try {
             val root = makeRoot()
-            addView(TextView(this).apply {
+            root.addView(TextView(this).apply {
                 setTextColor(Color.parseColor("#8b949e"))
                 textSize = 18f
-                text = "灵屏 LumaSign\n正在启动…"
+                this.text = "灵屏 LumaSign\n正在启动…"
             })
             setContentView(root)
         } catch (_: Exception) { }
