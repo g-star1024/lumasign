@@ -46,10 +46,53 @@ jobs:
         run: |
           cd android
           if [ ! -f gradlew ]; then
-            # Download Gradle wrapper if missing (binary not in repo)
-            curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp/gradle
-            /tmp/gradle/gradle-8.7/bin/gradle wrapper --gradle-version 8.7
+            GRADLE_ZIP="/tmp/gradle-8.7-bin.zip"
+
+            # Try download + validate zip magic bytes (PK = 504b)
+            try_download() {
+              local url="$1" mode="$2"
+              local curl_args=()
+              if [ "$mode" = "direct" ]; then
+                curl_args=(--noproxy '*')
+              fi
+              echo "Trying [$mode]: $url"
+              curl -sL --connect-timeout 20 --max-time 300 --fail "${curl_args[@]}" -o "$GRADLE_ZIP" "$url"
+              if [ ! -s "$GRADLE_ZIP" ]; then
+                rm -f "$GRADLE_ZIP"
+                return 1
+              fi
+              local magic
+              magic=$(xxd -l 2 -p "$GRADLE_ZIP" 2>/dev/null || od -A n -t x1 -N 2 "$GRADLE_ZIP" | tr -d ' ')
+              if [ "$magic" != "504b" ]; then
+                echo "  -> invalid zip (magic=$magic), skipping"
+                rm -f "$GRADLE_ZIP"
+                return 1
+              fi
+              echo "  -> OK ($magic, $(stat -c%s "$GRADLE_ZIP" 2>/dev/null) bytes)"
+              return 0
+            }
+
+            for url in \
+              "https://mirrors.tuna.tsinghua.edu.cn/gradle/gradle-8.7-bin.zip" \
+              "https://mirrors.aliyun.com/gradle/gradle-8.7-bin.zip" \
+              "https://mirrors.cloud.tencent.com/gradle/distributions/gradle-8.7-bin.zip"; do
+              if try_download "$url" "direct"; then break; fi
+            done
+
+            if [ ! -s "$GRADLE_ZIP" ]; then
+              for url in \
+                "https://services.gradle.org/distributions/gradle-8.7-bin.zip"; do
+                if try_download "$url" "proxy"; then break; fi
+              done
+            fi
+
+            if [ ! -s "$GRADLE_ZIP" ]; then
+              echo "FATAL: Could not download Gradle from any source"
+              exit 1
+            fi
+
+            unzip -q "$GRADLE_ZIP" -d /tmp/
+            /tmp/gradle-8.7/bin/gradle wrapper --gradle-version 8.7
           fi
           chmod +x gradlew
 
