@@ -92,14 +92,8 @@ class MainActivity : AppCompatActivity() {
 
         // 累计崩溃计数（持久化），供健康度上报
         crashCount = prefs.getInt("crash_count", 0)
-        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            crashCount++
-            prefs.edit().putInt("crash_count", crashCount).apply()
-            writeCrashLog(throwable)
-            // 链式调用原 handler，让进程按系统默认方式退出（避免被静默吞掉导致 ANR/诡异闪退）
-            prevHandler?.uncaughtException(thread, throwable)
-        }
+        // 注意：UncaughtExceptionHandler 已由 LumaApplication 在 attachBaseContext() 注册，
+        // 此处不再重复注册，避免覆盖应用级 handler（更早捕获 theme/layout 异常）
 
         setupOverlay()
 

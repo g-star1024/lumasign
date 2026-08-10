@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
+<!-- 基础主题：兼容 Android 4.4+（API 19+）。不含 enforceNavigationBarContrast 等 API 29+ 属性。
+     API 29+ 设备会自动覆盖到 values-v29/themes.xml。 -->
+<resources>
     <style name="Theme.LumaSign.Fullscreen" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:statusBarColor">@android:color/black</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
-        <item name="android:enforceNavigationBarContrast">false</item>
-        <item name="android:enforceStatusBarContrast">false</item>
     </style>
 </resources>
