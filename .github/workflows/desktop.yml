@@ -120,7 +120,7 @@ jobs:
             echo "::warning::Intel DMG 构建失败(exit $EXIT_CODE)，降级为仅 ZIP..."
             hdiutil detach -all -force 2>/dev/null || true
             sleep 1
-            npx electron-builder --mac --x64 --zip --publish never || exit $EXIT_CODE
+            npx electron-builder --mac --x64 -c.mac.target=zip --publish never || exit $EXIT_CODE
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -141,7 +141,7 @@ jobs:
             echo "::warning::AppleSilicon DMG 构建失败(exit $EXIT_CODE)，降级为仅 ZIP..."
             hdiutil detach -all -force 2>/dev/null || true
             sleep 1
-            npx electron-builder --mac --arm64 --zip --publish never || exit $EXIT_CODE
+            npx electron-builder --mac --arm64 -c.mac.target=zip --publish never || exit $EXIT_CODE
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
