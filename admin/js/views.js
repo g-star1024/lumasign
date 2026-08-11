@@ -1806,6 +1806,92 @@ async function renderSettings() {
   return box;
 }
 
+/* ---------------- 开启网络 ADB 引导（嵌墙设备无需拆机） ---------------- */
+
+/** 复制文本到剪贴板（降级到 execCommand） */
+function copyGuideCmd(t) {
+  try {
+    navigator.clipboard.writeText(t);
+    toast('已复制：' + t, 'ok');
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('已复制', 'ok'); }
+    catch { toast('复制失败，请手动复制', 'err'); }
+    document.body.removeChild(ta);
+  }
+}
+
+/** 单条 ROM 引导卡片 */
+function adbGuideCard(title, steps) {
+  return el('div', { class: 'card', style: { marginBottom: '12px' } },
+    el('h4', { text: title, style: { margin: '0 0 8px' } }),
+    el('ol', { style: { margin: '0', paddingLeft: '20px', lineHeight: '1.8' } },
+      ...steps.map(s => el('li', { text: s }))),
+  );
+}
+
+/**
+ * 弹出「开启网络 ADB 调试」指引：覆盖原生 / 小米 / 华为 / 触拓 CHUTO 四种 ROM，
+ * 含 USB 临时模式命令（可一键复制）与 U 盘兜底方案，最后给出验证方式。
+ */
+function openAdbGuide(ip) {
+  const usbCmd = `adb tcpip 5555\nadb connect ${ip}:5555`;
+  const content = el('div', { style: { maxWidth: '660px' } },
+    el('p', { class: 'sub', style: { lineHeight: '1.7', marginBottom: '12px' },
+      text: `设备 ${ip} 当前未开放网络 ADB（端口 5555）。以下步骤在「设备本机系统设置」里开启一次即可，开启后本页即可远程推送 APK，无需拆机。不同 ROM 略有差异，按你设备的系统选择：` }),
+
+    adbGuideCard('① 原生 Android / 类原生 AOSP',
+      ['设置 → 关于设备 → 连续点击「版本号」7 次，开启开发者选项',
+       '设置 → 系统 → 开发者选项 → 打开「网络 ADB 调试 / 无线调试」',
+       '部分设备需同时打开「USB 调试」用于验证（可不开）',
+       '记下设备显示的 IP 与端口（通常 5555），回到本页「扫描设备」即可识别']),
+
+    adbGuideCard('② 小米 / Redmi（MIUI / HyperOS）',
+      ['设置 → 我的设备 → 全部参数 → 连续点「MIUI 版本」7 次',
+       '设置 → 更多设置 → 开发者选项 → 打开「USB 调试」与「网络调试」',
+       '部分 MIUI 需先插一次 USB 才能激活开发者选项',
+       '网络调试开启后端口默认 5555']),
+
+    adbGuideCard('③ 华为 / 荣耀（EMUI / HarmonyOS）',
+      ['设置 → 关于手机 → 连续点「版本号」7 次',
+       '设置 → 系统和更新 → 开发人员选项 → 打开「网络 ADB 调试」',
+       '若找不到该选项，可在开发者选项内搜索「网络」',
+       '端口默认 5555']),
+
+    adbGuideCard('④ 触拓 CHUTO / 液晶互动（你现有设备常见）',
+      ['进入系统「设置」或厂商「工具箱」，找「ADB 调试 / 远程调试 / 网络调试」开关',
+       '触拓播放端页面底部或「系统设置」中通常有「开发者选项」入口',
+       '打开后记下端口（多数 5555）',
+       '若固件隐藏较深实在找不到，请用下方「U 盘模式」兜底']),
+
+    el('div', { class: 'card', style: { marginBottom: '12px', background: 'var(--bg-2)' } },
+      el('h4', { text: '⑤ USB 临时模式（有一次可插线机会时）', style: { margin: '0 0 8px' } }),
+      el('p', { class: 'sub', style: { margin: '0 0 8px' }, text: '设备与电脑 USB 连接后执行，断开 USB 网络 ADB 仍生效：' }),
+      el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', background: 'var(--bg-3, #111827)', color: 'var(--text-1)', padding: '10px', borderRadius: '8px', margin: '0 0 8px' } }, usbCmd),
+      el('button', { class: 'btn sm', onclick: () => copyGuideCmd(usbCmd) }, '复制命令'),
+    ),
+
+    el('div', { class: 'card', style: { marginBottom: '12px', background: 'var(--bg-2)' } },
+      el('h4', { text: '⑥ U 盘 / SD 卡模式（兜底，无需 ADB）', style: { margin: '0 0 8px' } }),
+      el('ol', { style: { margin: '0', paddingLeft: '20px', lineHeight: '1.8' } },
+        el('li', { text: '把 APK 拷到 U 盘根目录（命名如 LumaSign.apk）' }),
+        el('li', { text: '插入设备 USB → 用设备自带「文件管理器 / 应用安装器」点击安装' }),
+        el('li', { text: '或登录厂商 Web 配置页 → 上传 APK 升级（部分 CHUTO 固件支持）' }),
+      ),
+    ),
+
+    el('div', { class: 'card', style: { background: 'var(--bg-2)' } },
+      el('h4', { text: '验证是否生效', style: { margin: '0 0 8px' } }),
+      el('ul', { style: { margin: '0', paddingLeft: '20px', lineHeight: '1.8' } },
+        el('li', { text: '回到本页「扫描设备」，若该行「可开通方式」变为「ADB 网络开通」，说明 5555 已通' }),
+        el('li', { text: `或在电脑上运行 adb connect ${ip}:5555 看是否提示 connected` }),
+      ),
+    ),
+  );
+  openModal(el('div', {}, el('h2', { text: '开启网络 ADB 调试指引 | ' + ip }), content));
+}
+
 /* ---------------- 设备开通（远程推送 APK） ---------------- */
 async function renderFleet() {
   const box = el('div', { class: 'page-fleet' }, spinner());
@@ -1887,18 +1973,25 @@ async function renderFleet() {
       const rows = items.map((it, idx) => {
         const methodLabel = {
           already: ['已开通', 'ok'], adb: ['ADB 网络开通', 'warn'],
-          vendor: ['厂商 API 开通', 'warn'], manual: ['需手动/一次性开启 ADB', 'danger'],
+          vendor: ['厂商 API 开通', 'warn'], manual: ['需开启网络 ADB', 'danger'],
         }[it.method] || ['未知', ''];
-        const provBtn = (it.method === 'adb' || it.method === 'vendor')
-          ? el('button', { class: 'btn sm primary', onclick: () => provision(it) }, '推送 APK')
-          : null;
-        const probeBtn = el('button', { class: 'btn sm', onclick: () => vendorProbe(it) }, '厂商探测');
+        let action;
+        if (it.method === 'adb' || it.method === 'vendor') {
+          action = el('div', { class: 'row', style: { gap: '6px' } },
+            el('button', { class: 'btn sm primary', onclick: () => provision(it) }, '推送 APK'),
+            it.method === 'vendor' ? el('button', { class: 'btn sm', onclick: () => vendorProbe(it) }, '厂商探测') : null,
+          );
+        } else if (it.method === 'manual') {
+          action = el('button', { class: 'btn sm', onclick: () => openAdbGuide(it.ip) }, '开启 ADB 指引');
+        } else {
+          action = el('span', { class: 'sub', text: '—' });
+        }
         return el('tr', {},
           el('td', { text: it.ip }),
           el('td', { text: (it.openPorts || []).join(', ') || '-' }),
           el('td', { text: (it.fingerprint || []).join(', ') || '-' }),
           el('td', {}, el('span', { class: 'badge ' + methodLabel[1] }, methodLabel[0])),
-          el('td', {}, provBtn || probeBtn, provBtn ? probeBtn : null),
+          el('td', {}, action),
         );
       });
       resultsEl.replaceChildren(el('table', { class: 'tbl' },
@@ -1919,6 +2012,9 @@ async function renderFleet() {
         openModal(el('div', {},
           el('h2', { text: (d.ok ? '开通成功' : '开通未完成') + ' | ' + it.ip }),
           el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', maxHeight: '320px', overflow: 'auto', background: 'var(--bg-2)', padding: '12px', borderRadius: '8px' } }, d.output || '（无输出）'),
+          d.ok ? null : el('div', { class: 'row', style: { marginTop: '10px', gap: '8px' } },
+            el('button', { class: 'btn primary', onclick: () => openAdbGuide(it.ip) }, d.stage === 'connect' ? '查看开启网络 ADB 指引' : '通用开启指引'),
+          ),
         ));
       } catch (e) { toast(e.message, 'err'); }
     };

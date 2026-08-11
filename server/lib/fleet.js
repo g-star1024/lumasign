@@ -235,14 +235,55 @@ export const FLEET_CONST = { DEFAULT_TIMEOUT };
 /* ---------------- ADB 一键安装（服务端下载官方 platform-tools） ---------------- */
 
 /**
- * 优先返回已下载到 desktop/adb/platform-tools 的 adb；否则回退到启动时的 adbPath。
+ * ADB 路径持久化：安装 / 探测成功后把实际路径写入 server/data/fleet-config.json，
+ * 之后重启不必重新探测，也不会因启动目录不同（桌面端 vs 纯 Node）而丢失。
+ */
+const ADB_CONFIG_FILE = 'fleet-config.json';
+
+function readAdbConfig(ctx) {
+  try {
+    const dir = ctx?.paths?.data || ctx?.paths?.root || process.cwd();
+    const raw = fs.readFileSync(path.join(dir, ADB_CONFIG_FILE), 'utf8');
+    const j = JSON.parse(raw);
+    return j && typeof j.adbPath === 'string' ? j.adbPath : null;
+  } catch { return null; }
+}
+
+function writeAdbConfig(ctx, adbPath) {
+  try {
+    const dir = ctx?.paths?.data || ctx?.paths?.root || process.cwd();
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, ADB_CONFIG_FILE);
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ adbPath, updatedAt: Date.now() }, null, 2), 'utf8');
+    fs.renameSync(tmp, p);
+    return true;
+  } catch { return false; }
+}
+
+/** 在多个候选根目录查找打包的 adb（兼容桌面端启动 / 纯 node server/server.js 启动 / 上级目录） */
+function findBundledAdb(ctx) {
+  const exe = process.platform === 'win32' ? 'adb.exe' : 'adb';
+  const root = ctx?.paths?.root || process.cwd();
+  const roots = [root, path.resolve(root, '..'), path.resolve(root, '..', '..')];
+  for (const r of roots) {
+    const cand = path.join(r, 'desktop', 'adb', 'platform-tools', exe);
+    if (fs.existsSync(cand)) return cand;
+  }
+  return null;
+}
+
+/**
+ * 解析 adb 真实路径，三级回退：
+ *   1) 持久化配置（安装 / 曾探测成功）            → 最稳定
+ *   2) 各候选根目录下的 desktop/adb（打包内置）   → 兼容不同启动方式
+ *   3) 启动参数 / 环境变量 / 系统 PATH 中的 adb  → 兜底
  */
 export function resolveAdbPath(ctx) {
-  const root = ctx?.paths?.root || process.cwd();
-  const cand = process.platform === 'win32'
-    ? path.join(root, 'desktop', 'adb', 'platform-tools', 'adb.exe')
-    : path.join(root, 'desktop', 'adb', 'platform-tools', 'adb');
-  if (fs.existsSync(cand)) return cand;
+  const persisted = readAdbConfig(ctx);
+  if (persisted && fs.existsSync(persisted)) return persisted;
+  const found = findBundledAdb(ctx);
+  if (found) { writeAdbConfig(ctx, found); return found; }
   return ctx?.adbPath || 'adb';
 }
 
@@ -307,6 +348,7 @@ export async function installAdb(ctx, onLog) {
     const adbPath = resolveAdbPath(ctx);
     const v = await adbVersion(adbPath);
     if (!v.available) return { ok: false, adbPath, output: v.output, log };
+    writeAdbConfig(ctx, adbPath);
     push('✓ adb 安装完成：' + adbPath);
     return { ok: true, adbPath, output: v.output, log };
   } catch (e) {

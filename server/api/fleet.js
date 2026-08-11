@@ -62,7 +62,7 @@ export function registerFleetApi(router, ctx) {
     if (!apk) return fail(res, '请先上传播放端 APK（管理端 → 终端 → APK 升级包）', 400);
 
     if (method === 'adb') {
-      const r = await adbInstall(adbPath, ip, apk);
+      const r = await adbInstall(resolveAdbPath(ctx), ip, apk);
       return json(res, { ok: r.ok, stage: r.stage, output: r.output, ip, method });
     }
     if (method === 'vendor') {
@@ -88,7 +88,7 @@ export function registerFleetApi(router, ctx) {
     try { body = await readJson(req); } catch { body = {}; }
     const { ip, pkg } = body;
     if (!ip || !pkg) return fail(res, '请提供 ip 与包名');
-    const r = await adbUninstall(adbPath, ip, pkg);
+    const r = await adbUninstall(resolveAdbPath(ctx), ip, pkg);
     return json(res, { ok: r.ok, output: r.output, ip, pkg });
   }));
 }
