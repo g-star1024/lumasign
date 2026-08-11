@@ -39,7 +39,8 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
+        shell: bash
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
@@ -87,7 +88,8 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
+        shell: bash
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
