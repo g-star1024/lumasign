@@ -33,7 +33,8 @@
     "mac": {
       "category": "public.app-category.business",
       "target": ["dmg", "zip"],
-      "icon": "desktop/icon.icns"
+      "icon": "desktop/icon.icns",
+      "identity": null
     },
     "win": {
       "target": ["nsis", "zip"],
