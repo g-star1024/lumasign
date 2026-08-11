@@ -30,6 +30,18 @@ const adbRel = isPackaged
 const ADB_PATH = fs.existsSync(adbRel) ? adbRel : 'adb';
 process.env.LUMASIGN_ADB = ADB_PATH;
 
+// 桌面端打包内置 adb：把真实路径持久化到服务端数据目录的 fleet-config.json。
+// 这样「设备开通」页首次打开即可识别 adb，无需每次启动重新探测 / 提示重装。
+// 这属于桌面打包流程的一部分（启动时写入，路径格式与 server/lib/fleet.js 保持一致）。
+try {
+  const fleetCfg = path.join(DATA_DIR, 'fleet-config.json');
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(fleetCfg, 'utf8')); } catch {}
+  if (!prev || prev.adbPath !== ADB_PATH) {
+    fs.writeFileSync(fleetCfg, JSON.stringify({ adbPath: ADB_PATH, updatedAt: Date.now() }, null, 2), 'utf8');
+  }
+} catch {}
+
 let mainWin = null;
 let tray = null;
 let serverApi = null;       // { shutdown }
