@@ -24,7 +24,9 @@ jobs:
     name: Windows (x64)
     runs-on: windows-latest
     timeout-minutes: 30
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +36,10 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
@@ -45,10 +51,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ${{ github.workspace }}
 
+      - name: Rename artifacts with version
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          Get-ChildItem dist/*.exe | ForEach-Object { Rename-Item $_ "LumaSign-win-x64-v$ver.exe" }
+          Get-ChildItem dist/*.msi | ForEach-Object { Rename-Item $_ "LumaSign-win-x64-v$ver.msi" }
+          Get-ChildItem dist/*.zip | ForEach-Object { Rename-Item $_ "LumaSign-win-x64-v$ver.zip" }
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lumasign-windows-x64
+          name: lumasign-windows-v${{ steps.version.outputs.version }}
           path: |
             dist/*.exe
             dist/*.msi
@@ -59,7 +72,9 @@ jobs:
     name: macOS (x64 + arm64)
     runs-on: macos-latest
     timeout-minutes: 30
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,6 +84,10 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
@@ -115,10 +134,16 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         working-directory: ${{ github.workspace }}
 
+      - name: Rename artifacts with version
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          for f in dist/*.dmg; do [ -f "$f" ] && mv "$f" "LumaSign-macos-arm64-v$VER.dmg"; done
+          for f in dist/*.zip; do [ -f "$f" ] && mv "$f" "LumaSign-macos-universal-v$VER.zip"; done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lumasign-macos-universal
+          name: lumasign-macos-v${{ steps.version.outputs.version }}
           path: |
             dist/*.dmg
             dist/*.zip

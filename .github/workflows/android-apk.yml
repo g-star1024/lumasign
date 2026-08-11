@@ -30,7 +30,9 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,6 +43,13 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
+
+      - name: Get version
+        id: version
+        run: |
+          VER=$(grep "versionName" android/app/build.gradle | sed "s/.*'\(.*\)'.*/\1/")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Android version: $VER"
 
       - name: Setup Gradle wrapper
         run: |
@@ -106,10 +115,20 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
+      - name: Rename APKs with version
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          for f in android/app/build/outputs/apk/debug/*.apk; do
+            base=$(basename "$f" .apk)
+            # base is like "app-armeabi-v7a-debug" -> extract ABI part
+            abi=$(echo "$base" | sed 's/^app-//;s/-debug$//')
+            mv "$f" "android/app/build/outputs/apk/debug/LumaSign-android-v$VER-${abi}.apk"
+          done
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: lumasign-android-debug
+          name: lumasign-android-debug-v${{ steps.version.outputs.version }}
           path: android/app/build/outputs/apk/debug/**/*.apk
           retention-days: 30
 
@@ -140,11 +159,21 @@ jobs:
           
           ./gradlew assembleRelease
 
+      - name: Rename Release APKs with version
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          for f in android/app/build/outputs/apk/release/*.apk; do
+            base=$(basename "$f" .apk)
+            abi=$(echo "$base" | sed 's/^app-//;s/-release$//')
+            mv "$f" "android/app/build/outputs/apk/release/LumaSign-android-v$VER-${abi}-release.apk"
+          done
+
       - name: Upload Release APK
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: lumasign-android-release
+          name: lumasign-android-release-v${{ steps.version.outputs.version }}
           path: android/app/build/outputs/apk/release/**/*.apk
           retention-days: 30
 
@@ -158,6 +187,12 @@ jobs:
       contents: write
 
     steps:
+      - name: Get version
+        id: version
+        run: |
+          VER=$(grep "versionName" android/app/build.gradle | sed "s/.*'\(.*\)'.*/\1/")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
