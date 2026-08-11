@@ -40,9 +40,12 @@ jobs:
       - name: Get version
         id: version
         run: |
-          $version = node -p "require('./package.json').version"
-          Add-Content -Path $env:GITHUB_OUTPUT "version=$version"
-          Write-Host "Version: $version"
+          node -e "
+            const fs = require('fs');
+            const v = require('./package.json').version;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + v + '\n');
+            console.log('Version:', v);
+          "
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
@@ -91,9 +94,12 @@ jobs:
       - name: Get version
         id: version
         run: |
-          $version = node -p "require('./package.json').version"
-          Add-Content -Path $env:GITHUB_OUTPUT "version=$version"
-          Write-Host "Version: $version"
+          node -e "
+            const fs = require('fs');
+            const v = require('./package.json').version;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + v + '\n');
+            console.log('Version:', v);
+          "
 
       - name: Install desktop dependencies
         run: npm install --save-dev electron@25.9.0 electron-builder@23.6.0
