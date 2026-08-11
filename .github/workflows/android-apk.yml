@@ -132,6 +132,7 @@ jobs:
           name: lumasign-android-debug-v${{ steps.version.outputs.version }}
           path: android/app/build/outputs/apk/debug/**/*.apk
           retention-days: 30
+          overwrite: true
 
       # Release build requires signing key; this uses debug key for CI
       # For production, configure secrets: KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
@@ -177,6 +178,7 @@ jobs:
           name: lumasign-android-release-v${{ steps.version.outputs.version }}
           path: android/app/build/outputs/apk/release/**/*.apk
           retention-days: 30
+          overwrite: true
 
   # Tag push → 自动发布到 GitHub Releases
   release:

@@ -73,6 +73,7 @@ jobs:
             dist/*.msi
             dist/*.zip
           retention-days: 30
+          overwrite: true
 
   build-mac:
     name: macOS (x64 + arm64)
@@ -160,6 +161,7 @@ jobs:
             dist/*.dmg
             dist/*.zip
           retention-days: 30
+          overwrite: true
 
   # 可选：打 Release Tag 时自动发布到 GitHub Releases
   release:
