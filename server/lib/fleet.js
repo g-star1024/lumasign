@@ -163,7 +163,7 @@ function runAdb(adbPath, args, { timeout = 60000 } = {}) {
   });
 }
 
-/** 先 connect，再 install -rg（自动授予权限，利于 kiosk 自启） */
+/** 先 connect → 卸载旧版（消除签名冲突）→ install -rg（自动授予权限，利于 kiosk 自启） */
 export async function adbInstall(adbPath, ip, apkPath) {
   const device = `${ip}:5555`;
   const conn = await runAdb(adbPath, ['connect', device], { timeout: 12000 });
@@ -178,11 +178,17 @@ export async function adbInstall(adbPath, ip, apkPath) {
   // 校验 APK 存在
   let size = 0;
   try { size = readFileSync(apkPath).length; } catch { return { ok: false, stage: 'apk', output: `APK 文件不存在：${apkPath}` }; }
+
+  // 先卸载旧版（CI 每次构建用不同的临时 keystore 签名，
+  // 导致新 APK 与设备上旧版签名不一致 → 「应用未安装」。
+  // 卸载后重新安装可彻底消除此问题。）
+  const uninstallResult = await runAdb(adbPath, ['-s', device, 'uninstall', 'com.lumasign.player'], { timeout: 30000 });
+
   const inst = await runAdb(adbPath, ['-s', device, 'install', '-r', '-g', apkPath], { timeout: 120000 });
   return {
     ok: inst.ok,
     stage: inst.ok ? 'done' : 'install',
-    output: `connect: ${conn.output}\ninstall(${(size / 1048576).toFixed(1)}MB): ${inst.output}`,
+    output: `connect: ${conn.output}\nuninstall(旧版): ${uninstallResult.ok ? '已清除' : (uninstallResult.output || '(无旧版或卸载失败，继续安装)')}\ninstall(${(size / 1048576).toFixed(1)}MB): ${inst.output}`,
   };
 }
 
