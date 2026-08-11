@@ -152,7 +152,9 @@ jobs:
             -keypass android \
             -dname "CN=LumaSign CI, OU=CI, O=LumaSign, L=CI, ST=CI, C=US"
           
-          cat > local.properties <<EOF
+          # 注意：build.gradle 读取的是 rootProject/keystore.properties
+          # （不是 local.properties），写错文件会导致 release 包完全未签名、无法安装
+          cat > keystore.properties <<EOF
           storePassword=android
           keyPassword=android
           keyAlias=ci-debug
@@ -209,3 +211,17 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+          body: |
+            ## 📦 安卓 APK 架构选择指南
+            - **32 位老设备（瑞芯微 rk312x / 全志 / Android 4.4–5.1）**：下载 `*-armeabi-v7a.apk` 或 `*-universal.apk`
+            - **64 位设备（Android 6.0+ 主流板卡）**：下载 `*-arm64-v8a.apk`
+            - **不确定设备架构 / 想省心**：优先 `*-universal.apk`（体积较大但兼容全部架构）
+
+            > ⚠️ 文件名含 `-unsigned` 的旧包为未签名产物，无法安装，请勿下载；正式包均已正确签名。
+
+            ## 🖥️ 桌面端
+            - Windows：下载 `*-win-x64*.exe`（安装版）或 `*.zip`（便携版）
+            - macOS：下载 `*-macos-*.dmg`
+
+            ---
+            完整更新内容见下方自动生成的 Release Notes。
