@@ -13,6 +13,7 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
@@ -187,9 +188,9 @@ class CrashRecoveryActivity : Activity() {
     private fun makeLog(root: LinearLayout, text: String) {
         root.addView(TextView(this).apply {
             setTextColor(Color.parseColor("#f0f6fc"))
-            textSize = 12f
+            textSize = 14f
             typeface = Typeface.MONOSPACE
-            this.text = text.take(4000).ifEmpty { "(日志文件不存在，可能是 OOM 或磁盘写满)" }
+            this.text = text.take(8000).ifEmpty { "(日志文件不存在，可能是 OOM 或磁盘写满)" }
             setPadding(0, 16, 0, 0)
         })
     }
@@ -200,6 +201,15 @@ class CrashRecoveryActivity : Activity() {
             textSize = 13f
             setPadding(0, 16, 0, 0)
             this.text = text
+        })
+    }
+
+    private fun makeDeviceInfo(root: LinearLayout) {
+        root.addView(TextView(this).apply {
+            setTextColor(Color.parseColor("#8b949e"))
+            textSize = 12f
+            setPadding(0, 12, 0, 0)
+            text = "设备：${Build.MODEL} | Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) | 内存 ${getAvailableMemoryMB()}MB"
         })
     }
 
@@ -236,11 +246,19 @@ class CrashRecoveryActivity : Activity() {
     private fun showCrashView(logText: String, crashCount: Int) {
         try {
             val root = makeRoot()
-            makeTitle(root, "灵屏 LumaSign\n上次启动崩溃 ${crashCount} 次，堆栈如下", Color.parseColor("#f0f6fc"))
+            makeTitle(root, "⚠ 灵屏 LumaSign 上次崩溃 ${crashCount} 次", Color.parseColor("#f85149"))
             makeLog(root, logText)
-            makeHint(root, "8 秒后自动进入播放端。若仍闪退请反馈此截图", Color.parseColor("#58a6ff"))
+            makeHint(root, "请拍照反馈此堆栈。点击「重新进入播放端」可验证修复效果（仍崩会再次记录）。", Color.parseColor("#58a6ff"))
+            root.addView(Button(this).apply {
+                text = "重新进入播放端"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                setOnClickListener { launchMain() }
+            })
+            makeDeviceInfo(root)
             setContentView(root)
-            Handler(Looper.getMainLooper()).postDelayed(::launchMain, 8000)
+            // 停留 60 秒，足够远距离掏手机、对焦拍照；不自动跳转，避免打断拍照
+            Handler(Looper.getMainLooper()).postDelayed(::launchMain, 60000)
         } catch (e: Exception) {
             Log.w(TAG, "showCrashView failed: ${e.message}")
             showNonRecoverableView(crashCount)
@@ -258,15 +276,18 @@ class CrashRecoveryActivity : Activity() {
                 this.text = "未能获取崩溃堆栈，可能原因：\n" +
                     "• 设备内存不足被系统强制终止 (OOM)\n" +
                     "• 崩溃发生在日志写入之前\n\n" +
-                    "设备信息：\n" +
-                    "  型号：${Build.MODEL}\n" +
-                    "  系统：Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
-                    "  内存：${getAvailableMemoryMB()}MB\n\n" +
                     "建议：重启设备后重试；若持续闪退，请将此屏幕截图发回"
             })
-            makeHint(root, "5 秒后自动进入播放端", Color.parseColor("#58a6ff"))
+            makeHint(root, "30 秒后自动进入播放端；或点下方按钮立即重试", Color.parseColor("#58a6ff"))
+            root.addView(Button(this).apply {
+                text = "重新进入播放端"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                setOnClickListener { launchMain() }
+            })
+            makeDeviceInfo(root)
             setContentView(root)
-            Handler(Looper.getMainLooper()).postDelayed(::launchMain, 5000)
+            Handler(Looper.getMainLooper()).postDelayed(::launchMain, 30000)
         } catch (e: Exception) {
             Log.w(TAG, "showNonRecoverableView failed: ${e.message}")
             showBootingView()
