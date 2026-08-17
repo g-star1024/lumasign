@@ -69,34 +69,30 @@ jobs:
         id: build-debug
         working-directory: android
         run: |
-          set +e  # 不让脚本在第一个错误时退出，确保后续步骤能执行
-          ./gradlew assembleDebug --stacktrace --info 2>&1 | tee /tmp/build-output.log
-          BUILD_EXIT=$?
+          set +e
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/build-output.log
+          BUILD_EXIT=${PIPESTATUS[0]}
           echo "BUILD_EXIT_CODE=${BUILD_EXIT}" >> "$GITHUB_OUTPUT"
-          echo ""
-          echo "=========================================="
-          echo "BUILD EXIT CODE: ${BUILD_EXIT}"
-          echo "=========================================="
           exit ${BUILD_EXIT}
 
-      - name: Capture ALL build artifacts (always runs)
+      - name: "🔴 编译错误详情 (请查看此步骤)"
         if: always()
         working-directory: android
         run: |
-          echo "=== 1. Build output log (last 500 lines) ==="
-          tail -500 /tmp/build-output.log 2>/dev/null || echo "(no build log)"
+          echo "############ MANIFEST 合并报告 (ERROR/WARNING 部分) ############"
+          if [ -f build/outputs/logs/manifest-merger-debug-report.txt ]; then
+            grep -i -E "error|warning|conflict|fail|exception" build/outputs/logs/manifest-merger-debug-report.txt | head -60 || echo "(无 error/warning 关键字)"
+          else
+            echo "(manifest 报告不存在)"
+          fi
           
           echo ""
-          echo "=== 2. All files in build/outputs/ ==="
-          find build/outputs -type f 2>/dev/null || echo "(empty)"
+          echo "############ GRADLE 输出中的 Kotlin 编译错误 ############"
+          grep -i -E "e: |error:|FAILED|Exception|Unresolved|Cannot find|Type mismatch" /tmp/build-output.log | head -80 || echo "(无编译错误关键字)"
           
           echo ""
-          echo "=== 3. Kotlin compilation errors (if any) ==="
-          grep -i -E "error:|e:|Unresolved|Cannot find|Type mismatch|None of|expecting" /tmp/build-output.log 2>/dev/null | head -80 || echo "(none found in log)"
-          
-          echo ""
-          echo "=== 4. Manifest merger report (first 100 lines) ==="
-          head -100 build/outputs/logs/manifest-merger-debug-report.txt 2>/dev/null || echo "(not found)"
+          echo "############ GRADLE 输出末尾 100 行 ############"
+          tail -100 /tmp/build-output.log
 
       - name: Upload full build directory for debugging
         if: always()
