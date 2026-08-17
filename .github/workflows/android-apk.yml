@@ -121,12 +121,24 @@ jobs:
       - name: Rename APKs with version
         run: |
           VER="${{ steps.version.outputs.version }}"
+          echo "Looking for debug APKs in android/app/build/outputs/apk/debug/"
+          ls -la android/app/build/outputs/apk/debug/ 2>/dev/null || echo "Debug output dir not found"
+          find android/app/build/outputs -name "*.apk" 2>/dev/null | head -20 || echo "No APKs found anywhere"
+          shopt -s nullglob
+          count=0
           for f in android/app/build/outputs/apk/debug/*.apk; do
-            base=$(basename "$f" .apk)
-            # base is like "app-armeabi-v7a-debug" -> extract ABI part
-            abi=$(echo "$base" | sed 's/^app-//;s/-debug$//')
-            mv "$f" "android/app/build/outputs/apk/debug/LumaSign-android-v$VER-${abi}.apk"
+            if [ -f "$f" ]; then
+              base=$(basename "$f" .apk)
+              abi=$(echo "$base" | sed 's/^app-//;s/-debug$//')
+              mv "$f" "android/app/build/outputs/apk/debug/LumaSign-android-v$VER-${abi}.apk"
+              count=$((count + 1))
+            fi
           done
+          echo "Renamed $count APK(s)"
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: No debug APKs found. Build may have succeeded but produced no output."
+            exit 1
+          fi
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
