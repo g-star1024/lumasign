@@ -82,17 +82,18 @@ jobs:
               return 0
             }
 
+            # 优先官方源（GitHub Actions 在海外，官方源最快最稳），国内镜像作兜底
             for url in \
-              "https://mirrors.tuna.tsinghua.edu.cn/gradle/gradle-8.7-bin.zip" \
-              "https://mirrors.aliyun.com/gradle/gradle-8.7-bin.zip" \
-              "https://mirrors.cloud.tencent.com/gradle/distributions/gradle-8.7-bin.zip"; do
-              if try_download "$url" "direct"; then break; fi
+              "https://services.gradle.org/distributions/gradle-8.7-bin.zip"; do
+              if try_download "$url" "proxy"; then break; fi
             done
 
             if [ ! -s "$GRADLE_ZIP" ]; then
               for url in \
-                "https://services.gradle.org/distributions/gradle-8.7-bin.zip"; do
-                if try_download "$url" "proxy"; then break; fi
+                "https://mirrors.tuna.tsinghua.edu.cn/gradle/gradle-8.7-bin.zip" \
+                "https://mirrors.aliyun.com/gradle/gradle-8.7-bin.zip" \
+                "https://mirrors.cloud.tencent.com/gradle/distributions/gradle-8.7-bin.zip"; do
+                if try_download "$url" "direct"; then break; fi
               done
             fi
 
