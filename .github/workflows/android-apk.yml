@@ -66,8 +66,29 @@ jobs:
           echo "Android version: $VER"
 
       - name: Build Debug APK
+        id: build-debug
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: |
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/build-output.log
+          echo "BUILD_EXIT_CODE=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Capture build log (always runs)
+        if: always()
+        run: |
+          echo "=== Last 300 lines of build output ==="
+          tail -300 /tmp/build-output.log 2>/dev/null || echo "No build log found"
+          echo ""
+          echo "=== Searching for 'error' / 'Error' / 'ERROR' ==="
+          grep -i "error\|exception\|failed" /tmp/build-output.log 2>/dev/null | tail -50 || echo "No errors found in log"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-v${{ steps.version.outputs.version }}
+          path: /tmp/build-output.log
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Rename APKs with version
         run: |
