@@ -68,15 +68,24 @@ object KioskManager {
             val admin = ComponentName(activity, KioskAdminReceiver::class.java)
 
             // 1) 静默把 MainActivity 设为默认 Home（替代用户手动选择启动器）
+            // 注意：setPersistentPreferredActivity 在部分 compileSdk 的公开 stub 中不可见（@hide），
+            // 用反射调用以兼容不同 SDK 版本；失败不致命，仍继续进入 lockTask 锁定。
             val homeFilter = IntentFilter(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
                 addCategory(Intent.CATEGORY_DEFAULT)
             }
-            dpm.setPersistentPreferredActivity(
-                admin,
-                homeFilter,
-                ComponentName(activity, MainActivity::class.java)
-            )
+            try {
+                val m = DevicePolicyManager::class.java.getMethod(
+                    "setPersistentPreferredActivity",
+                    ComponentName::class.java,
+                    IntentFilter::class.java,
+                    ComponentName::class.java
+                )
+                m.invoke(dpm, admin, homeFilter, ComponentName(activity, MainActivity::class.java))
+                Log.i(TAG, "persistent preferred home set")
+            } catch (re: Exception) {
+                Log.w(TAG, "setPersistentPreferredActivity 反射失败（非致命）: ${re.message}")
+            }
 
             // 2) 锁定任务白名单（仅自己），随后进入 lockTask（HOME/返回键全部失效）
             dpm.setLockTaskPackages(admin, arrayOf(activity.packageName))
