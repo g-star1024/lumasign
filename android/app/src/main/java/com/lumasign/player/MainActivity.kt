@@ -56,6 +56,9 @@ class MainActivity : AppCompatActivity() {
     private var loadFailed = false
     private var retryRunnable: Runnable? = null
 
+    // 5.0+ Kiosk 进入标记（onResume 只尝试一次，避免反复调用 DevicePolicyManager）
+    private var kioskAttempted = false
+
     // 网络连通性监听
     private val connectivityManager by lazy {
         getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -111,6 +114,9 @@ class MainActivity : AppCompatActivity() {
         applyScreenIntent(intent)
 
         registerConnectivity()
+
+        // ── Kiosk 抢占：前台探测 + 应急悬浮窗（压制触拓等第三方抢前台）──
+        startKioskGuard()
     }
 
     /** 启动前台服务：防 OOM Kill + 保持 CPU 不休眠（非致命，服务失败不连累主界面） */
@@ -125,6 +131,21 @@ class MainActivity : AppCompatActivity() {
             android.util.Log.i("LumaSign", "WatchdogService started")
         } catch (e: Exception) {
             android.util.Log.w("LumaSign", "WatchdogService start failed (non-fatal): ${e.message}")
+        }
+    }
+
+    /** 启动 Kiosk 抢占守护服务：前台探测 + 应急悬浮窗（非致命） */
+    private fun startKioskGuard() {
+        try {
+            val intent = Intent(this, KioskGuardService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            android.util.Log.i("LumaSign", "KioskGuardService started")
+        } catch (e: Exception) {
+            android.util.Log.w("LumaSign", "KioskGuardService start failed (non-fatal): ${e.message}")
         }
     }
 
@@ -563,7 +584,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 把崩溃堆栈写入日志：双位置写入（应用私有目录 + SD 卡公开目录），方便用户自行查看 */
-    @SuppressLint("Deprecated")
+    @Suppress("DEPRECATION")
     private fun writeCrashLog(t: Throwable?) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
@@ -610,6 +631,11 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         hideSystemUI()
         webView.onResume()
+        // 5.0+ Device Owner Kiosk：静默默认 Home + 锁定任务（4.4 自动跳过；仅尝试一次）
+        if (!kioskAttempted) {
+            kioskAttempted = true
+            KioskManager.maybeEnterKiosk(this)
+        }
     }
 
     override fun onPause() {

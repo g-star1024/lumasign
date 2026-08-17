@@ -22,3 +22,8 @@
 # 覆盖：MainActivity$netCallback$1、MainActivity$netReceiver$1、MainActivity$1(WebViewClient)、
 #       MainActivity$2(WebChromeClient)、MainActivity$3(retryRunnable) 等所有 object expression。
 -keep class com.lumasign.player.**$** { *; }
+
+# ── Kiosk 抢占组件（manifest 组件虽由 AGP 自动 keep，显式声明更保险）──
+-keep class com.lumasign.player.KioskGuardService { *; }
+-keep class com.lumasign.player.KioskAdminReceiver { *; }
+-keep class com.lumasign.player.KioskManager { *; }

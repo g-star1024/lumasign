@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-build-${{ github.ref }}
@@ -93,6 +93,41 @@ jobs:
           echo ""
           echo "############ GRADLE 输出末尾 100 行 ############"
           tail -100 /tmp/build-output.log
+
+      - name: "📨 把编译错误回贴到 commit comment（供离线排查）"
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          EXIT_CODE="${{ steps.build-debug.outputs.BUILD_EXIT_CODE }}"
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "BUILD_EXIT_CODE=${EXIT_CODE} -> build 成功，无需回贴。"
+            exit 0
+          fi
+          {
+            echo "## ❌ Android APK 构建失败（commit ${SHA}）"
+            echo ""
+            echo "### Kotlin / Gradle 编译错误"
+            echo '```'
+            grep -i -E "e: |error:|FAILED|Exception|Unresolved|Cannot find|Type mismatch|expected |required " /tmp/build-output.log | head -100
+            echo '```'
+            echo ""
+            echo "<details><summary>Gradle 末尾 120 行</summary>"
+            echo ""
+            echo '```'
+            tail -120 /tmp/build-output.log
+            echo '```'
+            echo "</details>"
+          } > /tmp/comment.md
+          BODY=$(python3 -c "import json,sys; sys.stdout.write(json.dumps(open('/tmp/comment.md').read()))")
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"body\": ${BODY}}" \
+            "https://api.github.com/repos/${REPO}/commits/${SHA}/comments"
+          echo "已回贴编译错误到 commit comment。"
 
       - name: Upload full build directory for debugging
         if: always()
