@@ -11,8 +11,8 @@ android {
         applicationId 'com.lumasign.player'
         minSdk 19
         targetSdk 34
-        versionCode 18
-        versionName '1.3.12'
+        versionCode 19
+        versionName '1.3.13'
         // coreLibraryDesugaring 要求：minSdk < 21 时必须启用 multidex
         // desugar_jdk_libs 注入的方法数会超过 Dalvik 65K 限制
         multiDexEnabled true

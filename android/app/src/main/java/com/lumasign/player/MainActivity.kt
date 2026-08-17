@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -702,5 +703,51 @@ class MainActivity : AppCompatActivity() {
     /** 返回键：调试期允许退出，避免嵌墙设备被锁死（正式部署可重新开启 kiosk 拦截） */
     override fun onBackPressed() {
         try { moveTaskToBack(true) } catch (_: Exception) { finish() }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 紧急逃生口（v1.3.13，防"坏版本把嵌墙设备锁死"）
+    // 触发方式：① 触屏长按 2 秒（静止不动）  ② 鼠标右键 / 映射的 menu 键
+    // 行为：弹出二次确认框 → 确认后退回系统桌面（moveTaskToBack）
+    // 设计要点：长按中一旦手指移动（滑动/滚动）即取消，避免误触；
+    //          覆盖层之上仍可见；4.4 上 kiosk 守卫已跳过，退出必然生效。
+    // ─────────────────────────────────────────────────────────────
+    private val exitHandler = Handler(Looper.getMainLooper())
+    private val exitLongPress = Runnable { showExitConfirm() }
+    private var exitDialog: AlertDialog? = null
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                // 鼠标右键（或遥控器 menu 键映射）→ 直接弹确认
+                if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) {
+                    showExitConfirm()
+                } else {
+                    exitHandler.removeCallbacks(exitLongPress)
+                    exitHandler.postDelayed(exitLongPress, 2000)
+                }
+            }
+            MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                // 滑动/抬起即取消长按计时，防止正常交互误触发退出
+                exitHandler.removeCallbacks(exitLongPress)
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun showExitConfirm() {
+        exitHandler.removeCallbacks(exitLongPress)
+        if (exitDialog?.isShowing == true) return
+        exitDialog = AlertDialog.Builder(this).apply {
+            setTitle("退出到桌面")
+            setMessage("确认退出灵屏播放端并返回系统桌面？")
+            setPositiveButton("确认退出") { _, _ ->
+                try { moveTaskToBack(true) } catch (_: Exception) { finish() }
+            }
+            setNegativeButton("取消", null)
+            setCancelable(true)
+        }.create().also { it.show() }
     }
 }
