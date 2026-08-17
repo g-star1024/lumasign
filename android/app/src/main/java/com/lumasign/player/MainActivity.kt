@@ -584,7 +584,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 把崩溃堆栈写入日志：双位置写入（应用私有目录 + SD 卡公开目录），方便用户自行查看 */
-    @SuppressLint("Deprecated")
+    @Suppress("DEPRECATION")
     private fun writeCrashLog(t: Throwable?) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
