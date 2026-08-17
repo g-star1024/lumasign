@@ -69,24 +69,43 @@ jobs:
         id: build-debug
         working-directory: android
         run: |
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/build-output.log
-          echo "BUILD_EXIT_CODE=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Capture build log (always runs)
-        if: always()
-        run: |
-          echo "=== Last 300 lines of build output ==="
-          tail -300 /tmp/build-output.log 2>/dev/null || echo "No build log found"
+          set +e  # 不让脚本在第一个错误时退出，确保后续步骤能执行
+          ./gradlew assembleDebug --stacktrace --info 2>&1 | tee /tmp/build-output.log
+          BUILD_EXIT=$?
+          echo "BUILD_EXIT_CODE=${BUILD_EXIT}" >> "$GITHUB_OUTPUT"
           echo ""
-          echo "=== Searching for 'error' / 'Error' / 'ERROR' ==="
-          grep -i "error\|exception\|failed" /tmp/build-output.log 2>/dev/null | tail -50 || echo "No errors found in log"
+          echo "=========================================="
+          echo "BUILD EXIT CODE: ${BUILD_EXIT}"
+          echo "=========================================="
+          exit ${BUILD_EXIT}
 
-      - name: Upload build log
+      - name: Capture ALL build artifacts (always runs)
+        if: always()
+        working-directory: android
+        run: |
+          echo "=== 1. Build output log (last 500 lines) ==="
+          tail -500 /tmp/build-output.log 2>/dev/null || echo "(no build log)"
+          
+          echo ""
+          echo "=== 2. All files in build/outputs/ ==="
+          find build/outputs -type f 2>/dev/null || echo "(empty)"
+          
+          echo ""
+          echo "=== 3. Kotlin compilation errors (if any) ==="
+          grep -i -E "error:|e:|Unresolved|Cannot find|Type mismatch|None of|expecting" /tmp/build-output.log 2>/dev/null | head -80 || echo "(none found in log)"
+          
+          echo ""
+          echo "=== 4. Manifest merger report (first 100 lines) ==="
+          head -100 build/outputs/logs/manifest-merger-debug-report.txt 2>/dev/null || echo "(not found)"
+
+      - name: Upload full build directory for debugging
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-v${{ steps.version.outputs.version }}
-          path: /tmp/build-output.log
+          name: full-build-debug-v${{ steps.version.outputs.version }}
+          path: |
+            android/app/build/
+            /tmp/build-output.log
           retention-days: 7
           if-no-files-found: warn
 
