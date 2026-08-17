@@ -64,10 +64,11 @@ class MainActivity : AppCompatActivity() {
         getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     }
     private var lastNetOnline: Boolean? = null
-    private val netCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) { onConnectivityChanged(true) }
-        override fun onLost(network: Network) { onConnectivityChanged(false) }
-    }
+    // ⚠️ ConnectivityManager.NetworkCallback 是 API 21+ (Lollipop) 才引入的类。
+    // Android 4.4 (API 19) 上该类不存在，如果作为 val 属性初始化器直接 new 出匿名内部类，
+    // 会在 MainActivity 构造阶段触发 NoClassDefFoundError / VerifyError（类加载器无法解析父类）。
+    // 因此必须声明为可空 var，延迟到 registerConnectivity() 内部、SDK 版本确认后再创建。
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
     private val netReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) { onConnectivityChanged(isNetworkOnline()) }
     }
@@ -377,9 +378,15 @@ class MainActivity : AppCompatActivity() {
     private fun registerConnectivity() {
         lastNetOnline = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            // ConnectivityManager.NetworkCallback / Network / NetworkRequest 均为 API 21+ 类，
+            // 在此 SDK 守卫内部创建匿名内部类，确保 API 19 设备不会尝试加载这些类。
+            netCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) { onConnectivityChanged(true) }
+                override fun onLost(network: android.net.Network) { onConnectivityChanged(false) }
+            }
             val req = NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
-            try { connectivityManager.registerNetworkCallback(req, netCallback) } catch (_: Exception) {}
+            try { connectivityManager.registerNetworkCallback(req, netCallback!!) } catch (_: Exception) {}
         } else {
             val filter = IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
             try { registerReceiver(netReceiver, filter) } catch (_: Exception) {}
@@ -388,8 +395,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun unregisterConnectivity() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) connectivityManager.unregisterNetworkCallback(netCallback)
-            else unregisterReceiver(netReceiver)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                netCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
+                netCallback = null
+            } else {
+                unregisterReceiver(netReceiver)
+            }
         } catch (_: Exception) {}
     }
 
