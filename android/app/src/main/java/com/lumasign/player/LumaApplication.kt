@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import androidx.multidex.MultiDex
 import java.io.File
 import java.io.IOException
 import java.io.OutputStreamWriter
@@ -44,6 +45,9 @@ class LumaApplication : Application() {
      */
     @android.annotation.SuppressLint("WrongThread")
     override fun attachBaseContext(base: Context) {
+        // multidex：coreLibraryDesugaring + minSdk 19 必须在 super 之前调用
+        // 否则 Dalvik 加载 dex 时会因方法数超 65K 而 NoClassDefFoundError
+        MultiDex.install(base)
         super.attachBaseContext(base)
         // 心跳：进程启动时立即写入，标记"这次启动了"
         writeHeartbeat(base)
