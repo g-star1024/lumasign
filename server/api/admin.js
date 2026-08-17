@@ -275,7 +275,7 @@ export function registerAdminApi(router, ctx) {
     const before = { ...S('terminals').byId(id) };
     if (!before.id) return fail(res, '终端不存在', 404);
     const patch = {};
-    for (const k of ['name', 'code', 'orgId', 'groupIds', 'note', 'tags', 'floorPlan', 'syncGroupId', 'videoWall'])
+    for (const k of ['name', 'code', 'orgId', 'groupIds', 'note', 'tags', 'floorPlan', 'syncGroupId', 'videoWall', 'hideFromWall'])
       if (b[k] !== undefined) patch[k] = b[k];
     const row = S('terminals').update(id, patch);
     logger.change(user, 'terminal_update', id, before, row, req);
@@ -352,7 +352,8 @@ export function registerAdminApi(router, ctx) {
 
     const th = (settings().offlineThreshold || 60) * 1000;
     const list = user ? scopedTerminals(user) : S('terminals').all();
-    const items = list.map(t => {
+    // 监看墙隐藏开关：hideFromWall=true 的终端不出现在监看墙（仅隐藏展示，不影响在线/列表）
+    const items = list.filter(t => !t.hideFromWall).map(t => {
       const d = decorateTerminal(t, th, bus);
       const gName = (S('groups').byId((t.groupIds || [])[0]) || {}).name || '';
       return {

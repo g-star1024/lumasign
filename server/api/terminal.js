@@ -76,7 +76,7 @@ export function registerTerminalApi(router, ctx) {
         appVersion: b.appVersion || '', lastHeartbeat: Date.now(),
         onlineSeconds: 0, volume: 60, powerSchedule: [],
         syncGroupId: null, videoWall: null, floorPlan: null,
-        note: '', tags: [],
+        note: '', tags: [], hideFromWall: false,
       });
       logger.audit({ action: 'terminal_register', target: t.id, mac, model: hardware.model, ip: net.ip });
       raiseAlert(store, bus, {

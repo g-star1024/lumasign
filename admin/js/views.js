@@ -168,7 +168,16 @@ async function renderTerminals() {
         el('td', { text: t.hardware?.model || '-' }),
         el('td', { text: fmtAgo(t.lastHeartbeat) }),
         el('td', {}, healthBadge(t.healthScore, t.healthLevel)),
-        el('td', {}, can('terminal:control') ? el('button', { class: 't-btn ghost', onclick: (e) => { e.stopPropagation(); openTerminalDetail(t); } }, '控制') : ''),
+        el('td', { class: 't-row-actions' },
+          can('terminal:control') ? el('button', { class: 't-btn ghost', onclick: (e) => { e.stopPropagation(); openTerminalDetail(t); } }, '控制') : '',
+          can('terminal:delete') ? el('button', { class: 't-btn danger ghost', onclick: async (e) => {
+            e.stopPropagation();
+            const yes = await confirmModal({ title: '删除终端', body: `确认从列表移除「${esc(t.name || t.code || t.id)}」？该设备若重新上线仍会自动注册回来。`, confirmText: '删除', danger: true });
+            if (!yes) return;
+            try { await api.del(`/api/terminals/${t.id}`); toast('已删除终端', 'ok'); window.dispatchEvent(new Event('hashchange')); }
+            catch (err) { toast(err.message, 'err'); }
+          } }, '删除') : '',
+        ),
       ))),
     );
   };
@@ -270,6 +279,21 @@ function openTerminalDetail(t) {
         : el('div', { class: 't-dnote', text: '无异常项' }),
       t.healthUpdatedAt ? el('div', { class: 't-dnote', text: `最后评估 ${fmtTime(t.healthUpdatedAt)}` }) : '',
     ),
+    field('监看墙显示', el('label', { class: 't-toggle', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } },
+      (() => {
+        const chk = el('input', { type: 'checkbox' });
+        chk.checked = !t.hideFromWall; // 默认在监看墙显示
+        chk.onchange = async () => {
+          try {
+            await api.put(`/api/terminals/${t.id}`, { hideFromWall: !chk.checked });
+            toast(chk.checked ? '已在监看墙显示' : '已隐藏（不在监看墙显示）', 'ok');
+            t.hideFromWall = !chk.checked;
+          } catch (e) { toast(e.message, 'err'); chk.checked = !chk.checked; }
+        };
+        return chk;
+      })(),
+      el('span', { text: '在监看墙显示' }),
+    )),
     el('div', { class: 't-dactions' },
       cmdBtn('截图', 'screenshot', t),
       cmdBtn('刷新内容', 'reload', t),
@@ -279,6 +303,12 @@ function openTerminalDetail(t) {
         try { const r = await api.post(`/api/admin/health/${t.id}/cleanup`); toast(r.message || '已下发清理缓存指令', 'ok'); }
         catch (e) { toast(e.message, 'err'); }
       } }, '清理缓存') : '',
+      can('terminal:delete') ? el('button', { class: 't-btn danger', style: { marginLeft: 'auto' }, onclick: async () => {
+        const yes = await confirmModal({ title: '删除终端', body: `确认从列表移除「${esc(t.name || t.code || t.id)}」？<br>该设备若后续重新上线，仍会自动注册回来（不会永久封禁）。`, confirmText: '删除', danger: true });
+        if (!yes) return;
+        try { await api.del(`/api/terminals/${t.id}`); toast('已删除终端', 'ok'); close(); window.dispatchEvent(new Event('hashchange')); }
+        catch (e) { toast(e.message, 'err'); }
+      } }, '删除') : '',
     ),
   );
   openModal(el('div', {}, el('h2', { text: `终端 ${t.name || t.code || t.id}` }), body));
