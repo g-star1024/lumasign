@@ -114,16 +114,11 @@ jobs:
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace --info 2>&1 | tee /tmp/build-debug.log
-          echo "=== BUILD LOG (last 200 lines) ==="
-          tail -200 /tmp/build-debug.log
+          ./gradlew assembleDebug
 
       - name: Rename APKs with version
         run: |
           VER="${{ steps.version.outputs.version }}"
-          echo "Looking for debug APKs in android/app/build/outputs/apk/debug/"
-          ls -la android/app/build/outputs/apk/debug/ 2>/dev/null || echo "Debug output dir not found"
-          find android/app/build/outputs -name "*.apk" 2>/dev/null | head -20 || echo "No APKs found anywhere"
           shopt -s nullglob
           count=0
           for f in android/app/build/outputs/apk/debug/*.apk; do
@@ -134,9 +129,10 @@ jobs:
               count=$((count + 1))
             fi
           done
-          echo "Renamed $count APK(s)"
+          echo "Renamed $count debug APK(s)"
           if [ "$count" -eq 0 ]; then
-            echo "ERROR: No debug APKs found. Build may have succeeded but produced no output."
+            echo "ERROR: No debug APKs found in output directory"
+            ls -laR android/app/build/outputs/ 2>/dev/null || echo "No outputs directory"
             exit 1
           fi
 
