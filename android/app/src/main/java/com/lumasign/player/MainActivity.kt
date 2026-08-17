@@ -80,44 +80,76 @@ class MainActivity : AppCompatActivity() {
         @JvmField var crashCount: Int = 0
     }
 
+    // 启动自检覆盖层：每一步更新文字，若卡死可据此定位冻结点（嵌墙设备无法取 logcat）
+    private var bootStatusView: android.widget.TextView? = null
+    private fun showBootStatus(step: String) {
+        runOnUiThread {
+            if (bootStatusView == null) {
+                bootStatusView = android.widget.TextView(this).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    setBackgroundColor(Color.parseColor("#0d1117"))
+                    setTextColor(Color.WHITE)
+                    textSize = 18f
+                    gravity = Gravity.CENTER
+                }
+                try { (findViewById<ViewGroup>(R.id.root)).addView(bootStatusView) } catch (_: Exception) {}
+            }
+            bootStatusView?.text = "灵屏 LumaSign 启动中…\n\n$step"
+        }
+    }
+    private fun hideBootStatus() {
+        runOnUiThread { bootStatusView?.visibility = View.GONE }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // 开机/重启后自动点亮屏幕并越过锁屏（kiosk 无人值守关键）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        showBootStatus("① 初始化界面布局")
+        try {
+            setContentView(R.layout.activity_main)
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // 开机/重启后自动点亮屏幕并越过锁屏（kiosk 无人值守关键）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+            }
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            )
+            hideSystemUI()
+
+            // 累计崩溃计数（持久化），供健康度上报
+            crashCount = prefs.getInt("crash_count", 0)
+
+            setupOverlay()
+
+            showBootStatus("② 初始化 WebView 引擎")
+            webView = findViewById(R.id.webview)
+            setupWebView()
+
+            showBootStatus("③ WebView 就绪，准备连接")
+            handleIntent(intent)
+            val server = prefs.getString(KEY_SERVER, "") ?: ""
+            registerConnectivity()
+            if (server.isBlank()) {
+                showBootStatus("④ 未配置服务端：零配置发现 / 手动配置")
+                showDiscoveringThenConfig()
+            } else {
+                showBootStatus("④ 加载播放端：$server")
+                loadPlayer(server)
+            }
+            applyScreenIntent(intent)
+
+            showBootStatus("⑤ 启动完成，进入播放端")
+            hideBootStatus()
+
+            // ── Kiosk 抢占：前台探测 + 应急悬浮窗（压制触拓等第三方抢前台）──
+            startKioskGuard()
+        } catch (e: Throwable) {
+            // 启动期任意异常都写到崩溃日志并展示在屏幕上，避免静默黑屏
+            try { writeCrashLog(e) } catch (_: Exception) {}
+            showBootStatus("⚠ 启动失败：${e.javaClass.simpleName}: ${e.message}\n\n已写入崩溃日志，请拍照反馈此屏幕")
         }
-        window.addFlags(
-            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-        )
-        hideSystemUI()
-
-        // 累计崩溃计数（持久化），供健康度上报
-        crashCount = prefs.getInt("crash_count", 0)
-        // 注意：UncaughtExceptionHandler 已由 LumaApplication 在 attachBaseContext() 注册，
-        // 此处不再重复注册，避免覆盖应用级 handler（更早捕获 theme/layout 异常）
-
-        setupOverlay()
-
-        // ── 崩溃复盘：上次崩溃过 → 自动把日志发到管理端 + 屏幕显示 10 秒 ──
-        // 即使 APP 没崩溃但计数 > 0，也能主动把日志送到服务端，后台「终端管理」可查看
-        // 崩溃复盘已由 CrashRecoveryActivity（启动入口）展示，此处不再重复弹窗
-        // 崩溃日志上传也已由 LumaApplication 在 attachBaseContext 阶段完成
-
-        webView = findViewById(R.id.webview)
-        setupWebView()
-
-        handleIntent(intent)
-        val server = prefs.getString(KEY_SERVER, "") ?: ""
-        if (server.isBlank()) showDiscoveringThenConfig() else loadPlayer(server)
-        applyScreenIntent(intent)
-
-        registerConnectivity()
-
-        // ── Kiosk 抢占：前台探测 + 应急悬浮窗（压制触拓等第三方抢前台）──
-        startKioskGuard()
     }
 
     /** 启动前台服务：防 OOM Kill + 保持 CPU 不休眠（非致命，服务失败不连累主界面） */
@@ -137,6 +169,12 @@ class MainActivity : AppCompatActivity() {
 
     /** 启动 Kiosk 抢占守护服务：前台探测 + 应急悬浮窗（非致命） */
     private fun startKioskGuard() {
+        // Android 4.4 上 getRunningTasks 探测不可靠，应急悬浮窗会误遮成黑屏且无法退出，
+        // 调试期先在 4.4 跳过；5.0+ 或设为 Device Owner 后再启用系统级 Kiosk。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            android.util.Log.i("LumaSign", "KioskGuard 在 Android 4.4 跳过（探测不可靠，避免误遮挡锁死）")
+            return
+        }
         try {
             val intent = Intent(this, KioskGuardService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -661,8 +699,8 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    /** 拦截返回键，保持 kiosk 不可退出 */
+    /** 返回键：调试期允许退出，避免嵌墙设备被锁死（正式部署可重新开启 kiosk 拦截） */
     override fun onBackPressed() {
-        // 长按多任务键等系统行为无法拦截，但普通返回键不退出播放
+        try { moveTaskToBack(true) } catch (_: Exception) { finish() }
     }
 }

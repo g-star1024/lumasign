@@ -322,6 +322,11 @@ class CrashRecoveryActivity : Activity() {
             for (path in buildMarkerPaths(this)) {
                 try { if (path.exists()) path.delete() } catch (_: Exception) { }
             }
+            // 清掉历史崩溃日志（如已修复的 netCallback 旧栈），避免反复弹旧页；
+            // 若 MainActivity 再次崩溃，LumaApplication 会写入全新的日志。
+            for (path in buildLogPaths(this)) {
+                try { if (path.exists()) path.delete() } catch (_: Exception) { }
+            }
         } catch (_: Exception) { }
         val intent = Intent(this, MainActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
