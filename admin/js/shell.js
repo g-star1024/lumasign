@@ -189,34 +189,54 @@ function showServerAddr() {
   if (isLocal) tryDiscoverLanIp(addr);
 }
 
-/** 用 WebRTC ICE 候选探测本机局域网 IP（纯前端，无需后端配合） */
+/** 用 WebRTC ICE 候选探测本机局域网 IP（纯前端，无需后端配合）
+ *  ⚠️ 多网卡机器（Hyper-V / VMware / Docker / WSL 虚拟网卡）下绝不能"取第一个候选"，
+ *  否则会把 172.16-31 之类虚拟网段当成局域网地址广播给终端，终端永远连不上。
+ *  这里先收集候选，再按 192.168.* > 10.* > 172.16-31 > 其他 排序取最优。 */
 function tryDiscoverLanIp(addrEl) {
   // 避免重复探测
   if (addrEl.dataset.lanDone) return;
   addrEl.dataset.lanDone = '1';
 
+  const score = (ip) => ip.startsWith('192.168.') ? 0
+    : ip.startsWith('10.') ? 1
+    : /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ? 2 : 3;
+
   try {
     const pc = new RTCPeerConnection({ iceServers: [] });
     pc.createDataChannel('_');
-    let resolved = false;
-    const timer = setTimeout(() => { if (!resolved) { resolved = true; pc.close(); } }, 3000);
+    const found = [];
+    let done = false;
+    let timer = null;
+
+    const apply = (ip) => {
+      if (done || !ip) return;
+      done = true;
+      clearTimeout(timer);
+      try { pc.close(); } catch {}
+      // 更新显示：主文字改为局域网 IP，hint 改为可复制提示
+      const textEl = addrEl.querySelector('.server-addr-text');
+      const hintEl = addrEl.querySelector('.server-addr-hint');
+      if (textEl) textEl.textContent = ip + ':7788';
+      if (hintEl) hintEl.textContent = '局域网 IP · 安卓端填此地址';
+      addrEl.classList.remove('is-local');
+      addrEl.title = `局域网地址：http://${ip}:7788\n安卓端 / 其他设备请填此地址`;
+    };
+    const flush = () => {
+      if (done || !found.length) return;
+      apply(found.slice().sort((a, b) => score(a) - score(b))[0]);
+    };
+
+    timer = setTimeout(flush, 1500);
     pc.onicecandidate = (e) => {
-      if (!e.candidate || resolved) return;
-      const parts = e.candidate.candidate.split(' ');
-      const ip = parts[4];
-      // 只要不是回环/链路本地/映射地址的 IPv4，大概率是局域网 IP
-      if (ip && /^(?!127\.|0\.|169\.254\.|::1?|fe80:)/.test(ip) && /\d+\.\d+\.\d+\.\d+/.test(ip)) {
-        resolved = true;
-        clearTimeout(timer);
-        pc.close();
-        // 更新显示：主文字改为局域网 IP，hint 改为可复制提示
-        const textEl = addrEl.querySelector('.server-addr-text');
-        const hintEl = addrEl.querySelector('.server-addr-hint');
-        if (textEl) textEl.textContent = ip + ':7788';
-        if (hintEl) hintEl.textContent = '局域网 IP · 安卓端填此地址';
-        addrEl.classList.remove('is-local');
-        addrEl.title = `局域网地址：http://${ip}:7788\n安卓端 / 其他设备请填此地址`;
-      }
+      if (done) return;
+      if (!e.candidate) { flush(); return; }
+      const ip = e.candidate.candidate.split(' ')[4];
+      if (!ip || !/\d+\.\d+\.\d+\.\d+/.test(ip)) return;
+      if (/^(127\.|0\.|169\.254\.)/.test(ip)) return;
+      if (found.indexOf(ip) < 0) found.push(ip);
+      // 真·192.168.x 出现即可定案，无需继续等
+      if (score(ip) === 0) apply(ip);
     };
     pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
   } catch {}

@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -53,9 +54,14 @@ class MainActivity : AppCompatActivity() {
     private val uiHandler = Handler(Looper.getMainLooper())
 
     // 加载 / 错误覆盖层（服务端不可达时显示「正在重连」而非黑屏死寂）
-    private lateinit var overlay: TextView
+    // v1.3.15：容器改为 View（内含文字 + 三个救援按钮），文字提亮，杜绝"黑屏没字"不可自救
+    private lateinit var overlay: View
+    private lateinit var overlayText: TextView
     private var loadFailed = false
     private var retryRunnable: Runnable? = null
+    // v1.3.15：连续加载失败计数。≥ FAIL_STREAK_LIMIT 时清空错误地址并回到零配置发现。
+    // 现场事故：设备存了错/不可达的 server_url 后永不重新发现，黑屏死锁。
+    private var failStreak = 0
 
     // 5.0+ Kiosk 进入标记（onResume 只尝试一次，避免反复调用 DevicePolicyManager）
     private var kioskAttempted = false
@@ -78,7 +84,40 @@ class MainActivity : AppCompatActivity() {
         const val PREFS = "luma_config"
         const val KEY_SERVER = "server_url"
         const val KEY_CODE = "terminal_code"
+        const val DEFAULT_PORT = 7788
+        /** 连续加载失败达到该次数 → 判定"地址存错了"，清空并重新零配置发现（约 4×15s ≈ 60s） */
+        const val FAIL_STREAK_LIMIT = 4
         @JvmField var crashCount: Int = 0
+    }
+
+    /**
+     * 规范化服务器地址（v1.3.15）。
+     *
+     * 现场事故复盘：用户在配置框里填了管理端界面上显示的 `192.168.2.97:7788`（不带 http://），
+     * 旧实现原样存盘并直接拼成 `192.168.2.97:7788/player/?mode=term` 交给 WebView。
+     * WebView 把 `192.168.2.97` 当成协议名 → URL 在本地就被判非法 → 连一次 TCP 都没发出，
+     * `onReceivedError` → 全屏黑底遮罩 + 每 15s 重试同一个坏 URL → 永久黑屏。
+     *
+     * 规则：去空白 → 无 `://` 补 `http://` → host 后无端口补 `:7788` → 去尾部 `/` → 校验可解析。
+     * @return 规范化后的地址；无法解析时返回 null（调用方应提示而不落盘）。
+     */
+    private fun normalizeServerUrl(raw: String?): String? {
+        var s = (raw ?: "").trim().replace(Regex("\\s+"), "")
+        if (s.isEmpty()) return null
+        if (!s.contains("://")) s = "http://$s"
+        // 协议名只保留已知安全值，避免 javascript: 等被塞进来
+        val scheme = s.substringBefore("://").lowercase(Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return null
+        s = "$scheme://" + s.substringAfter("://").trimEnd('/')
+        // 补默认端口：host 部分不含 ':' 时补默认端口（IPv6 字面量不处理，本项目用不到）
+        val hostPart = s.substringAfter("://").substringBefore("/")
+        if (!hostPart.contains(":")) s = "$s:$DEFAULT_PORT"
+        return try {
+            val u = java.net.URL(s)
+            if (u.host.isNullOrBlank()) null else s
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // 启动自检覆盖层：每一步更新文字，若卡死可据此定位冻结点（嵌墙设备无法取 logcat）
@@ -347,7 +386,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun onMainFrameError(desc: String?) {
         loadFailed = true
-        showOverlay("无法连接服务端\n${desc ?: ""}\n将自动重试…")
+        failStreak++
+        val hint = if (failStreak >= FAIL_STREAK_LIMIT) {
+            "连接失败 $failStreak 次，即将重新自动发现…\n也可点下方按钮手动改地址"
+        } else {
+            "将自动重试…（第 $failStreak 次失败）"
+        }
+        showOverlay("无法连接服务端\n${desc ?: ""}\n$hint")
         scheduleRetry()
     }
 
@@ -355,31 +400,111 @@ class MainActivity : AppCompatActivity() {
         retryRunnable?.let { uiHandler.removeCallbacks(it) }
         retryRunnable = Runnable {
             val server = prefs.getString(KEY_SERVER, "") ?: ""
+            // ── 自愈（v1.3.15）──────────────────────────────────────────
+            // 旧逻辑只在"存了地址且加载失败"时死磕同一个地址，永不重新发现 →
+            // 现场把错地址填进去的设备（v1.3.11 事故）会永久黑屏。这是本项目最危险的失效模式：
+            // 地址落盘后没有任何 UI 入口能改回来。
+            // 现在连续失败 FAIL_STREAK_LIMIT 次后，先问一次"服务端你到底在哪"（UDP 零配置发现）：
+            //   发现到 → 用新地址自愈（地址写错也能自己爬回来，无需人到现场）
+            //   没发现 → 保留原地址继续重试，只把救援按钮亮出来；
+            //            刻意不弹手填框，避免无人值守设备停在弹窗上等人点。
+            if (failStreak >= FAIL_STREAK_LIMIT) {
+                failStreak = 0
+                loadFailed = false
+                android.util.Log.w("LumaSign", "server unreachable ${FAIL_STREAK_LIMIT}x, retry via zero-config discovery")
+                showOverlay("无法连接服务端\n正在自动搜寻管理端…\n（也可点下方按钮手动改地址）")
+                tryDiscoverServer { url ->
+                    runOnUiThread {
+                        if (url != null && url != server) {
+                            prefs.edit().putString(KEY_SERVER, url).apply()
+                            loadPlayer(url)
+                        } else if (url != null) {
+                            loadPlayer(url)
+                        } else {
+                            scheduleRetry()
+                        }
+                    }
+                }
+                return@Runnable
+            }
             if (server.isNotBlank() && loadFailed) { loadFailed = false; loadPlayer(server) }
         }
         uiHandler.postDelayed(retryRunnable!!, 15000)
     }
 
+    /**
+     * 故障覆盖层（v1.3.15 重做）。
+     *
+     * 旧版是「整屏纯黑 + #6b7280 灰字」，现场表现就是"黑屏没字"，且没有任何自救入口——
+     * 设备一旦存了错地址就永久锁死（v1.3.11 事故）。
+     * 新版：文字提到 #e5e7eb/18sp（低亮度下也读得出）+ 三个鼠标/触屏可点的救援按钮。
+     */
     private fun setupOverlay() {
-        overlay = TextView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(Color.BLACK)
-            setTextColor(Color.parseColor("#6b7280"))
-            textSize = 16f
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            text = "灵屏 LumaSign\n正在连接服务端…"
-            visibility = View.VISIBLE
+            setBackgroundColor(Color.BLACK)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
+        overlayText = TextView(this).apply {
+            setTextColor(Color.parseColor("#e5e7eb"))
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setPadding(32, 32, 32, 24)
+            text = "灵屏 LumaSign\n正在连接服务端…"
+        }
+        val btnRow = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        btnRow.addView(android.widget.Button(this).apply {
+            text = "重新配置服务器"
+            setOnClickListener { showConfigDialog() }
+        })
+        btnRow.addView(android.widget.Button(this).apply {
+            text = "重新自动发现"
+            setOnClickListener {
+                // 清掉可能存错的地址，交给 UDP 零配置发现重新定位服务端
+                prefs.edit().remove(KEY_SERVER).apply()
+                failStreak = 0
+                loadFailed = false
+                showDiscoveringThenConfig()
+            }
+        })
+        btnRow.addView(android.widget.Button(this).apply {
+            text = "退出到桌面"
+            setOnClickListener { showExitConfirm() }
+        })
+        box.addView(overlayText)
+        box.addView(btnRow)
+        overlay = box
         (findViewById<ViewGroup>(R.id.root)).addView(overlay)
     }
 
-    private fun showOverlay(msg: String) { overlay.text = msg; overlay.visibility = View.VISIBLE }
-    private fun hideOverlay() { overlay.visibility = View.GONE }
+    private fun showOverlay(msg: String) {
+        overlayText.text = msg
+        overlay.visibility = View.VISIBLE
+    }
+
+    private fun hideOverlay() {
+        overlay.visibility = View.GONE
+        failStreak = 0
+    }
 
     private fun loadPlayer(server: String) {
+        val base = normalizeServerUrl(server)
+        if (base == null) {
+            // 地址不合法：直接给可自救的提示，而不是让 WebView 抛错后显示无信息黑屏
+            showOverlay("服务器地址不合法\n请点下方按钮重新配置\n（例：http://192.168.1.10:7788）")
+            return
+        }
+        // 顺手把规范化结果回写，后续重试/上报都用干净地址
+        prefs.edit().putString(KEY_SERVER, base).apply()
         val code = prefs.getString(KEY_CODE, "") ?: ""
         val url = buildString {
-            append(server.trimEnd('/'))
+            append(base)
             append("/player/?mode=term")
             if (code.isNotBlank()) append("&code=").append(code)
         }
@@ -447,11 +572,13 @@ class MainActivity : AppCompatActivity() {
     private fun handleIntent(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "lumasync" && data.host == "config") {
-            val server = data.getQueryParameter("server")
+            // v1.3.15：深链同样走规范化，`lumasync://config?server=192.168.2.97:7788` 也能生效
+            val server = normalizeServerUrl(data.getQueryParameter("server"))
             val code = data.getQueryParameter("code")
-            if (!server.isNullOrBlank()) {
+            if (server != null) {
                 prefs.edit().putString(KEY_SERVER, server).apply()
                 if (!code.isNullOrBlank()) prefs.edit().putString(KEY_CODE, code).apply()
+                failStreak = 0
                 loadPlayer(server)
             }
         }
@@ -551,7 +678,10 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(60, 40, 60, 10)
         }
-        val input = EditText(ctx).apply { hint = getString(R.string.server_hint); text?.append(prefs.getString(KEY_SERVER, "")) }
+        val input = EditText(ctx).apply {
+            hint = getString(R.string.server_hint)
+            text?.append(prefs.getString(KEY_SERVER, ""))
+        }
         val codeInput = EditText(ctx).apply { hint = "终端预置编码（可选，如 LS-0001）" }
         layout.addView(input); layout.addView(codeInput)
 
@@ -559,13 +689,22 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.config_title)
             .setView(layout)
             .setPositiveButton(R.string.save) { _, _ ->
-                val s = input.text.toString().trim()
-                if (s.isNotBlank()) {
-                    prefs.edit().putString(KEY_SERVER, s).apply()
-                    val c = codeInput.text.toString().trim()
-                    if (c.isNotBlank()) prefs.edit().putString(KEY_CODE, c).apply()
-                    loadPlayer(s)
+                // v1.3.15：必须规范化后再落盘。
+                // 旧实现原样存 `192.168.2.97:7788`（无 http://）→ WebView 把 IP 当协议名 → 永久黑屏。
+                val normalized = normalizeServerUrl(input.text.toString())
+                if (normalized == null) {
+                    android.widget.Toast.makeText(
+                        ctx, "地址无效，请按 http://IP:端口 格式填写", android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    // 弹回配置框，保证用户有机会改正，而不是静默失败
+                    uiHandler.post { showConfigDialog() }
+                    return@setPositiveButton
                 }
+                prefs.edit().putString(KEY_SERVER, normalized).apply()
+                val c = codeInput.text.toString().trim()
+                if (c.isNotBlank()) prefs.edit().putString(KEY_CODE, c).apply()
+                failStreak = 0
+                loadPlayer(normalized)
             }
             .setNegativeButton(R.string.cancel, null)
             .setCancelable(false)
@@ -698,6 +837,22 @@ class MainActivity : AppCompatActivity() {
         retryRunnable?.let { uiHandler.removeCallbacks(it) }
         webView.destroy()
         super.onDestroy()
+    }
+
+    /**
+     * 硬按键救援入口（v1.3.15）。
+     *
+     * 背景：v1.3.11 的 MainActivity 完全没有按键/触摸处理，配置框一旦被关掉（地址已落盘）
+     * 就再也打不开 → 嵌墙设备彻底锁死。这里补一条"纯键盘也能进配置"的通路：
+     * MENU / SETTINGS 键（多数 USB 键盘、红外遥控都有）直接弹配置框。
+     * 鼠标/触屏路径见 setupOverlay() 的救援按钮与 dispatchTouchEvent() 的右键。
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
+            showConfigDialog()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     /** 返回键：调试期允许退出，避免嵌墙设备被锁死（正式部署可重新开启 kiosk 拦截） */
