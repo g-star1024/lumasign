@@ -678,7 +678,9 @@ class Player {
 
   async refreshTerm() {
     try {
-      const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`);
+      // 未注册先注册：terminalId 无效时拉清单必然 401（曾以 terminalId=null 的字面串打到服务端）
+      if (!this.terminalId) await this.ensureTerminal();
+      const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(this.terminalId || '')}&token=${encodeURIComponent(this.token || '')}`);
       if (r.ok) {
         const man = await r.json();
         this.lastManifest = man;
@@ -703,6 +705,11 @@ class Player {
         this.startPolling(); this.startCommands(); this.startHeartbeat();
       }
     }
+    // 网络三件套自愈：注册成功而 SSE/心跳尚未建立时（延迟注册场景）在此补齐
+    if (this.terminalId) {
+      if (!this.es) this.startCommands();
+      if (!this.hbTimer) this.startHeartbeat();
+    }
   }
 
   _loadCachedManifest() {
@@ -718,10 +725,11 @@ class Player {
   /* ---------------- 终端能力：注册 / 心跳 / 指令 ---------------- */
   async ensureTerminal() {
     if (this.terminalId) return;
+    ping('reg-start');
     let serial = localStorage.getItem('luma_term_serial');
     if (!serial) {
       serial = (crypto.randomUUID ? crypto.randomUUID() : 'web-' + Math.random().toString(36).slice(2));
-      localStorage.setItem('luma_term_serial', serial);
+      try { localStorage.setItem('luma_term_serial', serial); } catch { /* 隐私模式等，忽略 */ }
     }
     const W = this.layout?.width || window.screen.width || 1920;
     const H = this.layout?.height || window.screen.height || 1080;
@@ -731,7 +739,8 @@ class Player {
     // 安卓原生端：用桥上报真实硬件信息（mac/serial 作为幂等键，重装不重复）
     if (native('getHardwareInfo')) {
       try {
-        const r = window.LumaBridge.getHardwareInfo();
+        // raceBridge：4.4 桥调用绝不能卡死注册流程（Promise 微任务不可靠）
+        const r = raceBridge(window.LumaBridge.getHardwareInfo());
         const raw = (r && typeof r.then === 'function') ? await r : r;
         const hw = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (hw) {
@@ -749,12 +758,14 @@ class Player {
       } catch {}
     }
     try {
+      ping('reg-fetch');
       const r = await fetch('/api/t/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify(body),
       });
-      if (r.ok) { const d = await r.json(); this.terminalId = d.terminalId; this.token = d.token; }
-    } catch {}
+      if (r.ok) { const d = await r.json(); this.terminalId = sanId(d.terminalId); this.token = sanId(d.token); }
+      ping('reg-done-ok=' + (r.ok ? '1' : r.status));
+    } catch { ping('reg-done-err'); }
   }
 
   /** 上报播放证明事件（P0-4）：item 开始/结束各记一次 */
@@ -793,7 +804,8 @@ class Player {
         };
         if (native('getNativeStatus')) {
           try {
-            const st = window.LumaBridge.getNativeStatus();
+            // raceBridge：4.4 上桥 await 卡死会冻结整个心跳循环（fetch 永不到达）
+            const st = raceBridge(window.LumaBridge.getNativeStatus());
             const raw = (st && typeof st.then === 'function') ? await st : st;
             const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
             if (info) {
@@ -903,14 +915,30 @@ class Player {
 }
 
 /* ---------------- 启动 ---------------- */
+// 诊断信标：用 Image 发 GET（零依赖、不依赖 fetch/polyfill），服务端 access 日志记录 URL，
+// 用于 4.4 真机定位"bootstrap 卡在哪一步"——每个 stage 都会出现在 access-debug.jsonl
+function ping(stage) {
+  try { new Image().src = '/api/t/ping?stage=' + encodeURIComponent(stage) + '&t=' + Date.now(); } catch { /* ignore */ }
+}
+// terminalId/token 净化：URL 参数或桥返回的 "null"/"undefined"/空串一律视为无效
+function sanId(v) { return (v && v !== 'null' && v !== 'undefined') ? String(v) : null; }
+// 桥调用竞速保护：4.4 Chromium33 的 Promise 微任务实现不可靠，await 可能永不恢复——
+// 任何可能返回 Promise 的桥调用都加 2s 超时，卡死也绝不能阻塞后续代码
+function raceBridge(p) {
+  return Promise.race([Promise.resolve(p), new Promise(r => setTimeout(() => r(null), 2000))]);
+}
+
 async function bootstrap() {
+  ping('boot-start');
   const q = new URLSearchParams(location.search);
   let mode = q.get('mode') || (q.get('terminalId') ? 'term' : 'preview');
-  const terminalId = q.get('terminalId');
-  const token = q.get('token');
+  const terminalId = sanId(q.get('terminalId'));
+  const token = sanId(q.get('token'));
   const layoutId = q.get('layoutId');
   const inline = q.get('data');
   const player = new Player();
+  if (mode === 'term') { player.terminalId = terminalId; player.token = token; }
+  ping('boot-bridge-probed');
 
   // 网络恢复钩子：原生端 ConnectivityManager 监听到重连后调用，重开指令流(SSE)+刷新清单
   window.__onNetworkChange = (online) => {
@@ -955,8 +983,17 @@ async function bootstrap() {
 
   // 2) 终端模式
   if (mode === 'term') {
+    ping('term-branch');
     if (terminalId) { player.terminalId = terminalId; player.token = token; }
     else { await player.ensureTerminal(); }
+    ping('term-id=' + (player.terminalId ? 'ok' : 'null'));
+    // 10 秒兜底自愈：若注册仍未成功（桥/网络怪异状态），强制再试并上报
+    setTimeout(() => {
+      if (mode === 'term' && !player.terminalId) {
+        ping('stuck-10s-retry');
+        player.ensureTerminal();
+      }
+    }, 10000);
     let man = null;
     try {
       const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`);

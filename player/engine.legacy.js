@@ -3014,43 +3014,55 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 case 0:
                                     _state.trys.push([
                                         0,
-                                        4,
+                                        6,
                                         ,
-                                        5
+                                        7
                                     ]);
+                                    if (!!this.terminalId) return [
+                                        3,
+                                        2
+                                    ];
                                     return [
                                         4,
-                                        fetch("/api/t/manifest?terminalId=".concat(encodeURIComponent(this.terminalId), "&token=").concat(encodeURIComponent(this.token || "")))
+                                        this.ensureTerminal()
                                     ];
                                 case 1:
+                                    _state.sent();
+                                    _state.label = 2;
+                                case 2:
+                                    return [
+                                        4,
+                                        fetch("/api/t/manifest?terminalId=".concat(encodeURIComponent(this.terminalId || ""), "&token=").concat(encodeURIComponent(this.token || "")))
+                                    ];
+                                case 3:
                                     r = _state.sent();
                                     if (!r.ok) return [
                                         3,
-                                        3
+                                        5
                                     ];
                                     return [
                                         4,
                                         r.json()
                                     ];
-                                case 2:
+                                case 4:
                                     man2 = _state.sent();
                                     this.lastManifest = man2;
                                     try {
                                         localStorage.setItem("luma_manifest", JSON.stringify(man2));
                                     } catch (unused) {}
-                                    _state.label = 3;
-                                case 3:
+                                    _state.label = 5;
+                                case 5:
                                     return [
                                         3,
-                                        5
+                                        7
                                     ];
-                                case 4:
+                                case 6:
                                     e = _state.sent();
                                     return [
                                         3,
-                                        5
+                                        7
                                     ];
-                                case 5:
+                                case 7:
                                     man = this.lastManifest || this._loadCachedManifest();
                                     if (!man) return [
                                         2
@@ -3071,6 +3083,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             this.startCommands();
                                             this.startHeartbeat();
                                         }
+                                    }
+                                    if (this.terminalId) {
+                                        if (!this.es) this.startCommands();
+                                        if (!this.hbTimer) this.startHeartbeat();
                                     }
                                     return [
                                         2
@@ -3103,10 +3119,13 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     if (this.terminalId) return [
                                         2
                                     ];
+                                    ping("reg-start");
                                     serial = localStorage.getItem("luma_term_serial");
                                     if (!serial) {
                                         serial = crypto.randomUUID ? crypto.randomUUID() : "web-" + Math.random().toString(36).slice(2);
-                                        localStorage.setItem("luma_term_serial", serial);
+                                        try {
+                                            localStorage.setItem("luma_term_serial", serial);
+                                        } catch (unused) {}
                                     }
                                     W = ((_this_layout = this.layout) === null || _this_layout === void 0 ? void 0 : _this_layout.width) || window.screen.width || 1920;
                                     H = ((_this_layout1 = this.layout) === null || _this_layout1 === void 0 ? void 0 : _this_layout1.height) || window.screen.height || 1080;
@@ -3130,7 +3149,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         ,
                                         6
                                     ]);
-                                    r = window.LumaBridge.getHardwareInfo();
+                                    r = raceBridge(window.LumaBridge.getHardwareInfo());
                                     if (!(r && typeof r.then === "function")) return [
                                         3,
                                         3
@@ -3185,6 +3204,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         ,
                                         11
                                     ]);
+                                    ping("reg-fetch");
                                     return [
                                         4,
                                         fetch("/api/t/register", {
@@ -3208,16 +3228,18 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     ];
                                 case 8:
                                     d = _state.sent();
-                                    this.terminalId = d.terminalId;
-                                    this.token = d.token;
+                                    this.terminalId = sanId(d.terminalId);
+                                    this.token = sanId(d.token);
                                     _state.label = 9;
                                 case 9:
+                                    ping("reg-done-ok=" + (r1.ok ? "1" : r1.status));
                                     return [
                                         3,
                                         11
                                     ];
                                 case 10:
                                     unused1 = _state.sent();
+                                    ping("reg-done-err");
                                     return [
                                         3,
                                         11
@@ -3304,7 +3326,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             ,
                                             7
                                         ]);
-                                        st = window.LumaBridge.getNativeStatus();
+                                        st = raceBridge(window.LumaBridge.getNativeStatus());
                                         if (!(st && typeof st.then === "function")) return [
                                             3,
                                             4
@@ -3842,19 +3864,43 @@ function _unsupported_iterable_to_array(o, minLen) {
         ]);
         return Player;
     }();
+    function ping(stage) {
+        try {
+            new Image().src = "/api/t/ping?stage=" + encodeURIComponent(stage) + "&t=" + Date.now();
+        } catch (unused) {}
+    }
+    function sanId(v) {
+        return v && v !== "null" && v !== "undefined" ? String(v) : null;
+    }
+    function raceBridge(p) {
+        return Promise.race([
+            Promise.resolve(p),
+            new Promise(function(r) {
+                return setTimeout(function() {
+                    return r(null);
+                }, 2e3);
+            })
+        ]);
+    }
     function bootstrap() {
         return _async_to_generator(function() {
             var q, mode, terminalId, token, layoutId, inline, player, layout, man, r, unused, sch, r1, data, layout1;
             return _ts_generator(this, function(_state) {
                 switch(_state.label){
                     case 0:
+                        ping("boot-start");
                         q = new URLSearchParams(location.search);
                         mode = q.get("mode") || (q.get("terminalId") ? "term" : "preview");
-                        terminalId = q.get("terminalId");
-                        token = q.get("token");
+                        terminalId = sanId(q.get("terminalId"));
+                        token = sanId(q.get("token"));
                         layoutId = q.get("layoutId");
                         inline = q.get("data");
                         player = new Player();
+                        if (mode === "term") {
+                            player.terminalId = terminalId;
+                            player.token = token;
+                        }
+                        ping("boot-bridge-probed");
                         window.__onNetworkChange = function(online) {
                             if (!online) return;
                             try {
@@ -3923,6 +3969,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                             3,
                             10
                         ];
+                        ping("term-branch");
                         if (!terminalId) return [
                             3,
                             1
@@ -3942,6 +3989,13 @@ function _unsupported_iterable_to_array(o, minLen) {
                         _state.sent();
                         _state.label = 3;
                     case 3:
+                        ping("term-id=" + (player.terminalId ? "ok" : "null"));
+                        setTimeout(function() {
+                            if (mode === "term" && !player.terminalId) {
+                                ping("stuck-10s-retry");
+                                player.ensureTerminal();
+                            }
+                        }, 1e4);
                         man = null;
                         _state.label = 4;
                     case 4:
