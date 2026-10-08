@@ -24,28 +24,37 @@ const DEFAULT_TIMEOUT = 900;
 
 /* ---------------- 网络探测 ---------------- */
 
-/** TCP 端口探测：能连上即视为开放 */
+/**
+ * TCP 端口探测：能连上即视为开放。
+ * 注意：不依赖 socket 自身 timeout 事件（connect 阶段在部分平台不可靠，高并发下会死等），
+ * 一律用手动 setTimeout 守护兜底，保证 Promise 必然 settle。
+ */
 function tcpProbe(ip, port, timeout = DEFAULT_TIMEOUT) {
   return new Promise((resolve) => {
-    const sock = net.createConnection({ host: ip, port, timeout });
+    const sock = net.createConnection({ host: ip, port });
     let done = false;
-    const finish = (open) => { if (!done) { done = true; try { sock.destroy(); } catch {} resolve(open); } };
+    const finish = (open) => { if (!done) { done = true; clearTimeout(guard); try { sock.destroy(); } catch {} resolve(open); } };
+    const guard = setTimeout(() => finish(false), timeout + 50);
     sock.once('connect', () => finish(true));
     sock.once('timeout', () => finish(false));
     sock.once('error', () => finish(false));
   });
 }
 
-/** 轻量 HTTP banner 抓取：取标题 / Server 头，用于指纹识别 */
+/** 轻量 HTTP banner 抓取：取标题 / Server 头，用于指纹识别（同样带 setTimeout 兜底） */
 function httpBanner(ip, port, timeout = DEFAULT_TIMEOUT) {
   return new Promise((resolve) => {
-    const req = http.get({ host: ip, port, path: '/', timeout, headers: { 'User-Agent': 'LumaSign-Fleet/1.0' } }, (res) => {
+    let settled = false;
+    const finish = (v) => { if (!settled) { settled = true; clearTimeout(guard); try { req.destroy(); } catch {} resolve(v); } };
+    const req = http.get({ host: ip, port, path: '/', headers: { 'User-Agent': 'LumaSign-Fleet/1.0' } }, (res) => {
       let buf = '';
       res.on('data', (c) => { buf += c.toString(); if (buf.length > 4000) req.destroy(); });
-      res.on('end', () => resolve({ ok: true, status: res.statusCode, server: res.headers['server'] || '', title: extractTitle(buf) }));
+      res.on('end', () => finish({ ok: true, status: res.statusCode, server: res.headers['server'] || '', title: extractTitle(buf) }));
+      res.on('error', () => finish({ ok: false }));
     });
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false }); });
-    req.on('error', () => resolve({ ok: false }));
+    const guard = setTimeout(() => finish({ ok: false }), timeout + 100);
+    req.on('timeout', () => finish({ ok: false }));
+    req.on('error', () => finish({ ok: false }));
   });
 }
 
@@ -59,17 +68,27 @@ function extractTitle(html = '') {
 
 /* ---------------- 目标展开 ---------------- */
 
-/** 支持：显式 IP 列表、或 CIDR 末段区间（如 192.168.1.1-254） */
+/**
+ * 支持：显式 IP 列表、或子网前三段 + 末段区间（如 192.168.2 / 1-254）。
+ * 容错写法：192.168.2 / 192.168.2.0 / 192.168.2.1 / 192.168.2.0/24 / 192.168.2.
+ * 一律取前 3 段数字作为子网基址——旧版对 "192.168.2.1" 会生成 "192.168.2.1.x" 非法目标，
+ * 导致整轮扫描静默全空（现场踩坑：设备开通页怎么扫都扫不到）。
+ */
 export function expandTargets({ targets = [], subnet, start, end } = {}) {
   const out = new Set();
+  const ipRe = /^\d{1,3}(\.\d{1,3}){3}$/;
   for (const t of targets) {
-    if (typeof t === 'string') out.add(t.trim());
-    else if (t && t.ip) out.add(String(t.ip).trim());
+    const s = typeof t === 'string' ? t.trim() : (t && t.ip ? String(t.ip).trim() : '');
+    if (ipRe.test(s)) out.add(s);
   }
   if (subnet) {
-    const base = subnet.replace(/\.?0*$/, '').replace(/\.$/, '');
-    const s = start ?? 1, e = end ?? 254;
-    for (let i = s; i <= e; i++) out.add(`${base}.${i}`);
+    const m = String(subnet).trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})/);
+    if (m) {
+      const base = `${m[1]}.${m[2]}.${m[3]}`;
+      const s = Math.max(1, Math.min(254, start ?? 1));
+      const e = Math.max(s, Math.min(254, end ?? 254));
+      for (let i = s; i <= e; i++) out.add(`${base}.${i}`);
+    }
   }
   return [...out].filter(Boolean);
 }
@@ -100,13 +119,31 @@ function fingerprint(openPorts, bannerByPort = {}) {
  * @param spec { targets?: string[], subnet?, start?, end? }
  * @returns Promise<Array<{ip, alive, openPorts, banner, fingerprint, registered}>>
  */
-export async function scanTargets(spec = {}, { ports = [5555, 80, 8088, 8080, 8000, 7788, 22, 5000, 8888, 19211], timeout = DEFAULT_TIMEOUT, store } = {}) {
+/**
+ * 扫描一组目标（并发池版）。
+ * 旧版为串行 for 循环：254 台 × 900ms 超时 ≈ 4 分钟，前端只有转圈，必被误认为"扫不到"。
+ * 现在 64 并发：单端口探测仍并行于每个 IP 内部，全段 /24 约 8~15 秒扫完。
+ * @param spec { targets?: string[], subnet?, start?, end? }
+ * @returns Promise<Array<{ip, alive, openPorts, banner, fingerprint, registered}>>
+ */
+export async function scanTargets(spec = {}, { ports = [5555, 80, 8088, 8080, 8000, 7788, 22, 5000, 8888, 19211], timeout = DEFAULT_TIMEOUT, store, concurrency = 64 } = {}) {
   const ips = expandTargets(spec);
-  const results = [];
-  for (const ip of ips) {
+  const results = new Array(ips.length);
+
+  // 已注册且在线的终端 IP 集合（一次性建索引，避免每 IP 全表扫描）
+  const registeredIps = new Set();
+  if (store) {
+    try {
+      for (const t of store.col('terminals').all()) {
+        if (t.lastIp && (t.online || t.status === 'online')) registeredIps.add(t.lastIp);
+      }
+    } catch {}
+  }
+
+  const probeIp = async (ip) => {
     const probePort = (p) => tcpProbe(ip, p, timeout);
     const openPorts = (await Promise.all(ports.map(async (p) => (await probePort(p)) ? p : null)))
-      .filter(Boolean);
+      .filter(Boolean).sort((a, b) => a - b);
     const alive = openPorts.length > 0;
     const bannerByPort = {};
     for (const p of [80, 8080, 8000, 7788]) {
@@ -116,19 +153,29 @@ export async function scanTargets(spec = {}, { ports = [5555, 80, 8088, 8080, 80
       }
     }
     const fp = fingerprint(openPorts, bannerByPort);
-    let registered = false;
-    if (store) {
-      registered = !!(store.col('terminals').all().find(t => t.lastIp === ip && (t.online || t.status === 'online')));
-    }
-    results.push({
+    const registered = registeredIps.has(ip);
+    return {
       ip, alive, openPorts,
       banner: bannerByPort['80'] || bannerByPort['8080'] || bannerByPort['8000'] || bannerByPort['7788'] || null,
       fingerprint: fp,
       registered,
       method: pickMethod(fp, registered),
-    });
-  }
-  return results;
+    };
+  };
+
+  let cursor = 0;
+  const runners = new Array(Math.max(1, Math.min(concurrency, ips.length))).fill(0).map(async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= ips.length) return;
+      try { results[i] = await probeIp(ips[i]); }
+      catch {
+        results[i] = { ip: ips[i], alive: false, openPorts: [], banner: null, fingerprint: [], registered: false, method: 'manual' };
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results.filter(Boolean);
 }
 
 /** 根据指纹推断可开通方式 */

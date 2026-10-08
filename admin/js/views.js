@@ -1975,9 +1975,15 @@ async function renderFleet() {
       placeholder: '逐行填写设备 IP，例如：' + '\n' + '192.168.1.21' + '\n' + '192.168.1.22',
       style: { width: '100%', fontFamily: 'ui-monospace, monospace', resize: 'vertical' },
     });
-    const subnet = el('input', { class: 'input', placeholder: '或填子网 192.168.1', style: { width: '160px' } });
+    const subnet = el('input', { class: 'input', placeholder: '子网前三段，如 192.168.2', style: { width: '180px' } });
     const start = el('input', { class: 'input', placeholder: '起', style: { width: '64px' } });
     const end = el('input', { class: 'input', placeholder: '止', style: { width: '64px' } });
+
+    // 自动填充推荐子网（服务端按本机网卡推导），避免手输格式错误导致整轮扫描静默落空
+    try {
+      const nd = await api.get('/api/admin/scan/networks');
+      if (nd?.ok && nd.recommended && !subnet.value.trim()) subnet.value = nd.recommended;
+    } catch {}
 
     const resultsEl = el('div', {});
     const status = el('div', { class: 'sub', style: { marginBottom: '10px' } });
@@ -1991,7 +1997,7 @@ async function renderFleet() {
         body.end = parseInt(end.value || '254', 10);
       }
       if (!body.targets.length && !body.subnet) return toast('请填写 IP 或子网', 'err');
-      resultsEl.replaceChildren(el('div', { class: 'empty' }, el('span', { class: 'spin' }), ' 扫描中...'));
+      resultsEl.replaceChildren(el('div', { class: 'empty' }, el('span', { class: 'spin' }), ' 扫描中...全段约 10~60 秒，请留在本页等待结果'));
       try {
         const d = await api.post('/api/admin/fleet/scan', body);
         renderResults(d.items || []);
