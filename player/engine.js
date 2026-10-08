@@ -672,6 +672,7 @@ class Player {
   }
 
   startPolling() {
+    if (this.pollTimer) return;   // 防重入：欢迎页与播放态都要有轮询，切换时不重复建
     this.pollTimer = setInterval(() => this.refreshTerm(), 30000);
   }
 
@@ -697,6 +698,9 @@ class Player {
         this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
       } else {
         this.showWelcome();
+        // showWelcome() 内部 stop() 会清掉网络通道 —— 终端模式必须立即重启，
+        // 否则欢迎页 = 零心跳零轮询，管理端永远显示离线（死锁）
+        this.startPolling(); this.startCommands(); this.startHeartbeat();
       }
     }
   }
@@ -776,6 +780,7 @@ class Player {
   }
 
   startHeartbeat() {
+    if (this.hbTimer) return;     // 防重入
     const iv = 15;
     this._hbLatency = null;
     this.hbTimer = setInterval(async () => {
@@ -967,6 +972,9 @@ async function bootstrap() {
       player.load(sch.layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
     } else {
       player.showWelcome();
+      // 无排期也必须常开心跳/轮询/SSE：欢迎页终端必须对管理端可见、可下发指令，
+      // 否则"没排期的终端永远离线、永远收不到排期通知"——死锁
+      player.startPolling(); player.startCommands(); player.startHeartbeat();
     }
     return;
   }

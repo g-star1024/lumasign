@@ -820,6 +820,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         hideSystemUI()
         webView.onResume()
+        // 4.4 Chromium33：仅 onResume() 可能不恢复 JS 定时器，必须全局 resumeTimers()
+        webView.resumeTimers()
         // 5.0+ Device Owner Kiosk：静默默认 Home + 锁定任务（4.4 自动跳过；仅尝试一次）
         if (!kioskAttempted) {
             kioskAttempted = true
@@ -828,6 +830,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        webView.pauseTimers()
         webView.onPause()
         super.onPause()
     }

@@ -2998,6 +2998,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "startPolling",
                 value: function startPolling() {
                     var _this = this;
+                    if (this.pollTimer) return;
                     this.pollTimer = setInterval(function() {
                         return _this.refreshTerm();
                     }, 3e4);
@@ -3066,6 +3067,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             });
                                         } else {
                                             this.showWelcome();
+                                            this.startPolling();
+                                            this.startCommands();
+                                            this.startHeartbeat();
                                         }
                                     }
                                     return [
@@ -3262,6 +3266,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "startHeartbeat",
                 value: function startHeartbeat() {
                     var _this = this;
+                    if (this.hbTimer) return;
                     var iv = 15;
                     this._hbLatency = null;
                     this.hbTimer = setInterval(function() {
@@ -4004,6 +4009,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                             });
                         } else {
                             player.showWelcome();
+                            player.startPolling();
+                            player.startCommands();
+                            player.startHeartbeat();
                         }
                         return [
                             2
