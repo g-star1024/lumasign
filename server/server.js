@@ -312,6 +312,20 @@ async function init(opts = {}) {
     } finally {
       const dt = Date.now() - t0;
       if (dt > 1000) logger.system({ event: 'slow_request', ms: dt, url: req.url });
+      // 终端访问诊断日志（player 静态 / 终端 API）：排查老 WebView 是否真的来拉取页面与脚本
+      if (/^\/(player|api\/t)/.test(req.url || '')) {
+        try {
+          const line = JSON.stringify({
+            ts: Date.now(),
+            ip: (req.socket && req.socket.remoteAddress) || '',
+            method: req.method,
+            url: (req.url || '').slice(0, 120),
+            status: res.statusCode,
+            ua: String(req.headers['user-agent'] || '').slice(0, 90),
+          });
+          fs.appendFileSync(path.join(DATA, 'logs', 'access-debug.jsonl'), line + '\n');
+        } catch { /* ignore */ }
+      }
     }
   });
 
