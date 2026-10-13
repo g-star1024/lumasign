@@ -133,7 +133,10 @@ class MainActivity : AppCompatActivity() {
                     textSize = 18f
                     gravity = Gravity.CENTER
                 }
-                try { (findViewById<ViewGroup>(R.id.root)).addView(bootStatusView) } catch (_: Exception) {}
+                // 优先挂到布局根；若 setContentView 尚未执行则挂到窗口 decor，确保绝不静默黑屏
+                val root = try { findViewById<ViewGroup>(R.id.root) } catch (_: Exception) { null }
+                val parent = root ?: (window.decorView as? ViewGroup)
+                try { parent?.addView(bootStatusView) } catch (_: Exception) {}
             }
             bootStatusView?.text = "灵屏 LumaSign 启动中…\n\n$step"
         }
@@ -144,9 +147,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 必须先 setContentView，R.id.root 才存在，否则启动/崩溃覆盖层挂不上 → 静默黑屏
+        setContentView(R.layout.activity_main)
         showBootStatus("① 初始化界面布局")
         try {
-            setContentView(R.layout.activity_main)
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             // 开机/重启后自动点亮屏幕并越过锁屏（kiosk 无人值守关键）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -901,11 +905,22 @@ class MainActivity : AppCompatActivity() {
         exitDialog = AlertDialog.Builder(this).apply {
             setTitle("退出到桌面")
             setMessage("确认退出灵屏播放端并返回系统桌面？")
-            setPositiveButton("确认退出") { _, _ ->
-                try { moveTaskToBack(true) } catch (_: Exception) { finish() }
-            }
+            setPositiveButton("确认退出") { _, _ -> doExit() }
             setNegativeButton("取消", null)
             setCancelable(true)
         }.create().also { it.show() }
+    }
+
+    /** 彻底退出：先停 Kiosk 守护（否则它会把你拉回），再释放 lockTask，最后结束并杀进程 */
+    private fun doExit() {
+        try { stopService(Intent(this, KioskGuardService::class.java)) } catch (_: Exception) { }
+        // finishAndRemoveTask / stopLockTask 是 API 21+，4.4 上必须用 SDK 守卫包住，否则 NoSuchMethodError 崩
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try { stopLockTask() } catch (_: Exception) { }
+            try { finishAndRemoveTask() } catch (_: Exception) { finish() }
+        } else {
+            try { finish() } catch (_: Exception) { }
+        }
+        try { android.os.Process.killProcess(android.os.Process.myPid()) } catch (_: Exception) { }
     }
 }
