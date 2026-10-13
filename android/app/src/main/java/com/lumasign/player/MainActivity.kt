@@ -87,6 +87,8 @@ class MainActivity : AppCompatActivity() {
         const val DEFAULT_PORT = 7788
         /** 连续加载失败达到该次数 → 判定"地址存错了"，清空并重新零配置发现（约 4×15s ≈ 60s） */
         const val FAIL_STREAK_LIMIT = 4
+        /** 手动退出后的静默期：30s 内不拉起，到点由 Alarm 重新拉起电子屏 */
+        const val EXIT_GRACE_MS = 30_000L
         @JvmField var crashCount: Int = 0
     }
 
@@ -914,6 +916,21 @@ class MainActivity : AppCompatActivity() {
     /** 彻底退出：先停 Kiosk 守护（否则它会把你拉回），再释放 lockTask，最后结束并杀进程 */
     private fun doExit() {
         try { stopService(Intent(this, KioskGuardService::class.java)) } catch (_: Exception) { }
+        // 30s 静默期：给运维留出退出后的操作时间（装包/改设置），到点由系统 Alarm 重新拉起
+        // 电子屏。Alarm 挂在系统侧，进程被杀不影响触发；若期间用户手动打开应用，Alarm 到点
+        // 只是复用现有任务置前，无副作用。onCreate → startKioskGuard 会顺带恢复前台守护。
+        try {
+            val am = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val relaunch = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val imm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) android.app.PendingIntent.FLAG_IMMUTABLE else 0
+            val pi = android.app.PendingIntent.getActivity(this, 2001, relaunch,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or imm)
+            am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + EXIT_GRACE_MS, pi)
+            android.util.Log.i("LumaSign", "exit: relaunch alarm scheduled in ${EXIT_GRACE_MS / 1000}s")
+        } catch (e: Exception) {
+            android.util.Log.w("LumaSign", "exit alarm failed (non-fatal): ${e.message}")
+        }
         // finishAndRemoveTask / stopLockTask 是 API 21+，4.4 上必须用 SDK 守卫包住，否则 NoSuchMethodError 崩
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try { stopLockTask() } catch (_: Exception) { }

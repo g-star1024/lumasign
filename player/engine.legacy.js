@@ -2736,12 +2736,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                     var idx = 0;
                     var tick = function tick() {
                         return _async_to_generator(function() {
-                            var _this, _loop, _ret;
+                            var _this, _loop, _this1, showing, _ret;
                             return _ts_generator(this, function(_state) {
                                 switch(_state.label){
                                     case 0:
                                         _loop = function() {
-                                            var items, item, holder, ended, onEnd, stop, single, ms, startedAt, endedAt;
+                                            var items, item, warm, holder, ended, onEnd, stop, prev, single, ms, startedAt, endedAt;
                                             return _ts_generator(this, function(_state) {
                                                 switch(_state.label){
                                                     case 0:
@@ -2751,6 +2751,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             2
                                                         ];
                                                         region._el.innerHTML = "";
+                                                        showing = null;
                                                         return [
                                                             4,
                                                             _this.wait(3e4, function() {
@@ -2765,6 +2766,16 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         ];
                                                     case 2:
                                                         item = items[idx % items.length];
+                                                        try {
+                                                            warm = function warm(it) {
+                                                                if (it && it.mediaId && (!it.widget || it.widget === "image")) {
+                                                                    var im = new Image();
+                                                                    im.src = _this1.resolver(it.mediaId);
+                                                                }
+                                                            };
+                                                            warm(item);
+                                                            warm(items[(idx + 1) % items.length]);
+                                                        } catch (e) {}
                                                         holder = document.createElement("div");
                                                         holder.className = "widget-holder";
                                                         region._el.appendChild(holder);
@@ -2781,6 +2792,19 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         requestAnimationFrame(function() {
                                                             return holder.classList.add("show");
                                                         });
+                                                        prev = showing;
+                                                        showing = {
+                                                            holder: holder,
+                                                            stop: stop
+                                                        };
+                                                        setTimeout(function() {
+                                                            if (prev) {
+                                                                try {
+                                                                    prev.stop();
+                                                                } catch (e) {}
+                                                                if (prev.holder.parentNode) prev.holder.remove();
+                                                            }
+                                                        }, region.transition === "none" ? 30 : 550);
                                                         single = items.length === 1;
                                                         ms = void 0;
                                                         if (item.widget === "video" && !(item.duration > 0)) ms = -1;
@@ -2809,6 +2833,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             startedAt: startedAt,
                                                             endedAt: endedAt
                                                         });
+                                                        if (!(!loop && idx >= items.length - 1)) return [
+                                                            3,
+                                                            5
+                                                        ];
                                                         holder.classList.remove("show");
                                                         holder.classList.add("hide");
                                                         return [
@@ -2821,12 +2849,14 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         _state.sent();
                                                         try {
                                                             stop();
-                                                        } catch (unused) {}
-                                                        holder.remove();
-                                                        if (!loop && idx >= items.length - 1) return [
+                                                        } catch (e2) {}
+                                                        if (holder.parentNode) holder.remove();
+                                                        showing = null;
+                                                        return [
                                                             2,
                                                             "break"
                                                         ];
+                                                    case 5:
                                                         idx = (idx + 1) % Math.max(1, items.length);
                                                         return [
                                                             2
@@ -2834,6 +2864,8 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                 }
                                             });
                                         };
+                                        _this1 = this;
+                                        showing = null;
                                         _state.label = 1;
                                     case 1:
                                         if (!!ctl.aborted) return [
@@ -3845,6 +3877,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                         layoutId = q.get("layoutId");
                         inline = q.get("data");
                         player = new Player();
+                        window.__lumaPlayer = player;
                         if (mode === "term") {
                             player.terminalId = terminalId;
                             player.token = token;

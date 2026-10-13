@@ -649,14 +649,23 @@ class Player {
     let idx = 0;
 
     const tick = async () => {
+      let showing = null;   // 当前展示层 { holder, stop }（下一层淡入完成前垫底，杜绝黑屏间隙）
       while (!ctl.aborted) {
         const items = live();
         if (!items) {                       // 本区所有内容都过期了：留空等待，不播过期内容
           region._el.innerHTML = '';
+          showing = null;
           await this.wait(30000, () => false, ctl);
           continue;
         }
         const item = items[idx % items.length];
+        // 图片解码预热：4.4 上大图 decode 100~300ms，切换时才开始加载必然露黑一瞬。
+        // 当前张 + 下一张都提前热身（利用展示时间做解码缓冲）。
+        try {
+          const warm = it => { if (it && it.mediaId && (!it.widget || it.widget === 'image')) { const im = new Image(); im.src = this.resolver(it.mediaId); } };
+          warm(item); warm(items[(idx + 1) % items.length]);
+        } catch (e) { /* 预热失败不影响播放 */ }
+
         const holder = document.createElement('div');
         holder.className = 'widget-holder';
         region._el.appendChild(holder);
@@ -668,6 +677,14 @@ class Player {
         catch (e) { console.error('widget render error', e); }
 
         requestAnimationFrame(() => holder.classList.add('show'));
+
+        // ★ 交叉淡入淡出：新层盖在旧层之上淡入，完成后才移除旧层 —— 切换全程无黑屏。
+        //   旧实现先淡出旧层（450ms 露出黑色舞台背景）再淡入新层，图片切换必闪一下黑。
+        const prev = showing;
+        showing = { holder, stop };
+        setTimeout(() => {
+          if (prev) { try { prev.stop(); } catch (e) { /* ignore */ } if (prev.holder.parentNode) prev.holder.remove(); }
+        }, (region.transition === 'none') ? 30 : 550);
 
         const single = items.length === 1;
         let ms;
@@ -684,14 +701,16 @@ class Player {
         const endedAt = Date.now();
         this.reportPlay({ itemId: item.id, mediaId: item.mediaId || null, startedAt, endedAt });
 
-        holder.classList.remove('show');
-        holder.classList.add('hide');
-        await this.wait((region.transition === 'none') ? 0 : 450, () => true, ctl);
-
-        try { stop(); } catch {}
-        holder.remove();
-
-        if (!loop && idx >= items.length - 1) break;
+        if (!loop && idx >= items.length - 1) {
+          // 不循环的最后一项：淡出后收尾（循环播放的切换由下一轮交叉淡入接管，不做淡出）
+          holder.classList.remove('show');
+          holder.classList.add('hide');
+          await this.wait((region.transition === 'none') ? 0 : 450, () => true, ctl);
+          try { stop(); } catch (e2) { /* ignore */ }
+          if (holder.parentNode) holder.remove();
+          showing = null;
+          break;
+        }
         idx = (idx + 1) % Math.max(1, items.length);
       }
     };
@@ -983,6 +1002,7 @@ async function bootstrap() {
   const layoutId = q.get('layoutId');
   const inline = q.get('data');
   const player = new Player();
+  window.__lumaPlayer = player;   // 调试/远程诊断句柄：CDP 可直接调 showWelcome()/refreshTerm() 验证链路
   if (mode === 'term') { player.terminalId = terminalId; player.token = token; }
   ping('boot-bridge-probed');
 
