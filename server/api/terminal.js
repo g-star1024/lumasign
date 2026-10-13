@@ -232,10 +232,13 @@ export function registerTerminalApi(router, ctx) {
   });
 
   /* ---------------- 素材下载（Range + 限速 + 校验） ---------------- */
+  // 兼容三种取法：内容 hash（清单 assets.url）/ hash + 扩展名 / mediaId（播放端 resolver 用 m_xxx 拉图，
+  // 旧实现只按 hash 查导致终端渲染图片时全部 404 → 屏幕提示「图片缺失」）
   router.get('/api/t/media/:hash', async (req, res, { hash }, url) => {
     const t = authTerminal(req, url);
     if (!t) return fail(res, '终端未注册或令牌无效', 401);
-    const m = S('media').findOne(x => x.hash === hash || x.hash === hash.replace(/\.[^.]+$/, ''));
+    const bare = hash.replace(/\.[^.]+$/, '');
+    const m = S('media').findOne(x => x.hash === hash || x.hash === bare || x.id === hash || x.id === bare);
     if (!m) return fail(res, '素材不存在', 404);
 
     // 计划传输窗口限制
