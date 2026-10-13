@@ -213,12 +213,10 @@ class MainActivity : AppCompatActivity() {
 
     /** 启动 Kiosk 抢占守护服务：前台探测 + 应急悬浮窗（非致命） */
     private fun startKioskGuard() {
-        // Android 4.4 上 getRunningTasks 探测不可靠，应急悬浮窗会误遮成黑屏且无法退出，
-        // 调试期先在 4.4 跳过；5.0+ 或设为 Device Owner 后再启用系统级 Kiosk。
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            android.util.Log.i("LumaSign", "KioskGuard 在 Android 4.4 跳过（探测不可靠，避免误遮挡锁死）")
-            return
-        }
+        // 4.4（rk312x 主力）上 getRunningTasks 全局可见 → 满血探测，被抢占/最小化/退出后
+        // 2 秒内自动拉回（否则屏幕黑着没人管）。历史顾虑「误遮挡锁死」已消除：
+        // 检测可靠时前台是自己就隐藏悬浮层；且「退出到桌面」会先停本服务再杀进程，
+        // doExit 不会被守护拉回。5.0+ 无使用情况授权时服务自身退化为不抢占，安全。
         try {
             val intent = Intent(this, KioskGuardService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -862,7 +860,8 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
-    /** 返回键：调试期允许退出，避免嵌墙设备被锁死（正式部署可重新开启 kiosk 拦截） */
+    /** 返回键：仅最小化（moveTaskToBack），Kiosk 守护会在 2 秒内自动拉回；
+     *  真正退出走「长按 2 秒 / 右键 → 退出到桌面」（先停守护再杀进程，不会被拉回） */
     override fun onBackPressed() {
         try { moveTaskToBack(true) } catch (_: Exception) { finish() }
     }
@@ -872,7 +871,8 @@ class MainActivity : AppCompatActivity() {
     // 触发方式：① 触屏长按 2 秒（静止不动）  ② 鼠标右键 / 映射的 menu 键
     // 行为：弹出二次确认框 → 确认后退回系统桌面（moveTaskToBack）
     // 设计要点：长按中一旦手指移动（滑动/滚动）即取消，避免误触；
-    //          覆盖层之上仍可见；4.4 上 kiosk 守卫已跳过，退出必然生效。
+    //          覆盖层之上仍可见；退出走 doExit（先停 kiosk 守护再杀进程），退出必然生效，
+    //          而返回键/最小化只是 moveTaskToBack，2 秒内会被守护拉回（v1.3.21 起 4.4 也启用守护）。
     // ─────────────────────────────────────────────────────────────
     private val exitHandler = Handler(Looper.getMainLooper())
     private val exitLongPress = Runnable { showExitConfirm() }

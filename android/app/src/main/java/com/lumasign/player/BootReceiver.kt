@@ -23,18 +23,17 @@ class BootReceiver : BroadcastReceiver() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(i)
-            // Kiosk 抢占守护仅在 5.0+ 启动：4.4 上 getRunningTasks 探测不可靠，
-            // 误遮成黑屏且会回拉已"退出"的播放端；与 MainActivity.startKioskGuard 的 4.4 跳过保持一致
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                try {
-                    val g = Intent(context, KioskGuardService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(g)
-                    } else {
-                        context.startService(g)
-                    }
-                } catch (_: Exception) { }
-            }
+            // Kiosk 抢占守护全版本启动：4.4 上 getRunningTasks 全局可见 → 满血探测；
+            // 5.0+ 无「使用情况访问」授权时服务自身退化为不抢占（detectForeground 返回 null）。
+            // 与 MainActivity.startKioskGuard 行为一致（v1.3.21 起 4.4 也启用守护）。
+            try {
+                val g = Intent(context, KioskGuardService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(g)
+                } else {
+                    context.startService(g)
+                }
+            } catch (_: Exception) { }
         }
     }
 }
