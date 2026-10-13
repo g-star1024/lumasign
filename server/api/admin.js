@@ -308,9 +308,9 @@ export function registerAdminApi(router, ctx) {
     if (!type) return fail(res, '缺少指令类型');
     if (!terminalIds.length) return fail(res, '请至少选择一台终端');
 
-    const ALLOW = ['reboot', 'restart_app', 'volume', 'screenshot', 'sync_time', 'clear_cache',
-      'power_schedule', 'refresh_manifest', 'pull_info', 'screen_on', 'screen_off',
-      'set_brightness', 'insert_message', 'stop_insert', 'play_now', 'upgrade_apk'];
+    const ALLOW = ['reboot', 'restart_app', 'restart', 'volume', 'screenshot', 'sync_time', 'clear_cache',
+      'power_schedule', 'refresh_manifest', 'reload', 'pull_info', 'screen_on', 'screen_off',
+      'set_brightness', 'insert_message', 'stop_insert', 'play_now', 'show', 'upgrade_apk'];
     if (!ALLOW.includes(type)) {
       const hints = { reload: '请使用「刷新内容」代替（重新拉取节目单与素材）', restart: '请使用「重启」代替（重启播放端 App）', shutdown: '关机指令需要通过「定时开关机」配置下发' };
       return fail(res, hints[type] || `不支持的指令：${type}`);

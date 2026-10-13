@@ -17,17 +17,38 @@ const app = document.getElementById('app');
 const fallback = document.getElementById('fallback');
 const welcome = document.getElementById('welcome');
 
-const showFallback = msg => { fallback.innerHTML = `<div class="big">灵屏 LumaSign</div><div>${msg}</div>`; fallback.classList.remove('hidden'); };
-const hideFallback = () => fallback.classList.add('hidden');
+const showFallback = msg => { try { fallback.innerHTML = `<div class="big">灵屏 LumaSign</div><div>${msg}</div>`; fallback.classList.remove('hidden'); } catch (e) { /* DOM 缺失也不许炸 */ } };
+const hideFallback = () => { try { fallback.classList.add('hidden'); } catch (e) {} };
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ★ 播放页 HTML 版本戳：必须与 index.html 的 ?v= 同步递增（改 index.html 时一起改这里）。
+//   4.4 WebView 会把旧 index.html 永久钉死在缓存里（无验证器跳过重验），引擎文件却因
+//   mtime 变化总能更新 —— 引擎一旦比 HTML 新，用 sessionStorage 戳检测并强制换新 URL，
+//   穿透死缓存。URL 带 _v 参数则不再跳（双保险防循环）。
+const HTML_V = '1443';
+
+// ★ Chromium 33（Android 4.4 WebView）兼容层 —— 以下方法在 33 上不存在，全项目禁用：
+//   padStart/padEnd(ES2017)、Array.includes(ES2016)、startsWith/endsWith/find/findIndex/
+//   Object.assign(ES6)、ParentNode.append/replaceWith(Chrome54)。
+//   一律改用本文件垫片：pad2 / objAssign / appendAll。（10-08 黑屏元凶就是 padStart）
+const pad2 = n => (n < 10 ? '0' + n : '' + n);
+const objAssign = (t, s) => { if (s) { for (const k in s) { if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k]; } } return t; };
+const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] != null) p.appendChild(ns[i]); } return p; };
+const el = (tag, opts, kids) => {
+  const d = document.createElement(tag);
+  if (opts) { for (const k in opts) { if (!Object.prototype.hasOwnProperty.call(opts, k)) continue;
+    if (k === 'text') d.textContent = opts[k]; else if (k === 'class') d.className = opts[k]; else d.setAttribute(k, opts[k]); } }
+  if (kids) { for (let i = 0; i < kids.length; i++) { if (kids[i] != null) d.appendChild(kids[i]); } }
+  return d;
+};
 
 // 原生桥探测：安卓 APK 注入 window.LumaBridge 暴露硬件/系统能力
 const native = name => !!(window.LumaBridge && typeof window.LumaBridge[name] === 'function');
 
 /* ---------------- 排期命中判定（与服务端 schedule.hits 语义一致） ---------------- */
-const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const toMin = hhmm => { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + (m || 0); };
 
 /** 有效期本地兜底：断网时终端靠清单里的绝对时间戳自己下线过期内容 */
@@ -49,7 +70,7 @@ function hits(sch, when = new Date()) {
     if (from && dk < from) return false;
     if (to && dk > to) return false;
   }
-  if (Array.isArray(sch.weekdays) && sch.weekdays.length && !sch.weekdays.includes(when.getDay())) return false;
+  if (Array.isArray(sch.weekdays) && sch.weekdays.length && sch.weekdays.indexOf(when.getDay()) === -1) return false;
   const slots = sch.timeSlots;
   if (Array.isArray(slots) && slots.length) {
     const cur = when.getHours() * 60 + when.getMinutes();
@@ -94,7 +115,8 @@ class Player {
 
   stop() {
     this.ctl.aborted = true;
-    for (const c of this.regionCtls) c.aborted = true;
+    const rcs = this.regionCtls || [];
+    for (let i = 0; i < rcs.length; i++) rcs[i].aborted = true;
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
     if (this.es) { try { this.es.close(); } catch {} this.es = null; }
@@ -129,7 +151,8 @@ class Player {
 
   /** opts.resolver: (mediaId)=>url; opts.fromNav=true 表示来自导航栈跳转（不清空栈） */
   async load(layout, opts = {}) {
-    this.stop();
+    ping('load-begin');
+    try { this.stop(); } catch (e) { ping('stop-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90)); }
     this.ctl = { aborted: false };
     this.layout = layout;
     this.resolver = opts.resolver || (id => id);
@@ -138,9 +161,12 @@ class Player {
     this._dsIds = [];
     if (!opts.fromNav) { this.navStack = []; this.cancelNavTimer(); }
     hideFallback();
+    ping('build-stage');
     this.buildStage(layout);
+    ping('stage-built');
     this.startRegions(layout);
-    this.primeDataSources().catch(() => {}).finally(() => this.startDataSourcePolling());
+    ping('regions-ok');
+    this.primeDataSources().catch(() => {}).then(() => this.startDataSourcePolling());  // 33 无 Promise.finally
     if (this._keepEditMode) this.setEditMode(true);
     if (this.mode === 'term') { this.startPolling(); this.startCommands(); this.startHeartbeat(); }
   }
@@ -160,11 +186,16 @@ class Player {
   }
 
   async primeDataSources() {
-    const ids = new Set();
-    for (const r of (this.layout?.regions || [])) {
-      for (const it of (r.items || [])) if (it.dataSourceId) ids.add(it.dataSourceId);
+    const ids = [];
+    const preg = (this.layout && this.layout.regions) || [];
+    for (let pi = 0; pi < preg.length; pi++) {
+      const pitems = preg[pi].items || [];
+      for (let pj = 0; pj < pitems.length; pj++) {
+        const pit = pitems[pj];
+        if (pit.dataSourceId && ids.indexOf(pit.dataSourceId) === -1) ids.push(pit.dataSourceId);
+      }
     }
-    this._dsIds = [...ids];
+    this._dsIds = ids;
     if (!this._dsIds.length) return;
     await Promise.all(this._dsIds.map(async id => { this.dsCache[id] = await this.fetchDataSourceData(id); }));
   }
@@ -173,9 +204,10 @@ class Player {
     if (this._dsTimer || !this._dsIds.length) return;
     this._dsTimer = setInterval(async () => {
       if (!this._dsIds.length || this.ctl?.aborted) return;
-      for (const id of this._dsIds) {
-        const data = await this.fetchDataSourceData(id);
-        if (data !== null) this.dsCache[id] = data;
+      const dsi = this._dsIds || [];
+      for (let i = 0; i < dsi.length; i++) {
+        const data = await this.fetchDataSourceData(dsi[i]);
+        if (data !== null) this.dsCache[dsi[i]] = data;
       }
     }, 30000);
     this._dsTimer.unref?.();
@@ -190,7 +222,7 @@ class Player {
     const bg = layout.background || {};
     if (bg.mediaId) {
       const url = this.resolver(bg.mediaId);
-      const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || (bg.mime && bg.mime.startsWith('video'));
+      const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || (bg.mime && String(bg.mime).indexOf('video') === 0);
       if (isVideo) {
         const v = document.createElement('video');
         v.src = url; v.autoplay = true; v.loop = true; v.muted = true; v.playsInline = true;
@@ -207,7 +239,9 @@ class Player {
     app.appendChild(stage);
     this.stage = stage;
 
-    for (const r of (layout.regions || [])) {
+    const regions = (layout && layout.regions) || [];
+    for (let ri = 0; ri < regions.length; ri++) {
+      const r = regions[ri];
       const el = document.createElement('div');
       el.className = 'region';
       el.dataset.transition = r.transition || 'fade';
@@ -236,8 +270,11 @@ class Player {
   }
 
   startRegions(layout) {
-    for (const r of (layout.regions || [])) {
-      for (const it of (r.items || [])) it._getData = (id) => this.dsCache[id];
+    const regs = (layout && layout.regions) || [];
+    for (let ri = 0; ri < regs.length; ri++) {
+      const r = regs[ri];
+      const its = r.items || [];
+      for (let ii = 0; ii < its.length; ii++) its[ii]._getData = (id) => this.dsCache[id];
       if (r._el) this.runRegion(r);
     }
   }
@@ -315,7 +352,8 @@ class Player {
     layer.style.pointerEvents = interactive ? 'auto' : 'none';
     layer.classList.toggle('editing', this.editMode);
     const list = (this.layout && this.layout.hotspots) || [];
-    for (const hs of list) {
+    for (let hi = 0; hi < list.length; hi++) {
+      const hs = list[hi];
       const el = document.createElement('div');
       el.className = 'hotspot' + (hs.shape === 'circle' ? ' circle' : '');
       el.dataset.id = hs.id;
@@ -409,7 +447,7 @@ class Player {
     backBtn.textContent = '← 返回';
     backBtn.onclick = () => this.goBack();
 
-    bar.append(backBtn, el('div', { class: 'hs-nav-crumbs' }, ...crumbs));
+    appendAll(bar, [backBtn, el('div', { class: 'hs-nav-crumbs' }, crumbs)]);
     document.body.appendChild(bar);
     this.navBar = bar;
 
@@ -424,9 +462,9 @@ class Player {
     this.renderHotspots(); this.onHotspotChange();
   }
   updateHotspot(id, patch) {
-    const hs = (this.layout.hotspots || []).find(x => x.id === id);
+    const hs = (this.layout.hotspots || []).filter(x => x.id === id)[0];
     if (!hs) return;
-    Object.assign(hs, patch);
+    objAssign(hs, patch);
     this.renderHotspots(); this.onHotspotChange();
   }
   removeHotspot(id) {
@@ -512,8 +550,8 @@ class Player {
     if (!q || !q.length) return;
     this._iaQueue = [];
     const hdr = { 'Content-Type': 'application/json', 'x-terminal-id': this.terminalId || '' };
-    for (const ev of q) {
-      try { await fetch('/api/interaction', { method: 'POST', headers: hdr, body: JSON.stringify(ev) }); }
+    for (let qi = 0; qi < q.length; qi++) {
+      try { await fetch('/api/interaction', { method: 'POST', headers: hdr, body: JSON.stringify(q[qi]) }); }
       catch (e) { /* 离线或失败：丢弃该条，不影响播放 */ }
     }
   }
@@ -692,12 +730,16 @@ class Player {
     const man = this.lastManifest || this._loadCachedManifest();
     if (!man) return;
     const sch = pickActiveSchedule(man);
+    ping('sched-n=' + ((man.schedules || []).length) + ' hit=' + (sch ? sch.scheduleId : 'null') + ' cur=' + this.currentScheduleId);
     const id = sch ? sch.scheduleId : null;
     if (id !== this.currentScheduleId) {
       this.currentScheduleId = id;
       if (sch) {
-        this.hideWelcome();
-        this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
+        try {
+          this.hideWelcome();
+          await this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
+          ping('load-ok');
+        } catch (e) { ping('load-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90)); }
       } else {
         this.showWelcome();
         // showWelcome() 内部 stop() 会清掉网络通道 —— 终端模式必须立即重启，
@@ -745,7 +787,7 @@ class Player {
         const hw = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (hw) {
           this._hwInfo = hw;
-          Object.assign(body, {
+          objAssign(body, {
             mac: hw.mac || '', serial: hw.serial || serial, model: hw.model || 'Android',
             androidVersion: hw.androidVersion || '', resolution: hw.resolution || `${W}x${H}`,
             orientation: hw.orientation || 'landscape', firmware: hw.firmware || '',
@@ -843,7 +885,11 @@ class Player {
       let cmd; try { cmd = JSON.parse(ev.data); } catch { return; }
       this.handleCommand(cmd);
     });
-    es.onerror = () => {};
+    es.onerror = () => {
+      // 33 的 EventSource 放弃重连后必须自愈：5s 后人工重开（若已有更新连接则让位）
+      try { es.close(); } catch (e2) { /* ignore */ }
+      setTimeout(() => { if (this.terminalId && this.es === es) this.startCommands(); }, 5000);
+    };
   }
 
   async handleCommand(cmd) {
@@ -894,7 +940,7 @@ class Player {
       const c = cv.getContext('2d');
       c.fillStyle = getComputedStyle(this.stage).backgroundColor || '#000';
       c.fillRect(0, 0, W, H);
-      const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8));
+      const blob = (typeof cv.toBlob === 'function') ? await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.8)) : null;
       if (blob) await this.uploadBlob(blob);
     } catch { /* 截屏失败时静默 */ }
   }
@@ -984,34 +1030,66 @@ async function bootstrap() {
   // 2) 终端模式
   if (mode === 'term') {
     ping('term-branch');
-    if (terminalId) { player.terminalId = terminalId; player.token = token; }
-    else { await player.ensureTerminal(); }
-    ping('term-id=' + (player.terminalId ? 'ok' : 'null'));
-    // 10 秒兜底自愈：若注册仍未成功（桥/网络怪异状态），强制再试并上报
-    setTimeout(() => {
-      if (mode === 'term' && !player.terminalId) {
-        ping('stuck-10s-retry');
-        player.ensureTerminal();
-      }
-    }, 10000);
-    let man = null;
     try {
-      const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`);
-      if (r.ok) { man = await r.json(); try { localStorage.setItem('luma_manifest', JSON.stringify(man)); } catch { /* ignore */ } }
-    } catch { /* 开机时服务端未就绪，退回缓存清单继续播 */ }
-    if (!man) { try { man = JSON.parse(localStorage.getItem('luma_manifest') || 'null'); } catch { man = null; } }
-    if (!man) { showFallback('终端清单获取失败，请检查终端ID/令牌'); return; }
-    player.lastManifest = man;
-    const sch = pickActiveSchedule(man);
-    player.currentScheduleId = sch ? sch.scheduleId : null;
-    if (sch) {
-      player.hideWelcome();
-      player.load(sch.layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
-    } else {
-      player.showWelcome();
-      // 无排期也必须常开心跳/轮询/SSE：欢迎页终端必须对管理端可见、可下发指令，
-      // 否则"没排期的终端永远离线、永远收不到排期通知"——死锁
+      if (terminalId) { player.terminalId = terminalId; player.token = token; }
+      else { await player.ensureTerminal(); }
+      ping('term-id=' + (player.terminalId ? 'ok' : 'null'));
+
+      // ★ 铁律：定时器先行 —— 渲染链任何一环炸掉，终端也必须保持在线、可被管理端远程触达。
+      //   （17:16 事故：排期命中分支先渲染后启动定时器，load 之前一炸终端即"植物机"：
+      //   无心跳/无轮询/无 SSE，任何指令都送不进去，只能断电重启）
       player.startPolling(); player.startCommands(); player.startHeartbeat();
+      ping('timers-started');
+
+      // ★ HTML 自升级：sessionStorage 戳与引擎 HTML_V 不匹配 → 说明 HTML 可能是旧缓存，
+      //   强制以带 _v 的新 URL 重导航穿透（服务端 302 会保留 _v 并追加新 cb 桶）。
+      let sv = null; try { sv = sessionStorage.getItem('luma_html_v'); } catch (e) {}
+      if (sv !== HTML_V && location.search.indexOf('_v=') === -1) {
+        try { sessionStorage.setItem('luma_html_v', HTML_V); } catch (e) {}
+        ping('html-upgrade-' + HTML_V);
+        location.replace('/player/?mode=term&_v=' + HTML_V);
+        return;
+      }
+
+      // 10 秒兜底自愈：若注册仍未成功（桥/网络怪异状态），强制再试并上报
+      setTimeout(() => {
+        if (mode === 'term' && !player.terminalId) {
+          ping('stuck-10s-retry');
+          player.ensureTerminal();
+        }
+      }, 10000);
+      let man = null;
+      try {
+        const r = await fetch(`/api/t/manifest?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`);
+        if (r.ok) { man = await r.json(); try { localStorage.setItem('luma_manifest', JSON.stringify(man)); } catch { /* ignore */ } }
+      } catch { /* 开机时服务端未就绪，退回缓存清单继续播 */ }
+      if (!man) { try { man = JSON.parse(localStorage.getItem('luma_manifest') || 'null'); } catch { man = null; } }
+      if (!man) { showFallback('终端清单获取失败，请检查终端ID/令牌'); return; }
+      ping('m1-ok');
+      player.lastManifest = man;
+      let sch = null;
+      try { sch = pickActiveSchedule(man); } catch (e) { ping('pick-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 80)); }
+      ping('sched=' + (sch ? sch.scheduleId : 'null'));
+      player.currentScheduleId = sch ? sch.scheduleId : null;
+      if (sch) {
+        try { player.hideWelcome(); } catch (e) { ping('hw-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 80)); }
+        try {
+          await player.load(sch.layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
+          ping('boot-load-ok');
+        } catch (e) {
+          ping('boot-load-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
+          showFallback('渲染异常：' + ((e && e.message) || e));
+        }
+      } else {
+        player.showWelcome();
+        // 无排期也必须常开心跳/轮询/SSE：欢迎页终端必须对管理端可见、可下发指令，
+        // 否则"没排期的终端永远离线、永远收不到排期通知"——死锁
+        player.startPolling(); player.startCommands(); player.startHeartbeat();
+      }
+    } catch (e) {
+      // ★ 最外层安全网：boot 链任何未预料异常都不得静默——上报信标 + 兜底提示
+      ping('boot-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
+      showFallback('启动异常：' + ((e && e.message) || e));
     }
     return;
   }

@@ -183,14 +183,14 @@ async function init(opts = {}) {
 
     if (st && st.isDirectory()) {
       const idx = safeJoin(baseDir, rp + '/index.html');
-      if (idx && fs.existsSync(idx)) return sendFile(req, res, idx, { cache: 'no-cache' });
+      if (idx && fs.existsSync(idx)) return sendFile(req, res, idx, { cache: 'no-store' });
       return fail(res, '目录无索引页', 404);
     }
-    if (st) return sendFile(req, res, fp, { cache: 'no-cache' });
+    if (st) return sendFile(req, res, fp, { cache: 'no-store' });
 
     // SPA 兜底：未知路径回退到 index.html
     const idx = path.join(baseDir, 'index.html');
-    if (fs.existsSync(idx)) return sendFile(req, res, idx, { cache: 'no-cache' });
+    if (fs.existsSync(idx)) return sendFile(req, res, idx, { cache: 'no-store' });
     return fail(res, 'Not Found', 404);
   }
 
@@ -299,6 +299,17 @@ async function init(opts = {}) {
         return serveStatic(req, res, ADMIN_DIR, rp);
       }
       if (pathname.startsWith('/player')) {
+        // 4.4 WebView（Chromium 33）对无验证器的 no-cache 条目会跳过验证直接吃缓存，
+        // 导致播放端页面/引擎更新无法到达终端。对策：根路由 302 到带 5 分钟时间桶的
+        // index.html —— URL（缓存 key）变化必然穿透；桶值每 5 分钟更换保证下次启动再穿透。
+        if (pathname === '/player' || pathname === '/player/') {
+          const bucket = Math.floor(Date.now() / 300000);
+          const q = new URLSearchParams(url.searchParams);
+          q.set('cb', String(bucket));
+          res.writeHead(302, { Location: '/player/index.html?' + q.toString() });
+          res.end();
+          return;
+        }
         const rp = pathname.slice('/player'.length) || '/';
         return serveStatic(req, res, PLAYER_DIR, rp);
       }

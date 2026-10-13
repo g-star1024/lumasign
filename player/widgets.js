@@ -11,6 +11,11 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
 ));
 
+// ★ Chromium 33 兼容垫片（与 engine.js 同款）：33 无 padStart/Object.assign/append/replaceWith
+const pad2 = n => (n < 10 ? '0' + n : '' + n);
+const objAssign = (t, s) => { if (s) { for (const k in s) { if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k]; } } return t; };
+const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] != null) p.appendChild(ns[i]); } return p; };
+
 /* ---------------- 图片 ---------------- */
 function renderImage(holder, item, resolver) {
   const img = document.createElement('img');
@@ -18,7 +23,7 @@ function renderImage(holder, item, resolver) {
   img.src = url;
   img.className = 'w-img ' + (item.fit || 'cover');
   img.alt = item.alt || '';
-  img.onerror = () => { img.replaceWith(Object.assign(document.createElement('div'), { className: 'w-img', textContent: '图片缺失' })); };
+  img.onerror = () => { const miss = objAssign(document.createElement('div'), { className: 'w-img', textContent: '图片缺失' }); if (img.parentNode) img.parentNode.replaceChild(miss, img); };
   holder.appendChild(img);
   return () => {};
 }
@@ -83,7 +88,7 @@ function renderClock(holder, item) {
   d.appendChild(timeEl); if (item.showDate) d.appendChild(dateEl);
   holder.appendChild(d);
 
-  const pad = n => String(n).padStart(2, '0');
+  const pad = n => pad2(n);
   const tick = () => {
     const now = new Date();
     if (item.format === 'analog') {
@@ -215,7 +220,7 @@ function renderDataNumber(holder, item) {
   const valEl = document.createElement('div'); valEl.className = 'num';
   const unitEl = document.createElement('div'); unitEl.className = 'unit';
   const labelEl = document.createElement('div'); labelEl.className = 'label';
-  wrap.append(valEl, unitEl, labelEl);
+  appendAll(wrap, [valEl, unitEl, labelEl]);
   holder.appendChild(wrap);
   const render = () => {
     const data = item._getData ? item._getData(item.dataSourceId) : null;
@@ -406,11 +411,11 @@ function renderForm(holder, item) {
       i.style.cssText = 'padding:12px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:18px;outline:none;';
       i.addEventListener('focus', () => { i.style.borderColor = '#2563EB'; });
       i.addEventListener('blur', () => { i.style.borderColor = 'rgba(255,255,255,.25)'; });
-      w.append(l, i); return { wrap: w, input: i };
+      appendAll(w, [l, i]); return { wrap: w, input: i };
     };
     const nameRow = row('姓名（选填）', '您的姓名');
     const phoneRow = row('联系电话', '手机号码');
-    d.append(nameRow.wrap, phoneRow.wrap);
+    appendAll(d, [nameRow.wrap, phoneRow.wrap]);
     getValue = () => ({ name: nameRow.input.value.trim(), phone: phoneRow.input.value.trim() });
     const btn = document.createElement('button');
     btn.textContent = '提交';

@@ -57,7 +57,13 @@ export function registerTerminalApi(router, ctx) {
     const kind = b.kind || (b.model === 'Browser' ? 'web' : 'device');
 
     if (t) {
-      S('terminals').update(t.id, { hardware, net, kind, appVersion: b.appVersion || t.appVersion, lastHeartbeat: Date.now() });
+      const patch = { hardware, net, kind, appVersion: b.appVersion || t.appVersion, lastHeartbeat: Date.now() };
+      // autoApproveTerminal 开启时，已存在但未批准的终端也应在重注册时自动准入。
+      // 否则「自动准入」只对新终端生效：历史遗留的未批准终端（如本次现场救援的
+      // t_13238c1fad57c675）会被 mac/serial 幂等键永久命中、approved 恒为 false，
+      // 清单门禁返回空 schedules → 设备连上也永远黑屏（2026-10-08 现场事故）。
+      if (settings().autoApproveTerminal && !t.approved) patch.approved = true;
+      S('terminals').update(t.id, patch);
     } else {
       // 终端授权上限拦截：0=无限制；>0 时达上限即拒绝新设备（已存在终端重连不受影响）
       const maxTerminals = settings().maxTerminals || 0;

@@ -942,7 +942,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
 }
 (function() {
-    // lumasign/player/widgets.js
+    // widgets.js
     var esc = function esc(s) {
         return String(s !== null && s !== void 0 ? s : "").replace(/[&<>"]/g, function(c) {
             return ({
@@ -953,6 +953,23 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
+    var pad2 = function pad2(n) {
+        return n < 10 ? "0" + n : "" + n;
+    };
+    var objAssign = function objAssign(t, s) {
+        if (s) {
+            for(var k in s){
+                if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k];
+            }
+        }
+        return t;
+    };
+    var appendAll = function appendAll(p, ns) {
+        for(var i = 0; i < ns.length; i++){
+            if (ns[i] != null) p.appendChild(ns[i]);
+        }
+        return p;
+    };
     function renderImage(holder, item, resolver) {
         var img = document.createElement("img");
         var url = item.mediaId ? resolver(item.mediaId) : item.url || "";
@@ -960,10 +977,11 @@ function _unsupported_iterable_to_array(o, minLen) {
         img.className = "w-img " + (item.fit || "cover");
         img.alt = item.alt || "";
         img.onerror = function() {
-            img.replaceWith(Object.assign(document.createElement("div"), {
+            var miss = objAssign(document.createElement("div"), {
                 className: "w-img",
                 textContent: "\u56FE\u7247\u7F3A\u5931"
-            }));
+            });
+            if (img.parentNode) img.parentNode.replaceChild(miss, img);
         };
         holder.appendChild(img);
         return function() {};
@@ -1031,7 +1049,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         if (item.showDate) d.appendChild(dateEl);
         holder.appendChild(d);
         var pad = function pad(n) {
-            return String(n).padStart(2, "0");
+            return pad2(n);
         };
         var tick = function tick() {
             var now = /* @__PURE__ */ new Date();
@@ -1169,7 +1187,11 @@ function _unsupported_iterable_to_array(o, minLen) {
         unitEl.className = "unit";
         var labelEl = document.createElement("div");
         labelEl.className = "label";
-        wrap.append(valEl, unitEl, labelEl);
+        appendAll(wrap, [
+            valEl,
+            unitEl,
+            labelEl
+        ]);
         holder.appendChild(wrap);
         var render = function render() {
             var data = item._getData ? item._getData(item.dataSourceId) : null;
@@ -1517,7 +1539,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                 i.addEventListener("blur", function() {
                     i.style.borderColor = "rgba(255,255,255,.25)";
                 });
-                w.append(l, i);
+                appendAll(w, [
+                    l,
+                    i
+                ]);
                 return {
                     wrap: w,
                     input: i
@@ -1525,7 +1550,10 @@ function _unsupported_iterable_to_array(o, minLen) {
             };
             var nameRow = row("\u59D3\u540D\uFF08\u9009\u586B\uFF09", "\u60A8\u7684\u59D3\u540D");
             var phoneRow = row("\u8054\u7CFB\u7535\u8BDD", "\u624B\u673A\u53F7\u7801");
-            d.append(nameRow.wrap, phoneRow.wrap);
+            appendAll(d, [
+                nameRow.wrap,
+                phoneRow.wrap
+            ]);
             getValue = function getValue() {
                 return {
                     name: nameRow.input.value.trim(),
@@ -1590,16 +1618,20 @@ function _unsupported_iterable_to_array(o, minLen) {
         var fn = RENDERERS[item.widget] || renderText;
         return fn(holder, item, resolver, onEnd) || function() {};
     }
-    // lumasign/player/engine.js
+    // engine.js
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");
     var showFallback = function showFallback(msg) {
-        fallback.innerHTML = '<div class="big">灵屏 LumaSign</div><div>'.concat(msg, "</div>");
-        fallback.classList.remove("hidden");
+        try {
+            fallback.innerHTML = '<div class="big">灵屏 LumaSign</div><div>'.concat(msg, "</div>");
+            fallback.classList.remove("hidden");
+        } catch (e) {}
     };
     var hideFallback = function hideFallback() {
-        return fallback.classList.add("hidden");
+        try {
+            fallback.classList.add("hidden");
+        } catch (e) {}
     };
     var escapeHtml = function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, function(c) {
@@ -1612,11 +1644,46 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
+    var HTML_V = "1443";
+    var pad22 = function pad22(n) {
+        return n < 10 ? "0" + n : "" + n;
+    };
+    var objAssign2 = function objAssign2(t, s) {
+        if (s) {
+            for(var k in s){
+                if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k];
+            }
+        }
+        return t;
+    };
+    var appendAll2 = function appendAll2(p, ns) {
+        for(var i = 0; i < ns.length; i++){
+            if (ns[i] != null) p.appendChild(ns[i]);
+        }
+        return p;
+    };
+    var el = function el(tag, opts, kids) {
+        var d = document.createElement(tag);
+        if (opts) {
+            for(var k in opts){
+                if (!Object.prototype.hasOwnProperty.call(opts, k)) continue;
+                if (k === "text") d.textContent = opts[k];
+                else if (k === "class") d.className = opts[k];
+                else d.setAttribute(k, opts[k]);
+            }
+        }
+        if (kids) {
+            for(var i = 0; i < kids.length; i++){
+                if (kids[i] != null) d.appendChild(kids[i]);
+            }
+        }
+        return d;
+    };
     var native = function native(name) {
         return !!(window.LumaBridge && typeof window.LumaBridge[name] === "function");
     };
     var ymd = function ymd(d) {
-        return "".concat(d.getFullYear(), "-").concat(String(d.getMonth() + 1).padStart(2, "0"), "-").concat(String(d.getDate()).padStart(2, "0"));
+        return "".concat(d.getFullYear(), "-").concat(pad22(d.getMonth() + 1), "-").concat(pad22(d.getDate()));
     };
     var toMin = function toMin(hhmm) {
         var _String_split_map = _sliced_to_array(String(hhmm).split(":").map(Number), 2), h = _String_split_map[0], m = _String_split_map[1];
@@ -1641,7 +1708,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             if (from && dk < from) return false;
             if (to && dk > to) return false;
         }
-        if (Array.isArray(sch.weekdays) && sch.weekdays.length && !sch.weekdays.includes(when.getDay())) return false;
+        if (Array.isArray(sch.weekdays) && sch.weekdays.length && sch.weekdays.indexOf(when.getDay()) === -1) return false;
         var slots = sch.timeSlots;
         if (Array.isArray(slots) && slots.length) {
             var cur = when.getHours() * 60 + when.getMinutes();
@@ -1697,26 +1764,8 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "stop",
                 value: function stop() {
                     this.ctl.aborted = true;
-                    var _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
-                    try {
-                        for(var _iterator = this.regionCtls[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
-                            var c = _step.value;
-                            c.aborted = true;
-                        }
-                    } catch (err) {
-                        _didIteratorError = true;
-                        _iteratorError = err;
-                    } finally{
-                        try {
-                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                _iterator.return();
-                            }
-                        } finally{
-                            if (_didIteratorError) {
-                                throw _iteratorError;
-                            }
-                        }
-                    }
+                    var rcs = this.regionCtls || [];
+                    for(var i = 0; i < rcs.length; i++)rcs[i].aborted = true;
                     if (this.pollTimer) {
                         clearInterval(this.pollTimer);
                         this.pollTimer = null;
@@ -1788,7 +1837,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                         return _ts_generator(this, function(_state) {
                             _this = this;
                             opts = _arguments.length > 1 && _arguments[1] !== void 0 ? _arguments[1] : {};
-                            this.stop();
+                            ping("load-begin");
+                            try {
+                                this.stop();
+                            } catch (e) {
+                                ping("stop-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                            }
                             this.ctl = {
                                 aborted: false
                             };
@@ -1804,9 +1858,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 this.cancelNavTimer();
                             }
                             hideFallback();
+                            ping("build-stage");
                             this.buildStage(layout);
+                            ping("stage-built");
                             this.startRegions(layout);
-                            this.primeDataSources().catch(function() {}).finally(function() {
+                            ping("regions-ok");
+                            this.primeDataSources().catch(function() {}).then(function() {
                                 return _this.startDataSourcePolling();
                             });
                             if (this._keepEditMode) this.setEditMode(true);
@@ -1884,52 +1941,21 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "primeDataSources",
                 value: function primeDataSources() {
                     return _async_to_generator(function() {
-                        var _this, _this_layout, ids, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, r, _iteratorNormalCompletion1, _didIteratorError1, _iteratorError1, _iterator1, _step1, it;
+                        var _this, ids, preg, pi, pitems, pj, pit;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
                                     _this = this;
-                                    ids = /* @__PURE__ */ new Set();
-                                    _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
-                                    try {
-                                        for(_iterator = (((_this_layout = this.layout) === null || _this_layout === void 0 ? void 0 : _this_layout.regions) || [])[Symbol.iterator](); !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
-                                            r = _step.value;
-                                            _iteratorNormalCompletion1 = true, _didIteratorError1 = false, _iteratorError1 = undefined;
-                                            try {
-                                                for(_iterator1 = (r.items || [])[Symbol.iterator](); !(_iteratorNormalCompletion1 = (_step1 = _iterator1.next()).done); _iteratorNormalCompletion1 = true){
-                                                    it = _step1.value;
-                                                    if (it.dataSourceId) ids.add(it.dataSourceId);
-                                                }
-                                            } catch (err) {
-                                                _didIteratorError1 = true;
-                                                _iteratorError1 = err;
-                                            } finally{
-                                                try {
-                                                    if (!_iteratorNormalCompletion1 && _iterator1.return != null) {
-                                                        _iterator1.return();
-                                                    }
-                                                } finally{
-                                                    if (_didIteratorError1) {
-                                                        throw _iteratorError1;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } catch (err) {
-                                        _didIteratorError = true;
-                                        _iteratorError = err;
-                                    } finally{
-                                        try {
-                                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                                _iterator.return();
-                                            }
-                                        } finally{
-                                            if (_didIteratorError) {
-                                                throw _iteratorError;
-                                            }
+                                    ids = [];
+                                    preg = this.layout && this.layout.regions || [];
+                                    for(pi = 0; pi < preg.length; pi++){
+                                        pitems = preg[pi].items || [];
+                                        for(pj = 0; pj < pitems.length; pj++){
+                                            pit = pitems[pj];
+                                            if (pit.dataSourceId && ids.indexOf(pit.dataSourceId) === -1) ids.push(pit.dataSourceId);
                                         }
                                     }
-                                    this._dsIds = _to_consumable_array(ids);
+                                    this._dsIds = ids;
                                     if (!this._dsIds.length) return [
                                         2
                                     ];
@@ -1974,71 +2000,36 @@ function _unsupported_iterable_to_array(o, minLen) {
                     if (this._dsTimer || !this._dsIds.length) return;
                     this._dsTimer = setInterval(function() {
                         return _async_to_generator(function() {
-                            var _this_ctl, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, id, data, err;
+                            var _this_ctl, dsi, i, data;
                             return _ts_generator(this, function(_state) {
                                 switch(_state.label){
                                     case 0:
                                         if (!this._dsIds.length || ((_this_ctl = this.ctl) === null || _this_ctl === void 0 ? void 0 : _this_ctl.aborted)) return [
                                             2
                                         ];
-                                        _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
+                                        dsi = this._dsIds || [];
+                                        i = 0;
                                         _state.label = 1;
                                     case 1:
-                                        _state.trys.push([
-                                            1,
-                                            6,
-                                            7,
-                                            8
-                                        ]);
-                                        _iterator = this._dsIds[Symbol.iterator]();
-                                        _state.label = 2;
-                                    case 2:
-                                        if (!!(_iteratorNormalCompletion = (_step = _iterator.next()).done)) return [
+                                        if (!(i < dsi.length)) return [
                                             3,
-                                            5
+                                            4
                                         ];
-                                        id = _step.value;
                                         return [
                                             4,
-                                            this.fetchDataSourceData(id)
+                                            this.fetchDataSourceData(dsi[i])
                                         ];
-                                    case 3:
+                                    case 2:
                                         data = _state.sent();
-                                        if (data !== null) this.dsCache[id] = data;
-                                        _state.label = 4;
+                                        if (data !== null) this.dsCache[dsi[i]] = data;
+                                        _state.label = 3;
+                                    case 3:
+                                        i++;
+                                        return [
+                                            3,
+                                            1
+                                        ];
                                     case 4:
-                                        _iteratorNormalCompletion = true;
-                                        return [
-                                            3,
-                                            2
-                                        ];
-                                    case 5:
-                                        return [
-                                            3,
-                                            8
-                                        ];
-                                    case 6:
-                                        err = _state.sent();
-                                        _didIteratorError = true;
-                                        _iteratorError = err;
-                                        return [
-                                            3,
-                                            8
-                                        ];
-                                    case 7:
-                                        try {
-                                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                                _iterator.return();
-                                            }
-                                        } finally{
-                                            if (_didIteratorError) {
-                                                throw _iteratorError;
-                                            }
-                                        }
-                                        return [
-                                            7
-                                        ];
-                                    case 8:
                                         return [
                                             2
                                         ];
@@ -2060,7 +2051,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                     var bg = layout.background || {};
                     if (bg.mediaId) {
                         var url = this.resolver(bg.mediaId);
-                        var isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || bg.mime && bg.mime.startsWith("video");
+                        var isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || bg.mime && String(bg.mime).indexOf("video") === 0;
                         if (isVideo) {
                             var v = document.createElement("video");
                             v.src = url;
@@ -2081,34 +2072,19 @@ function _unsupported_iterable_to_array(o, minLen) {
                     }
                     app.appendChild(stage);
                     this.stage = stage;
-                    var _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
-                    try {
-                        for(var _iterator = (layout.regions || [])[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
-                            var r = _step.value;
-                            var el2 = document.createElement("div");
-                            el2.className = "region";
-                            el2.dataset.transition = r.transition || "fade";
-                            el2.style.left = (r.x || 0) + "px";
-                            el2.style.top = (r.y || 0) + "px";
-                            el2.style.width = (r.w || 0) + "px";
-                            el2.style.height = (r.h || 0) + "px";
-                            el2.style.zIndex = r.z || 1;
-                            stage.appendChild(el2);
-                            r._el = el2;
-                        }
-                    } catch (err) {
-                        _didIteratorError = true;
-                        _iteratorError = err;
-                    } finally{
-                        try {
-                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                _iterator.return();
-                            }
-                        } finally{
-                            if (_didIteratorError) {
-                                throw _iteratorError;
-                            }
-                        }
+                    var regions = layout && layout.regions || [];
+                    for(var ri = 0; ri < regions.length; ri++){
+                        var r = regions[ri];
+                        var el2 = document.createElement("div");
+                        el2.className = "region";
+                        el2.dataset.transition = r.transition || "fade";
+                        el2.style.left = (r.x || 0) + "px";
+                        el2.style.top = (r.y || 0) + "px";
+                        el2.style.width = (r.w || 0) + "px";
+                        el2.style.height = (r.h || 0) + "px";
+                        el2.style.zIndex = r.z || 1;
+                        stage.appendChild(el2);
+                        r._el = el2;
                     }
                     this.hotspotsLayer = null;
                     this.renderHotspots();
@@ -2134,47 +2110,14 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "startRegions",
                 value: function startRegions(layout) {
                     var _this = this;
-                    var _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
-                    try {
-                        for(var _iterator = (layout.regions || [])[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
-                            var r = _step.value;
-                            var _iteratorNormalCompletion1 = true, _didIteratorError1 = false, _iteratorError1 = undefined;
-                            try {
-                                for(var _iterator1 = (r.items || [])[Symbol.iterator](), _step1; !(_iteratorNormalCompletion1 = (_step1 = _iterator1.next()).done); _iteratorNormalCompletion1 = true){
-                                    var it = _step1.value;
-                                    it._getData = function(id) {
-                                        return _this.dsCache[id];
-                                    };
-                                }
-                            } catch (err) {
-                                _didIteratorError1 = true;
-                                _iteratorError1 = err;
-                            } finally{
-                                try {
-                                    if (!_iteratorNormalCompletion1 && _iterator1.return != null) {
-                                        _iterator1.return();
-                                    }
-                                } finally{
-                                    if (_didIteratorError1) {
-                                        throw _iteratorError1;
-                                    }
-                                }
-                            }
-                            if (r._el) this.runRegion(r);
-                        }
-                    } catch (err) {
-                        _didIteratorError = true;
-                        _iteratorError = err;
-                    } finally{
-                        try {
-                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                _iterator.return();
-                            }
-                        } finally{
-                            if (_didIteratorError) {
-                                throw _iteratorError;
-                            }
-                        }
+                    var regs = layout && layout.regions || [];
+                    for(var ri = 0; ri < regs.length; ri++){
+                        var r = regs[ri];
+                        var its = r.items || [];
+                        for(var ii = 0; ii < its.length; ii++)its[ii]._getData = function(id) {
+                            return _this.dsCache[id];
+                        };
+                        if (r._el) this.runRegion(r);
                     }
                 }
             },
@@ -2282,7 +2225,35 @@ function _unsupported_iterable_to_array(o, minLen) {
             {
                 key: "renderHotspots",
                 value: function renderHotspots() {
-                    var _this = this;
+                    var _this, _loop = function(hi) {
+                        var hs = list[hi];
+                        var el2 = document.createElement("div");
+                        el2.className = "hotspot" + (hs.shape === "circle" ? " circle" : "");
+                        el2.dataset.id = hs.id;
+                        el2.style.left = hs.x + "px";
+                        el2.style.top = hs.y + "px";
+                        el2.style.width = hs.w + "px";
+                        el2.style.height = hs.h + "px";
+                        el2.style.pointerEvents = interactive ? "auto" : "none";
+                        if (_this.editMode) {
+                            el2.classList.add("editing");
+                            var lbl = document.createElement("span");
+                            lbl.className = "hs-label";
+                            lbl.textContent = hs.action && hs.action.label || hs.action && hs.action.type || "\u70ED\u533A";
+                            el2.appendChild(lbl);
+                            var handle = document.createElement("div");
+                            handle.className = "hs-handle";
+                            el2.appendChild(handle);
+                            _this._bindHotspotInteractions(el2, hs);
+                        } else if (_this.mode === "term") {
+                            el2.addEventListener("click", function(e) {
+                                e.stopPropagation();
+                                _this1.dispatchHotspot(hs);
+                            });
+                        }
+                        layer.appendChild(el2);
+                    };
+                    var _this1 = this;
                     if (!this.stage) return;
                     var layer = this.ensureHotspotLayer();
                     layer.innerHTML = "";
@@ -2290,51 +2261,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                     layer.style.pointerEvents = interactive ? "auto" : "none";
                     layer.classList.toggle("editing", this.editMode);
                     var list = this.layout && this.layout.hotspots || [];
-                    var _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
-                    try {
-                        var _this1, _loop = function() {
-                            var hs = _step.value;
-                            var el2 = document.createElement("div");
-                            el2.className = "hotspot" + (hs.shape === "circle" ? " circle" : "");
-                            el2.dataset.id = hs.id;
-                            el2.style.left = hs.x + "px";
-                            el2.style.top = hs.y + "px";
-                            el2.style.width = hs.w + "px";
-                            el2.style.height = hs.h + "px";
-                            el2.style.pointerEvents = interactive ? "auto" : "none";
-                            if (_this1.editMode) {
-                                el2.classList.add("editing");
-                                var lbl = document.createElement("span");
-                                lbl.className = "hs-label";
-                                lbl.textContent = hs.action && hs.action.label || hs.action && hs.action.type || "\u70ED\u533A";
-                                el2.appendChild(lbl);
-                                var handle = document.createElement("div");
-                                handle.className = "hs-handle";
-                                el2.appendChild(handle);
-                                _this1._bindHotspotInteractions(el2, hs);
-                            } else if (_this1.mode === "term") {
-                                el2.addEventListener("click", function(e) {
-                                    e.stopPropagation();
-                                    _this.dispatchHotspot(hs);
-                                });
-                            }
-                            layer.appendChild(el2);
-                        };
-                        for(var _iterator = list[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true)_this1 = this, _loop();
-                    } catch (err) {
-                        _didIteratorError = true;
-                        _iteratorError = err;
-                    } finally{
-                        try {
-                            if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                _iterator.return();
-                            }
-                        } finally{
-                            if (_didIteratorError) {
-                                throw _iteratorError;
-                            }
-                        }
-                    }
+                    for(var hi = 0; hi < list.length; hi++)_this = this, _loop(hi);
                 }
             },
             {
@@ -2435,12 +2362,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                     backBtn.onclick = function() {
                         return _this.goBack();
                     };
-                    bar.append(backBtn, el.apply(void 0, [
-                        "div",
-                        {
+                    appendAll2(bar, [
+                        backBtn,
+                        el("div", {
                             class: "hs-nav-crumbs"
-                        }
-                    ].concat(_to_consumable_array(crumbs))));
+                        }, crumbs)
+                    ]);
                     document.body.appendChild(bar);
                     this.navBar = bar;
                     var autoReturnSecs = (_this__pendingAutoReturn = this._pendingAutoReturn) !== null && _this__pendingAutoReturn !== void 0 ? _this__pendingAutoReturn : ((_this_layout = this.layout) === null || _this_layout === void 0 ? void 0 : _this_layout._autoReturnSeconds) || 0;
@@ -2459,11 +2386,11 @@ function _unsupported_iterable_to_array(o, minLen) {
             {
                 key: "updateHotspot",
                 value: function updateHotspot(id, patch) {
-                    var hs = (this.layout.hotspots || []).find(function(x) {
+                    var hs = (this.layout.hotspots || []).filter(function(x) {
                         return x.id === id;
-                    });
+                    })[0];
                     if (!hs) return;
-                    Object.assign(hs, patch);
+                    objAssign2(hs, patch);
                     this.renderHotspots();
                     this.onHotspotChange();
                 }
@@ -2626,7 +2553,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "_flushInteractions",
                 value: function _flushInteractions() {
                     return _async_to_generator(function() {
-                        var q, hdr, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, ev, e, err;
+                        var q, hdr, qi, e;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -2639,84 +2566,48 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         "Content-Type": "application/json",
                                         "x-terminal-id": this.terminalId || ""
                                     };
-                                    _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
+                                    qi = 0;
                                     _state.label = 1;
                                 case 1:
-                                    _state.trys.push([
-                                        1,
-                                        8,
-                                        9,
-                                        10
-                                    ]);
-                                    _iterator = q[Symbol.iterator]();
+                                    if (!(qi < q.length)) return [
+                                        3,
+                                        6
+                                    ];
                                     _state.label = 2;
                                 case 2:
-                                    if (!!(_iteratorNormalCompletion = (_step = _iterator.next()).done)) return [
-                                        3,
-                                        7
-                                    ];
-                                    ev = _step.value;
-                                    _state.label = 3;
-                                case 3:
                                     _state.trys.push([
-                                        3,
-                                        5,
+                                        2,
+                                        4,
                                         ,
-                                        6
+                                        5
                                     ]);
                                     return [
                                         4,
                                         fetch("/api/interaction", {
                                             method: "POST",
                                             headers: hdr,
-                                            body: JSON.stringify(ev)
+                                            body: JSON.stringify(q[qi])
                                         })
                                     ];
-                                case 4:
+                                case 3:
                                     _state.sent();
                                     return [
                                         3,
-                                        6
+                                        5
                                     ];
-                                case 5:
+                                case 4:
                                     e = _state.sent();
                                     return [
                                         3,
-                                        6
+                                        5
+                                    ];
+                                case 5:
+                                    qi++;
+                                    return [
+                                        3,
+                                        1
                                     ];
                                 case 6:
-                                    _iteratorNormalCompletion = true;
-                                    return [
-                                        3,
-                                        2
-                                    ];
-                                case 7:
-                                    return [
-                                        3,
-                                        10
-                                    ];
-                                case 8:
-                                    err = _state.sent();
-                                    _didIteratorError = true;
-                                    _iteratorError = err;
-                                    return [
-                                        3,
-                                        10
-                                    ];
-                                case 9:
-                                    try {
-                                        if (!_iteratorNormalCompletion && _iterator.return != null) {
-                                            _iterator.return();
-                                        }
-                                    } finally{
-                                        if (_didIteratorError) {
-                                            throw _iteratorError;
-                                        }
-                                    }
-                                    return [
-                                        7
-                                    ];
-                                case 10:
                                     return [
                                         2
                                     ];
@@ -3008,7 +2899,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "refreshTerm",
                 value: function refreshTerm() {
                     return _async_to_generator(function() {
-                        var r, man2, e, man, sch, id;
+                        var r, man2, e, man, sch, id, e1;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -3068,22 +2959,59 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         2
                                     ];
                                     sch = pickActiveSchedule(man);
+                                    ping("sched-n=" + (man.schedules || []).length + " hit=" + (sch ? sch.scheduleId : "null") + " cur=" + this.currentScheduleId);
                                     id = sch ? sch.scheduleId : null;
-                                    if (id !== this.currentScheduleId) {
-                                        this.currentScheduleId = id;
-                                        if (sch) {
-                                            this.hideWelcome();
-                                            this.load(sch.layout, {
-                                                resolver: this.resolver,
-                                                mode: "term"
-                                            });
-                                        } else {
-                                            this.showWelcome();
-                                            this.startPolling();
-                                            this.startCommands();
-                                            this.startHeartbeat();
-                                        }
-                                    }
+                                    if (!(id !== this.currentScheduleId)) return [
+                                        3,
+                                        13
+                                    ];
+                                    this.currentScheduleId = id;
+                                    if (!sch) return [
+                                        3,
+                                        12
+                                    ];
+                                    _state.label = 8;
+                                case 8:
+                                    _state.trys.push([
+                                        8,
+                                        10,
+                                        ,
+                                        11
+                                    ]);
+                                    this.hideWelcome();
+                                    return [
+                                        4,
+                                        this.load(sch.layout, {
+                                            resolver: this.resolver,
+                                            mode: "term"
+                                        })
+                                    ];
+                                case 9:
+                                    _state.sent();
+                                    ping("load-ok");
+                                    return [
+                                        3,
+                                        11
+                                    ];
+                                case 10:
+                                    e1 = _state.sent();
+                                    ping("load-err:" + encodeURIComponent(String(e1 && e1.message || e1)).slice(0, 90));
+                                    return [
+                                        3,
+                                        11
+                                    ];
+                                case 11:
+                                    return [
+                                        3,
+                                        13
+                                    ];
+                                case 12:
+                                    this.showWelcome();
+                                    this.startPolling();
+                                    this.startCommands();
+                                    this.startHeartbeat();
+                                    _state.label = 13;
+                                case 13:
                                     if (this.terminalId) {
                                         if (!this.es) this.startCommands();
                                         if (!this.hbTimer) this.startHeartbeat();
@@ -3172,7 +3100,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     hw = typeof raw === "string" ? JSON.parse(raw) : raw;
                                     if (hw) {
                                         this._hwInfo = hw;
-                                        Object.assign(body, {
+                                        objAssign2(body, {
                                             mac: hw.mac || "",
                                             serial: hw.serial || serial,
                                             model: hw.model || "Android",
@@ -3437,7 +3365,14 @@ function _unsupported_iterable_to_array(o, minLen) {
                         }
                         _this.handleCommand(cmd);
                     });
-                    es.onerror = function() {};
+                    es.onerror = function() {
+                        try {
+                            es.close();
+                        } catch (e2) {}
+                        setTimeout(function() {
+                            if (_this.terminalId && _this.es === es) _this.startCommands();
+                        }, 5e3);
+                    };
                 }
             },
             {
@@ -3695,7 +3630,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "captureAndSend",
                 value: function captureAndSend() {
                     return _async_to_generator(function() {
-                        var _this, _this_layout, _this_layout1, W, H, cv, c, blob, unused;
+                        var _this, _this_layout, _this_layout1, W, H, cv, c, blob, _tmp, unused;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -3704,9 +3639,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 case 1:
                                     _state.trys.push([
                                         1,
-                                        5,
+                                        7,
                                         ,
-                                        6
+                                        8
                                     ]);
                                     if (native("capture")) {
                                         window.LumaBridge.capture(function(d) {
@@ -3723,6 +3658,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     c = cv.getContext("2d");
                                     c.fillStyle = getComputedStyle(this.stage).backgroundColor || "#000";
                                     c.fillRect(0, 0, W, H);
+                                    if (!(typeof cv.toBlob === "function")) return [
+                                        3,
+                                        3
+                                    ];
                                     return [
                                         4,
                                         new Promise(function(res) {
@@ -3730,30 +3669,39 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         })
                                     ];
                                 case 2:
-                                    blob = _state.sent();
-                                    if (!blob) return [
+                                    _tmp = _state.sent();
+                                    return [
                                         3,
                                         4
+                                    ];
+                                case 3:
+                                    _tmp = null;
+                                    _state.label = 4;
+                                case 4:
+                                    blob = _tmp;
+                                    if (!blob) return [
+                                        3,
+                                        6
                                     ];
                                     return [
                                         4,
                                         this.uploadBlob(blob)
                                     ];
-                                case 3:
+                                case 5:
                                     _state.sent();
-                                    _state.label = 4;
-                                case 4:
+                                    _state.label = 6;
+                                case 6:
                                     return [
                                         3,
-                                        6
+                                        8
                                     ];
-                                case 5:
+                                case 7:
                                     unused = _state.sent();
                                     return [
                                         3,
-                                        6
+                                        8
                                     ];
-                                case 6:
+                                case 8:
                                     return [
                                         2
                                     ];
@@ -3884,7 +3832,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     }
     function bootstrap() {
         return _async_to_generator(function() {
-            var q, mode, terminalId, token, layoutId, inline, player, layout, man, r, unused, sch, r1, data, layout1;
+            var q, mode, terminalId, token, layoutId, inline, player, layout, sv, man, r, unused, sch, e, e1, r1, data, layout1;
             return _ts_generator(this, function(_state) {
                 switch(_state.label){
                     case 0:
@@ -3967,29 +3915,55 @@ function _unsupported_iterable_to_array(o, minLen) {
                         }
                         if (!(mode === "term")) return [
                             3,
-                            10
+                            19
                         ];
                         ping("term-branch");
+                        _state.label = 1;
+                    case 1:
+                        _state.trys.push([
+                            1,
+                            17,
+                            ,
+                            18
+                        ]);
                         if (!terminalId) return [
                             3,
-                            1
+                            2
                         ];
                         player.terminalId = terminalId;
                         player.token = token;
                         return [
                             3,
-                            3
+                            4
                         ];
-                    case 1:
+                    case 2:
                         return [
                             4,
                             player.ensureTerminal()
                         ];
-                    case 2:
-                        _state.sent();
-                        _state.label = 3;
                     case 3:
+                        _state.sent();
+                        _state.label = 4;
+                    case 4:
                         ping("term-id=" + (player.terminalId ? "ok" : "null"));
+                        player.startPolling();
+                        player.startCommands();
+                        player.startHeartbeat();
+                        ping("timers-started");
+                        sv = null;
+                        try {
+                            sv = sessionStorage.getItem("luma_html_v");
+                        } catch (e) {}
+                        if (sv !== HTML_V && location.search.indexOf("_v=") === -1) {
+                            try {
+                                sessionStorage.setItem("luma_html_v", HTML_V);
+                            } catch (e) {}
+                            ping("html-upgrade-" + HTML_V);
+                            location.replace("/player/?mode=term&_v=" + HTML_V);
+                            return [
+                                2
+                            ];
+                        }
                         setTimeout(function() {
                             if (mode === "term" && !player.terminalId) {
                                 ping("stuck-10s-retry");
@@ -3997,46 +3971,46 @@ function _unsupported_iterable_to_array(o, minLen) {
                             }
                         }, 1e4);
                         man = null;
-                        _state.label = 4;
-                    case 4:
+                        _state.label = 5;
+                    case 5:
                         _state.trys.push([
-                            4,
-                            8,
+                            5,
+                            9,
                             ,
-                            9
+                            10
                         ]);
                         return [
                             4,
                             fetch("/api/t/manifest?terminalId=".concat(encodeURIComponent(player.terminalId || ""), "&token=").concat(encodeURIComponent(player.token || "")))
                         ];
-                    case 5:
+                    case 6:
                         r = _state.sent();
                         if (!r.ok) return [
                             3,
-                            7
+                            8
                         ];
                         return [
                             4,
                             r.json()
                         ];
-                    case 6:
+                    case 7:
                         man = _state.sent();
                         try {
                             localStorage.setItem("luma_manifest", JSON.stringify(man));
                         } catch (unused) {}
-                        _state.label = 7;
-                    case 7:
+                        _state.label = 8;
+                    case 8:
                         return [
                             3,
-                            9
+                            10
                         ];
-                    case 8:
+                    case 9:
                         unused = _state.sent();
                         return [
                             3,
-                            9
+                            10
                         ];
-                    case 9:
+                    case 10:
                         if (!man) {
                             try {
                                 man = JSON.parse(localStorage.getItem("luma_manifest") || "null");
@@ -4050,36 +4024,95 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 2
                             ];
                         }
+                        ping("m1-ok");
                         player.lastManifest = man;
-                        sch = pickActiveSchedule(man);
+                        sch = null;
+                        try {
+                            sch = pickActiveSchedule(man);
+                        } catch (e) {
+                            ping("pick-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 80));
+                        }
+                        ping("sched=" + (sch ? sch.scheduleId : "null"));
                         player.currentScheduleId = sch ? sch.scheduleId : null;
-                        if (sch) {
+                        if (!sch) return [
+                            3,
+                            15
+                        ];
+                        try {
                             player.hideWelcome();
+                        } catch (e) {
+                            ping("hw-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 80));
+                        }
+                        _state.label = 11;
+                    case 11:
+                        _state.trys.push([
+                            11,
+                            13,
+                            ,
+                            14
+                        ]);
+                        return [
+                            4,
                             player.load(sch.layout, {
                                 resolver: function resolver(id) {
                                     return "/api/t/media/".concat(id, "?terminalId=").concat(encodeURIComponent(player.terminalId || ""), "&token=").concat(encodeURIComponent(player.token || ""));
                                 },
                                 mode: "term"
-                            });
-                        } else {
-                            player.showWelcome();
-                            player.startPolling();
-                            player.startCommands();
-                            player.startHeartbeat();
-                        }
+                            })
+                        ];
+                    case 12:
+                        _state.sent();
+                        ping("boot-load-ok");
+                        return [
+                            3,
+                            14
+                        ];
+                    case 13:
+                        e = _state.sent();
+                        ping("boot-load-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                        showFallback("\u6E32\u67D3\u5F02\u5E38\uFF1A" + (e && e.message || e));
+                        return [
+                            3,
+                            14
+                        ];
+                    case 14:
+                        return [
+                            3,
+                            16
+                        ];
+                    case 15:
+                        player.showWelcome();
+                        player.startPolling();
+                        player.startCommands();
+                        player.startHeartbeat();
+                        _state.label = 16;
+                    case 16:
+                        return [
+                            3,
+                            18
+                        ];
+                    case 17:
+                        e1 = _state.sent();
+                        ping("boot-err:" + encodeURIComponent(String(e1 && e1.message || e1)).slice(0, 90));
+                        showFallback("\u542F\u52A8\u5F02\u5E38\uFF1A" + (e1 && e1.message || e1));
+                        return [
+                            3,
+                            18
+                        ];
+                    case 18:
                         return [
                             2
                         ];
-                    case 10:
+                    case 19:
                         if (!layoutId) return [
                             3,
-                            13
+                            22
                         ];
                         return [
                             4,
                             fetch("/api/layouts/".concat(encodeURIComponent(layoutId)))
                         ];
-                    case 11:
+                    case 20:
                         r1 = _state.sent();
                         if (!r1.ok) {
                             showFallback("\u8282\u76EE\u83B7\u53D6\u5931\u8D25");
@@ -4091,7 +4124,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                             4,
                             r1.json()
                         ];
-                    case 12:
+                    case 21:
                         data = _state.sent();
                         layout1 = data.item || data;
                         player.load(layout1, {
@@ -4103,7 +4136,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                         return [
                             2
                         ];
-                    case 13:
+                    case 22:
                         showFallback("\u672A\u6307\u5B9A\u64AD\u653E\u5185\u5BB9\uFF08\u9700 terminalId / layoutId / data \u53C2\u6570\uFF09");
                         return [
                             2
