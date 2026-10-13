@@ -244,6 +244,11 @@ export class ApiGuard {
     // 回环地址（管理员本机 / 桌面端同机）不受限速与封禁限制，避免自锁
     if (isLoopback(ip)) return { allowed: true, cls: 'local' };
 
+    // 局域网私有地址豁免：本产品为 LAN-only，管理员、终端、服务器自身都在内网。
+    // 对 192.168.x.x / 10.x.x.x / 172.16-31.x.x 等私有地址做限速/封禁，
+    // 极易把服务器自身 IP 或管理员电脑 IP 禁掉，导致 WebEdit 自锁无法登录。
+    if (isPrivateIp(ip)) return { allowed: true, cls: 'private' };
+
     if (this.isBanned(ip)) {
       return { allowed: false, cls, banned: true, retryAfter: Math.ceil((this.bans.get(ip) - Date.now()) / 1000),
         reason: `IP ${ip} 已被临时封禁` };
