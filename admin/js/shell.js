@@ -55,6 +55,7 @@ export function mountShell(root, { onNavigate }) {
   root.appendChild(shell);
 
   buildNav(sidebar, onNavigate);
+  updateVersionFooter();
   applyTheme(state.theme);
   connectEvents();
   initSidebarCollapse(sidebar);
@@ -74,18 +75,30 @@ function buildNav(sidebar, onNavigate) {
       el('div', { class: 'name', text: '灵屏 LumaSign' }),
     ),
   );
+  const navWrap = el('div', { class: 'nav-scroll' });
   for (const grp of NAV) {
     const visible = grp.items.filter(it => !it.perm || can(it.perm));
     if (!visible.length) continue;
-    sidebar.appendChild(el('div', { class: 'nav-group', text: grp.group }));
+    navWrap.appendChild(el('div', { class: 'nav-group', text: grp.group }));
     for (const it of visible) {
-      sidebar.appendChild(el('div', { class: 'nav-item', dataset: { id: it.id, label: it.label }, onclick: () => onNavigate(it.hash) },
+      navWrap.appendChild(el('div', { class: 'nav-item', dataset: { id: it.id, label: it.label }, onclick: () => onNavigate(it.hash) },
         el('span', { class: 'ico', text: it.icon }),
         el('span', { text: it.label }),
       ));
     }
   }
-  sidebar.appendChild(el('div', { class: 'sidebar-foot', text: 'v1.0.0 · 局域网数字标牌' }));
+  sidebar.appendChild(navWrap);
+  sidebar.appendChild(el('div', { class: 'sidebar-foot', id: 'sidebar-foot', text: '版本加载中…' }));
+}
+
+async function updateVersionFooter() {
+  try {
+    const r = await fetch('/health');
+    if (!r.ok) return;
+    const d = await r.json();
+    const foot = document.getElementById('sidebar-foot');
+    if (foot && d && d.version) foot.textContent = `${d.version} · 局域网数字标牌`;
+  } catch { /* 健康接口失败时保留初始文字 */ }
 }
 
 /* 侧栏折叠 */

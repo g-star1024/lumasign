@@ -36,6 +36,19 @@ const out = await swc.transform(bundled, {
 const es5 = out.code;
 console.log('swc es5 bytes=', es5.length);
 
+// ── Step 2.5: 修复 SWC _ts_values 在无 Symbol 引擎（Android 4.4 / Chromium 33）上的致命缺陷 ──
+// yield* 委托（如 runRegion 的 tick 循环）会走 _ts_values：
+//   Symbol 路径在 4.4 不可用（typeof Symbol === "undefined"），而生成器对象没有 .length
+//   → 抛 "Symbol.iterator is not defined."。该错误发生在 Promise 链内，
+//   4.4 无 unhandledrejection 事件 → 被静默吞掉 → 所有 region 永不渲染 →
+//   黑屏 + 无 playlog（内容监控失效）+ 截屏全黑（v1.3.19 现场事故根因，2026-10-13 定位）。
+// 修复：带 next 函数的对象（生成器/迭代器）直接作为迭代器返回，语义与规范一致。
+const TS_VALUES_ANCHOR = 'if (o && typeof o.length === "number") {';
+const TS_VALUES_PATCH = 'if (o && typeof o.next === "function") { return o; }\n    ' + TS_VALUES_ANCHOR;
+if (!es5.includes(TS_VALUES_ANCHOR)) throw new Error('_ts_values anchor not found; swc output changed');
+const es5Fixed = es5.replace(TS_VALUES_ANCHOR, TS_VALUES_PATCH);
+console.log('patched _ts_values for no-Symbol engines (Android 4.4)');
+
 // ── Step 3: polyfill header (fetch via whatwg-fetch UMD + mini URLSearchParams, zero backslash) ──
 const fetchPf = fs.readFileSync('C:/Users/DMax/AppData/Local/Temp/fetch.umd.js', 'utf8');
 const uspLines = [
@@ -79,7 +92,7 @@ const header = '/* LumaSign legacy engine: esbuild(bundle,es2020) + swc(es5) + p
   + '/* Regenerate with: node player/build-legacy.mjs */\n'
   + uspLines + '\n' + fetchPf + '\n';
 
-const final = header + '\n' + es5;
+const final = header + '\n' + es5Fixed;
 fs.writeFileSync(path.join(PLAYER, 'engine.legacy.js'), final);
 fs.unlinkSync(TMP);
 console.log('BUILT player/engine.legacy.js bytes=', final.length);

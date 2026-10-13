@@ -177,6 +177,12 @@ a { color: var(--accent); text-decoration: none; }
 }
 .sidebar.collapsed .nav-item:hover::after { opacity: 1; }
 
+/* 侧栏导航滚动区：小屏/短高度下底部菜单仍可滚动到底 */
+.nav-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column;
+}
+
 /* 侧栏折叠按钮 */
 .sidebar-toggle {
   position: absolute; top: 8px; right: -14px; z-index: 5;

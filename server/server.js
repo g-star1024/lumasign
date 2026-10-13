@@ -55,6 +55,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.dirname(__dirname);                       // .../lumasign
 
+const VERSION = (() => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    return pkg.version || 'unknown';
+  } catch { return 'unknown'; }
+})();
+
 async function init(opts = {}) {
   const DATA = opts.dataDir || process.env.LUMASIGN_DATA || path.join(__dirname, 'data');
   const PORT = opts.port || parseInt(process.env.LUMASIGN_PORT || '7788', 10);
@@ -289,7 +296,7 @@ async function init(opts = {}) {
 
       // 2) 健康检查（桌面端探活 / 监控 / 设备探测）
       if (pathname === '/health') {
-        return json(res, { ok: true, product: 'LumaSign', port: PORT, uptime: process.uptime() | 0 });
+        return json(res, { ok: true, product: 'LumaSign', version: VERSION, port: PORT, uptime: process.uptime() | 0 });
       }
 
       // 3) 静态资源
