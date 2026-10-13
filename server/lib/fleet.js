@@ -231,11 +231,23 @@ export async function adbInstall(adbPath, ip, apkPath) {
   // 卸载后重新安装可彻底消除此问题。）
   const uninstallResult = await runAdb(adbPath, ['-s', device, 'uninstall', 'com.lumasign.player'], { timeout: 30000 });
 
-  const inst = await runAdb(adbPath, ['-s', device, 'install', '-r', '-g', apkPath], { timeout: 120000 });
+  // Android 6.0+（API 23）才支持 `adb install -g` 自动授权；
+  // 4.4/5.x 设备传 -g 会报 Unknown option: -g，导致安装失败。
+  let useGrant = false;
+  const sdkProbe = await runAdb(adbPath, ['-s', device, 'shell', 'getprop', 'ro.build.version.sdk'], { timeout: 8000 });
+  const sdkMatch = sdkProbe.output.match(/(\d+)/);
+  const sdk = sdkMatch ? parseInt(sdkMatch[1], 10) : NaN;
+  if (!Number.isNaN(sdk) && sdk >= 23) useGrant = true;
+
+  const installArgs = ['-s', device, 'install', '-r'];
+  if (useGrant) installArgs.push('-g');
+  installArgs.push(apkPath);
+
+  const inst = await runAdb(adbPath, installArgs, { timeout: 120000 });
   return {
     ok: inst.ok,
     stage: inst.ok ? 'done' : 'install',
-    output: `connect: ${conn.output}\nuninstall(旧版): ${uninstallResult.ok ? '已清除' : (uninstallResult.output || '(无旧版或卸载失败，继续安装)')}\ninstall(${(size / 1048576).toFixed(1)}MB): ${inst.output}`,
+    output: `connect: ${conn.output}\nuninstall(旧版): ${uninstallResult.ok ? '已清除' : (uninstallResult.output || '(无旧版或卸载失败，继续安装)')}\nAPI level: ${Number.isNaN(sdk) ? '未知' : sdk}${useGrant ? '（自动授权）' : '（不传 -g）'}\ninstall(${(size / 1048576).toFixed(1)}MB): ${inst.output}`,
   };
 }
 
