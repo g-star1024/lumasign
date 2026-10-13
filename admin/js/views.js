@@ -2338,15 +2338,32 @@ async function renderSecurity() {
 
     /* 2. 网络隔离 */
     const lanOnlyChk = el('input', { type: 'checkbox', checked: !!sec.lanOnly, ...(isAdmin ? {} : { disabled: true }) });
-    const allowTa = el('textarea', { class: 'input', rows: 3, value: (sec.allowIps || []).join('\n'), placeholder: '每行一个，支持 192.168.1.* 与 10.0.0.0/24', ...(isAdmin ? {} : { disabled: true }) });
-    const denyTa = el('textarea', { class: 'input', rows: 3, value: (sec.denyIps || []).join('\n'), placeholder: '每行一个，支持通配与 CIDR', ...(isAdmin ? {} : { disabled: true }) });
+    // textarea 必须用 textContent 初始化；设置 value 属性不会回显已保存的内容
+    const allowTa = el('textarea', { class: 'input', rows: 3, text: (sec.allowIps || []).join('\n'), placeholder: '每行一个，支持 192.168.1.* 与 10.0.0.0/24', ...(isAdmin ? {} : { disabled: true }) });
+    const denyTa = el('textarea', { class: 'input', rows: 3, text: (sec.denyIps || []).join('\n'), placeholder: '每行一个，支持通配与 CIDR', ...(isAdmin ? {} : { disabled: true }) });
+
+    // 实时展示当前已保存的白/黑名单，刷新后也能看到
+    const ipChipWrap = (ips, tone) => {
+      const wrap = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } });
+      if (!ips || !ips.length) wrap.appendChild(el('span', { class: 'sub', text: '（无）' }));
+      else ips.forEach(ip => wrap.appendChild(el('span', { class: 'badge ' + tone, text: ip })));
+      return wrap;
+    };
+    const allowPreview = ipChipWrap(sec.allowIps, 'ok');
+    const denyPreview = ipChipWrap(sec.denyIps, 'danger');
+    const refreshPreview = () => {
+      const a = allowTa.value.split('\n').map(s => s.trim()).filter(Boolean);
+      const d = denyTa.value.split('\n').map(s => s.trim()).filter(Boolean);
+      allowPreview.replaceChildren(...(a.length ? a.map(ip => el('span', { class: 'badge ok', text: ip })) : [el('span', { class: 'sub', text: '（无）' })]));
+      denyPreview.replaceChildren(...(d.length ? d.map(ip => el('span', { class: 'badge danger', text: ip })) : [el('span', { class: 'sub', text: '（无）' })]));
+    };
+
     const saveNetwork = async () => {
       try {
-        await api.post('/api/admin/security/settings', {
-          lanOnly: lanOnlyChk.checked,
-          allowIps: allowTa.value.split('\n').map(s => s.trim()).filter(Boolean),
-          denyIps: denyTa.value.split('\n').map(s => s.trim()).filter(Boolean),
-        });
+        const allowIps = allowTa.value.split('\n').map(s => s.trim()).filter(Boolean);
+        const denyIps = denyTa.value.split('\n').map(s => s.trim()).filter(Boolean);
+        await api.post('/api/admin/security/settings', { lanOnly: lanOnlyChk.checked, allowIps, denyIps });
+        refreshPreview();
         toast('网络隔离设置已保存', 'ok');
       } catch (e) { toast(e.message, 'err'); }
     };
@@ -2358,6 +2375,10 @@ async function renderSecurity() {
       field('IP 黑名单（优先级高于白名单）', denyTa),
       isAdmin ? el('div', { style: { marginTop: '10px' } }, el('button', { class: 'btn primary', onclick: saveNetwork }, '保存网络隔离设置'))
         : el('div', { class: 'sub', text: '（需要 system:setting 权限）' }),
+      el('div', { style: { marginTop: '16px', paddingTop: '14px', borderTop: '1px solid var(--c-border)' } },
+        el('div', null, el('strong', { text: '当前白名单' }), allowPreview),
+        el('div', { style: { marginTop: '10px' } }, el('strong', { text: '当前黑名单' }), denyPreview),
+      ),
     );
 
     /* 3. IP 封禁 */
