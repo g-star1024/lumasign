@@ -142,11 +142,13 @@ export async function transcode(opts) {
     '-c:v', profile.codec === 'h264' ? 'libx264' : 'copy',
     '-preset', profile.preset || 'medium',
     '-crf', String(profile.crf || 23),
-    '-vf', `scale=min(${profile.maxWidth || 'iw'},iw):-2`,  // 保持宽高比
+    '-vf', `scale=w=min(${profile.maxWidth || 'iw'}\\,iw):h=-2`,  // 保持宽高比（逗号需转义，否则被滤镜图解析为滤镜分隔符）
     '-movflags', '+faststart',              // MP4 快速开始（流式播放）
   ];
   if (hasAudio) args.push('-c:a', 'aac', '-b:a', '128k'); // 源有音频则转 AAC
   else args.push('-an');                                     // 源无音频则禁用音频流
+
+  args.push(output); // 输出文件必须置于末尾（ffmpeg 要求）
 
   // 确保输出目录存在
   const outDir = path.dirname(output);

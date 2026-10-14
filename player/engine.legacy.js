@@ -943,7 +943,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
 }
 (function() {
-    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/widgets.js
+    // widgets.js
     var esc = function esc(s) {
         return String(s !== null && s !== void 0 ? s : "").replace(/[&<>"]/g, function(c) {
             return ({
@@ -1000,12 +1000,31 @@ function _unsupported_iterable_to_array(o, minLen) {
             return onEnd && onEnd();
         });
         holder.appendChild(v);
+        var started = false;
+        var watchdog = setTimeout(function() {
+            if (!started && v.currentTime < 0.5) {
+                try {
+                    v.pause();
+                } catch (e) {}
+                onEnd && onEnd();
+            }
+        }, 8e3);
+        v.addEventListener("timeupdate", function() {
+            if (v.currentTime > 0.5) started = true;
+        });
+        v.addEventListener("error", function() {
+            if (!started) {
+                clearTimeout(watchdog);
+                onEnd && onEnd();
+            }
+        });
         var p = v.play();
         if (p && p.catch) p.catch(function() {});
         return function() {
+            clearTimeout(watchdog);
             try {
                 v.pause();
-            } catch (unused) {}
+            } catch (e) {}
         };
     }
     function renderText(holder, item) {
@@ -1619,7 +1638,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         var fn = RENDERERS[item.widget] || renderText;
         return fn(holder, item, resolver, onEnd) || function() {};
     }
-    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/engine.js
+    // engine.js
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");

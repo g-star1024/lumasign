@@ -250,8 +250,15 @@ export function registerTerminalApi(router, ctx) {
       if (!inWin) return json(res, { ok: false, error: '当前不在允许传输的时间窗口', retryAfter: 600 }, 503);
     }
     logger.task({ kind: 'media_download', terminalId: t.id, hash: m.hash, name: m.name, size: m.size });
-    sendFile(req, res, path.join(paths.media, m.rel), {
-      mime: m.mime, cache: 'public, max-age=31536000, immutable',
+    // 优先下发转码产物（HEVC 等不可直播编码 → H.264 转码版）：RK312x 等老安卓设备硬解只认 H.264，
+    // 原样下发会导致视频在播放端永远停在首帧不出画面（v1.3.23）
+    let serveRel = m.rel, serveMime = m.mime;
+    if (m.transcodedRel) {
+      const tpath = path.join(paths.media, m.transcodedRel);
+      try { if (fs.existsSync(tpath)) { serveRel = m.transcodedRel; serveMime = 'video/mp4'; } } catch (_e) { /* 回退原文件 */ }
+    }
+    sendFile(req, res, path.join(paths.media, serveRel), {
+      mime: serveMime, cache: 'public, max-age=31536000, immutable',
       limiter: limiterFor(t.id),
     });
   });

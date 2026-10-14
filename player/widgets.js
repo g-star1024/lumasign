@@ -38,9 +38,21 @@ function renderVideo(holder, item, resolver, onEnd) {
   v.className = 'w-video ' + (item.fit || 'cover');
   v.addEventListener('ended', () => onEnd && onEnd());
   holder.appendChild(v);
+  // ★ 解码停滞看门狗（v1.3.23）：HEVC 等设备不支持的编码在 RK312x/4.4 上表现为
+  //   readyState 正常但 currentTime 恒为 0（硬解不出帧）→ 区域黑屏卡死。8s 仍未走针
+  //   即视为不可播，回调 onEnd 切下一条素材；error 事件同理。
+  let started = false;
+  const watchdog = setTimeout(() => {
+    if (!started && v.currentTime < 0.5) {
+      try { v.pause(); } catch (e) { /* ignore */ }
+      onEnd && onEnd();
+    }
+  }, 8000);
+  v.addEventListener('timeupdate', () => { if (v.currentTime > 0.5) started = true; });
+  v.addEventListener('error', () => { if (!started) { clearTimeout(watchdog); onEnd && onEnd(); } });
   const p = v.play();
   if (p && p.catch) p.catch(() => {});
-  return () => { try { v.pause(); } catch {} };
+  return () => { clearTimeout(watchdog); try { v.pause(); } catch (e) { /* ignore */ } };
 }
 
 /* ---------------- 文本 ---------------- */

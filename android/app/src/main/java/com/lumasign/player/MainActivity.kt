@@ -676,7 +676,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var configDialog: AlertDialog? = null
     private fun showConfigDialog() {
+        // 防重复弹栈：rk312x 上右键=MENU，连续右键会叠出多个配置框，先查重
+        if (configDialog?.isShowing == true) return
         val ctx = this
         val layout = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
@@ -689,7 +692,7 @@ class MainActivity : AppCompatActivity() {
         val codeInput = EditText(ctx).apply { hint = "终端预置编码（可选，如 LS-0001）" }
         layout.addView(input); layout.addView(codeInput)
 
-        AlertDialog.Builder(ctx)
+        configDialog = AlertDialog.Builder(ctx)
             .setTitle(R.string.config_title)
             .setView(layout)
             .setPositiveButton(R.string.save) { _, _ ->
@@ -714,7 +717,6 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
             .show()
     }
-
     /** 供桥调用：开关屏 / 亮度 */
     fun setScreenOn(on: Boolean) {
         runOnUiThread {
@@ -856,10 +858,26 @@ class MainActivity : AppCompatActivity() {
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
-            showConfigDialog()
+            // rk312x 固件把鼠标右键映射成 MENU 键（非 BUTTON_SECONDARY 触摸事件），IR 遥控器 MENU 也走这里。
+            // 统一弹「运维菜单」，让右键/MENU 两条路径都有明确归宿：退出到桌面 / 配置服务器。
+            showOpsMenu()
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    /** 运维菜单：鼠标右键（固件映射为 MENU）与遥控器 MENU 的共用入口 */
+    private fun showOpsMenu() {
+        AlertDialog.Builder(this)
+            .setTitle("运维菜单")
+            .setItems(arrayOf("退出到桌面", "配置服务器", "取消")) { _, which ->
+                when (which) {
+                    0 -> showExitConfirm()
+                    1 -> showConfigDialog()
+                }
+            }
+            .setCancelable(true)
+            .show()
     }
 
     /** 返回键：仅最小化（moveTaskToBack），Kiosk 守护会在 2 秒内自动拉回；
@@ -879,22 +897,30 @@ class MainActivity : AppCompatActivity() {
     private val exitHandler = Handler(Looper.getMainLooper())
     private val exitLongPress = Runnable { showExitConfirm() }
     private var exitDialog: AlertDialog? = null
+    private var exitDownX = 0f
+    private var exitDownY = 0f
+    private val exitTouchSlop by lazy { android.view.ViewConfiguration.get(this).scaledTouchSlop }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
-                // 鼠标右键（或遥控器 menu 键映射）→ 直接弹确认
+                // 鼠标右键（标准 BUTTON_SECONDARY 路径，rk312x 固件右键走 MENU 键见 onKeyDown）→ 直接弹确认
                 if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) {
                     showExitConfirm()
                 } else {
+                    exitDownX = ev.x; exitDownY = ev.y
                     exitHandler.removeCallbacks(exitLongPress)
                     exitHandler.postDelayed(exitLongPress, 2000)
                 }
             }
-            MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_MOVE -> {
+                // 仅当位移超出触摸容差才取消长按——鼠标传感器抖动/触屏微颤不再误杀长按（v1.3.23）
+                val dx = ev.x - exitDownX; val dy = ev.y - exitDownY
+                if (dx * dx + dy * dy > exitTouchSlop * exitTouchSlop) exitHandler.removeCallbacks(exitLongPress)
+            }
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL -> {
-                // 滑动/抬起即取消长按计时，防止正常交互误触发退出
+                // 抬起/取消时停止计时（若 2s 已到、弹窗已弹，这里是无害的空操作）
                 exitHandler.removeCallbacks(exitLongPress)
             }
         }
