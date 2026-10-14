@@ -787,7 +787,8 @@ class Player {
   async ensureTerminal() {
     if (this.terminalId) return;
     ping('reg-start');
-    let serial = localStorage.getItem('luma_term_serial');
+    let serial = null;
+    try { serial = localStorage.getItem('luma_term_serial'); } catch { serial = null; }
     if (!serial) {
       serial = (crypto.randomUUID ? crypto.randomUUID() : 'web-' + Math.random().toString(36).slice(2));
       try { localStorage.setItem('luma_term_serial', serial); } catch { /* 隐私模式等，忽略 */ }
@@ -952,7 +953,7 @@ class Player {
   async captureAndSend() {
     try {
       // 原生端：由桥截取真实 WebView 画面（含视频/动画），返回 dataURL 后上报
-      if (native('capture')) { window.LumaBridge.capture(d => { if (d) this.uploadShot(d); }); return; }
+      if (native('capture')) { window.LumaBridge.capture('window.__lumaPlayer.onCaptureShot'); return; }
       // 浏览器端降级：仅能绘制当前背景色块（DOM 无法被 canvas 快照），用于占位
       const W = this.layout?.width || 1920, H = this.layout?.height || 1080;
       const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -964,17 +965,30 @@ class Player {
     } catch { /* 截屏失败时静默 */ }
   }
 
+  onCaptureShot(dataUrl) { if (dataUrl) this.uploadShot(dataUrl); }
+
   async uploadShot(dataUrl) {
-    try { await this.uploadBlob(await (await fetch(dataUrl)).blob()); } catch {}
+    try {
+      let blob;
+      if (dataUrl && dataUrl.indexOf('data:') === 0) {
+        const parts = dataUrl.split(',');
+        const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+        const bstr = atob(parts[1]);
+        const u8 = new Uint8Array(bstr.length);
+        for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+        blob = new Blob([u8], { type: mime });
+      } else {
+        blob = await (await fetch(dataUrl)).blob();
+      }
+      await this.uploadBlob(blob);
+    } catch {}
   }
 
   async uploadBlob(blob) {
     try {
-      const fd = new FormData();
-      fd.append('shot', blob, 'shot.jpg');
-      fd.append('terminalId', this.terminalId);
-      fd.append('token', this.token || '');
-      await fetch('/api/t/shot', { method: 'POST', body: fd, credentials: 'same-origin' });
+      // 服务端 /api/t/shot 读裸体（JPEG 字节）+ 查询串鉴权（terminalId/token），非 multipart
+      const q = `terminalId=${encodeURIComponent(this.terminalId || '')}&token=${encodeURIComponent(this.token || '')}`;
+      await fetch(`/api/t/shot?${q}`, { method: 'POST', body: blob, credentials: 'same-origin' });
     } catch {}
   }
 }

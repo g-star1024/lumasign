@@ -943,7 +943,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
 }
 (function() {
-    // widgets.js
+    // player/widgets.js
     var esc = function esc(s) {
         return String(s !== null && s !== void 0 ? s : "").replace(/[&<>"]/g, function(c) {
             return ({
@@ -990,8 +990,6 @@ function _unsupported_iterable_to_array(o, minLen) {
     function renderVideo(holder, item, resolver, onEnd) {
         var v = document.createElement("video");
         var url = item.mediaId ? resolver(item.mediaId) : item.url || "";
-        // ★ Chromium 33 / Android 4.4 兼容：muted 必须在 src 之前设置，否则自动播放策略可能拦截；
-        //   显式写入 muted/autoplay/playsinline(+webkit-) 属性，避免视频被系统强制全屏或无法内联自动播放。
         v.muted = true;
         v.defaultMuted = true;
         v.setAttribute("muted", "");
@@ -1645,7 +1643,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         var fn = RENDERERS[item.widget] || renderText;
         return fn(holder, item, resolver, onEnd) || function() {};
     }
-    // engine.js
+    // player/engine.js
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");
@@ -3107,7 +3105,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         2
                                     ];
                                     ping("reg-start");
-                                    serial = localStorage.getItem("luma_term_serial");
+                                    serial = null;
+                                    try {
+                                        serial = localStorage.getItem("luma_term_serial");
+                                    } catch (unused) {
+                                        serial = null;
+                                    }
                                     if (!serial) {
                                         serial = crypto.randomUUID ? crypto.randomUUID() : "web-" + Math.random().toString(36).slice(2);
                                         try {
@@ -3689,23 +3692,18 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "captureAndSend",
                 value: function captureAndSend() {
                     return _async_to_generator(function() {
-                        var _this, _this_layout, _this_layout1, W, H, cv, c, blob, _tmp, unused;
+                        var _this_layout, _this_layout1, W, H, cv, c, blob, _tmp, unused;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
-                                    _this = this;
-                                    _state.label = 1;
-                                case 1:
                                     _state.trys.push([
-                                        1,
-                                        7,
+                                        0,
+                                        6,
                                         ,
-                                        8
+                                        7
                                     ]);
                                     if (native("capture")) {
-                                        window.LumaBridge.capture(function(d) {
-                                            if (d) _this.uploadShot(d);
-                                        });
+                                        window.LumaBridge.capture("window.__lumaPlayer.onCaptureShot");
                                         return [
                                             2
                                         ];
@@ -3719,7 +3717,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     c.fillRect(0, 0, W, H);
                                     if (!(typeof cv.toBlob === "function")) return [
                                         3,
-                                        3
+                                        2
                                     ];
                                     return [
                                         4,
@@ -3727,40 +3725,40 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             return cv.toBlob(res, "image/jpeg", 0.8);
                                         })
                                     ];
-                                case 2:
+                                case 1:
                                     _tmp = _state.sent();
                                     return [
                                         3,
-                                        4
+                                        3
                                     ];
-                                case 3:
+                                case 2:
                                     _tmp = null;
-                                    _state.label = 4;
-                                case 4:
+                                    _state.label = 3;
+                                case 3:
                                     blob = _tmp;
                                     if (!blob) return [
                                         3,
-                                        6
+                                        5
                                     ];
                                     return [
                                         4,
                                         this.uploadBlob(blob)
                                     ];
-                                case 5:
+                                case 4:
                                     _state.sent();
-                                    _state.label = 6;
-                                case 6:
+                                    _state.label = 5;
+                                case 5:
                                     return [
                                         3,
-                                        8
+                                        7
                                     ];
-                                case 7:
+                                case 6:
                                     unused = _state.sent();
                                     return [
                                         3,
-                                        8
+                                        7
                                     ];
-                                case 8:
+                                case 7:
                                     return [
                                         2
                                     ];
@@ -3770,49 +3768,74 @@ function _unsupported_iterable_to_array(o, minLen) {
                 }
             },
             {
+                key: "onCaptureShot",
+                value: function onCaptureShot(dataUrl) {
+                    if (dataUrl) this.uploadShot(dataUrl);
+                }
+            },
+            {
                 key: "uploadShot",
                 value: function uploadShot(dataUrl) {
                     return _async_to_generator(function() {
-                        var _, _1, unused;
+                        var blob, parts, mime, bstr, u8, i, unused;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
                                     _state.trys.push([
                                         0,
-                                        4,
+                                        6,
                                         ,
-                                        5
+                                        7
                                     ]);
-                                    _1 = (_ = this).uploadBlob;
+                                    if (!(dataUrl && dataUrl.indexOf("data:") === 0)) return [
+                                        3,
+                                        1
+                                    ];
+                                    parts = dataUrl.split(",");
+                                    mime = (parts[0].match(/:(.*?);/) || [])[1] || "image/jpeg";
+                                    bstr = atob(parts[1]);
+                                    u8 = new Uint8Array(bstr.length);
+                                    for(i = 0; i < bstr.length; i++)u8[i] = bstr.charCodeAt(i);
+                                    blob = new Blob([
+                                        u8
+                                    ], {
+                                        type: mime
+                                    });
                                     return [
-                                        4,
-                                        fetch(dataUrl)
+                                        3,
+                                        4
                                     ];
                                 case 1:
                                     return [
                                         4,
-                                        _state.sent().blob()
+                                        fetch(dataUrl)
                                     ];
                                 case 2:
                                     return [
                                         4,
-                                        _1.apply(_, [
-                                            _state.sent()
-                                        ])
+                                        _state.sent().blob()
                                     ];
                                 case 3:
+                                    blob = _state.sent();
+                                    _state.label = 4;
+                                case 4:
+                                    return [
+                                        4,
+                                        this.uploadBlob(blob)
+                                    ];
+                                case 5:
                                     _state.sent();
                                     return [
                                         3,
-                                        5
+                                        7
                                     ];
-                                case 4:
+                                case 6:
                                     unused = _state.sent();
                                     return [
                                         3,
-                                        5
+                                        7
                                     ];
-                                case 5:
+                                case 7:
                                     return [
                                         2
                                     ];
@@ -3825,7 +3848,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "uploadBlob",
                 value: function uploadBlob(blob) {
                     return _async_to_generator(function() {
-                        var fd, unused;
+                        var q, unused;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -3835,15 +3858,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         ,
                                         3
                                     ]);
-                                    fd = new FormData();
-                                    fd.append("shot", blob, "shot.jpg");
-                                    fd.append("terminalId", this.terminalId);
-                                    fd.append("token", this.token || "");
+                                    q = "terminalId=".concat(encodeURIComponent(this.terminalId || ""), "&token=").concat(encodeURIComponent(this.token || ""));
                                     return [
                                         4,
-                                        fetch("/api/t/shot", {
+                                        fetch("/api/t/shot?".concat(q), {
                                             method: "POST",
-                                            body: fd,
+                                            body: blob,
                                             credentials: "same-origin"
                                         })
                                     ];
