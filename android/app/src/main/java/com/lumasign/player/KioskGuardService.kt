@@ -72,6 +72,13 @@ class KioskGuardService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 退出静默期内：不启动守护，主动停止自身并返回 START_NOT_STICKY，
+        // 系统不会因被杀而再次重启（避免 30s 静默期被 2s 轮询打断，导致退出后秒回）
+        if (KioskManager.inExitGrace(this)) {
+            handler.removeCallbacks(pollRunnable)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
         handler.removeCallbacks(pollRunnable)
@@ -81,6 +88,7 @@ class KioskGuardService : Service() {
 
     /** 单次守护探测 */
     private fun guardOnce() {
+        if (KioskManager.inExitGrace(this)) { hideOverlay(); return }  // 静默期内不抢占
         val foreground = detectForeground() ?: return  // 无法探测 → 靠开机抢占 / DO Kiosk
         if (foreground == packageName) {
             hideOverlay()

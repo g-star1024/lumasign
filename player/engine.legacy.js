@@ -990,10 +990,17 @@ function _unsupported_iterable_to_array(o, minLen) {
     function renderVideo(holder, item, resolver, onEnd) {
         var v = document.createElement("video");
         var url = item.mediaId ? resolver(item.mediaId) : item.url || "";
-        v.src = url;
-        v.autoplay = true;
+        // ★ Chromium 33 / Android 4.4 兼容：muted 必须在 src 之前设置，否则自动播放策略可能拦截；
+        //   显式写入 muted/autoplay/playsinline(+webkit-) 属性，避免视频被系统强制全屏或无法内联自动播放。
         v.muted = true;
+        v.defaultMuted = true;
+        v.setAttribute("muted", "");
+        v.setAttribute("autoplay", "");
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        v.autoplay = true;
         v.playsInline = true;
+        v.src = url;
         v.loop = !!item.loop && !(item.duration > 0);
         v.className = "w-video " + (item.fit || "cover");
         v.addEventListener("ended", function() {

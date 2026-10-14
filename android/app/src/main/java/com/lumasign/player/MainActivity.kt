@@ -941,6 +941,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 彻底退出：先停 Kiosk 守护（否则它会把你拉回），再释放 lockTask，最后结束并杀进程 */
     private fun doExit() {
+        // 先标记退出静默期：即便守护服务被系统作为 START_STICKY 重启，也会跳过拉回，
+        // 等 30s Alarm 到点才由系统重新拉起（修复「退出后 2s 即被拉回、30s 静默失效」）
+        KioskManager.markExitGrace(this, EXIT_GRACE_MS)
         try { stopService(Intent(this, KioskGuardService::class.java)) } catch (_: Exception) { }
         // 30s 静默期：给运维留出退出后的操作时间（装包/改设置），到点由系统 Alarm 重新拉起
         // 电子屏。Alarm 挂在系统侧，进程被杀不影响触发；若期间用户手动打开应用，Alarm 到点

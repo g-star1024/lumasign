@@ -96,6 +96,52 @@ export function registerTranscodeApi(router, ctx) {
     json(res, { ok: true });
   }));
 
+  // ★ 一键重转码全部视频为 Baseline H.264（v1.3.25 修复「视频不播放」）：
+  // 旧版转码产出 High profile，rk312x/4.4 的 HW 解码器拒绝 → 黑屏。此端点把库内所有视频
+  // 清除旧 transcodedRel 后重新入队 baseline 转码，完成后终端立即拿到可播文件。
+  router.post('/api/admin/transcode/rebake-all', guard('media:manage', async (req, res) => {
+    const ff = await detectFFmpeg();
+    if (!ff.ok) return fail(res, 'ffmpeg 不可用，无法转码');
+    const media = S('media').all().filter(m => m.kind === 'video');
+    let queued = 0, skipped = 0;
+    for (const m of media) {
+      const filePath = path.join(ctx.paths.media, m.rel);
+      if (!fs.existsSync(filePath)) { skipped++; continue; }
+      // 先把旧的（可能是 High profile 不可播）转码产物摘掉，标记为转码中，避免继续下发黑屏文件
+      S('media').update(m.id, { transcodedRel: null, browserPlayable: false, transcodedAt: null });
+      let profile;
+      try {
+        const need = await needsTranscode(filePath);
+        profile = need.profiles && need.profiles[0];
+      } catch (_e) { profile = null; }
+      if (!profile) {
+        // 源本身是 H.264 但仍可能是 High profile → 强制 baseline 重烤
+        profile = { name: 'h264_baseline', codec: 'h264', preset: 'medium', crf: 23,
+          maxWidth: m.width || 1920, maxHeight: m.height || 1080 };
+      }
+      // 兜底：所有 H.264 转码强制 baseline + yuv420p（transcode() 内已强制，这里显式声明以便审计）
+      profile = { ...profile, codec: 'h264', profile: 'baseline', pixFmt: 'yuv420p' };
+      const outRel = m.hash + '_h264.mp4';
+      const output = path.join(ctx.paths.media, outRel);
+      queue().enqueue({
+        id: 'tc_' + m.id,
+        input: filePath, output,
+        profile, type: 'video', mediaId: m.id,
+        onDone: (e) => {
+          if (e.status === 'done' && e.outputPath) {
+            const trel = path.relative(ctx.paths.media, e.outputPath).split(path.sep).join('/');
+            S('media').update(m.id, { transcodedRel: trel, transcodedAt: Date.now(), codec: 'h264', browserPlayable: true });
+          } else {
+            // 转码失败：至少别卡在「转码中」，恢复为源编码可播性判断
+            S('media').update(m.id, { transcodedRel: null, browserPlayable: m.codec === 'h264', transcodedAt: null });
+          }
+        },
+      });
+      queued++;
+    }
+    json(res, { ok: true, queued, skipped, total: media.length });
+  }));
+
   /* ---------------- ffmpeg 一键安装（服务端） ---------------- */
 
   // 查看 ffmpeg 状态 + 安装可行性 + 安装进度

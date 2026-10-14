@@ -104,4 +104,28 @@ object KioskManager {
             true
         }
     }
+
+    // ── 退出静默期（v1.3.24 修复「退出后 2s 被拉回、30s 静默失效」）──
+    // 根因：KioskGuardService 是 START_STICKY 前台服务，doExit 用 killProcess 杀进程后系统会
+    // 自动 restart 该粘性服务，其 2s 轮询(bringSelfToFront)会在 30s Alarm 之前把应用拉回。
+    // 用持久化标记让「即使被 restart 的守护」也跳过拉回；守护自身在静默期内 stopSelf 并返回
+    // START_NOT_STICKY，系统不会再因被杀而重启。
+    private const val PREFS_NAME = "lumasign_kiosk"
+    private const val KEY_EXIT_GRACE_UNTIL = "exit_grace_until"
+
+    /** 标记退出静默期：到此时间戳前，守护服务不得把应用拉回前台 */
+    fun markExitGrace(ctx: Context, durationMs: Long) {
+        try {
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putLong(KEY_EXIT_GRACE_UNTIL, System.currentTimeMillis() + durationMs).apply()
+        } catch (_: Exception) { }
+    }
+
+    /** 是否处于退出静默期（守护据此跳过拉回） */
+    fun inExitGrace(ctx: Context): Boolean {
+        return try {
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getLong(KEY_EXIT_GRACE_UNTIL, 0L) > System.currentTimeMillis()
+        } catch (_: Exception) { false }
+    }
 }

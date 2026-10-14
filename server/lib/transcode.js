@@ -136,16 +136,31 @@ export async function transcode(opts) {
 
   const { input, output, profile, onProgress } = opts;
   const hasAudio = profile.hasAudio !== false; // 默认保留音频（电子屏可静音播放，有配音需求也能用）
+  const isH264 = profile.codec === 'h264';
   const args = [
     '-y',                                    // 覆盖输出
     '-i', input,
-    '-c:v', profile.codec === 'h264' ? 'libx264' : 'copy',
+    '-c:v', isH264 ? 'libx264' : 'copy',
     '-preset', profile.preset || 'medium',
-    '-crf', String(profile.crf || 23),
+  ];
+  if (isH264) {
+    // ★ rk312x / Android 4.4 的 Chromium 走系统 HW H.264 解码器，只认 Baseline profile
+    //   （拒绝 High profile 的 CABAC / B 帧），否则视频恒黑屏、8s 看门狗直接跳过（v1.3.25 修复「视频不播放」）。
+    //   强制 baseline + yuv420p（HW 解码器拒绝 4:2:2/4:4:4）+ faststart + 固定 GOP（便于流式 / 随机 seek）。
+    args.push(
+      '-profile:v', 'baseline',
+      '-pix_fmt', 'yuv420p',
+      '-g', '90',
+      '-x264-params', 'ref=4:bframes=0',
+    );
+  } else {
+    args.push('-crf', String(profile.crf || 23));
+  }
+  args.push(
     '-vf', `scale=w=min(${profile.maxWidth || 'iw'}\\,iw):h=-2`,  // 保持宽高比（逗号需转义，否则被滤镜图解析为滤镜分隔符）
     '-movflags', '+faststart',              // MP4 快速开始（流式播放）
-  ];
-  if (hasAudio) args.push('-c:a', 'aac', '-b:a', '128k'); // 源有音频则转 AAC
+  );
+  if (hasAudio) args.push('-c:a', 'aac', '-b:a', '128k', '-ar', '44100'); // 源有音频则转 AAC LC
   else args.push('-an');                                     // 源无音频则禁用音频流
 
   args.push(output); // 输出文件必须置于末尾（ffmpeg 要求）
