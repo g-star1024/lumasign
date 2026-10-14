@@ -344,10 +344,15 @@ class MainActivity : AppCompatActivity() {
             ws.domStorageEnabled = true
             ws.databaseEnabled = true
         }
-        // ── Android 4.4 (Chromium 30) 硬件加速已知会导致 WebView 静默崩溃，
-        // 强制使用软件渲染。CHUTO e-player 的标配做法（LAYER_TYPE_SOFTWARE） ──
+        // ── v1.3.26 修复「视频在 rk312x/Android4.4 不播放」：
+        // H.264 硬解（Rockchip FFPlayer → SurfaceTexture）必须走 GPU 合成才能上屏；
+        // 若强制 LAYER_TYPE_SOFTWARE，视频虽解码成功（readyState=4、尺寸真实）却无法合成，
+        // 表现为 currentTime 恒为 0、画面黑/卡死。故 4.4 也启用硬件渲染层。
+        // 旧注释的「硬件加速静默崩溃」针对早期 Chromium 30 + 未修的 GPU 兼容坑
+        // （inset→position、交叉淡入黑屏等，v1.3.22 起均已修复），本机实为 Chromium 33，可安全启用。
+        // 若个别 4.4 固件在复杂动效（如图片交叉淡入）上复现 GPU 崩溃，回退此行为 SOFTWARE 即可。
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
