@@ -168,27 +168,20 @@ jobs:
           retention-days: 30
           overwrite: true
 
-      # Release build requires signing key; this uses debug key for CI
-      - name: Build Release APK (debug-signed)
+      # Release build requires signing key; uses the STABLE committed keystore so every
+      # release shares one signature (enables seamless incremental OTA: pm install -r)
+      - name: Build Release APK (stable signed)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         working-directory: android
         run: |
-          keytool -genkeypair \
-            -v \
-            -keystore /tmp/ci-keystore.jks \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -alias ci-debug \
-            -storepass android \
-            -keypass android \
-            -dname "CN=LumaSign CI, OU=CI, O=LumaSign, L=CI, ST=CI, C=US"
+          cp lumasign-release.p12 /tmp/ci-keystore.p12
 
           cat > keystore.properties <<EOF
           storePassword=android
           keyPassword=android
-          keyAlias=ci-debug
-          storeFile=/tmp/ci-keystore.jks
+          keyAlias=lumasign
+          storeFile=/tmp/ci-keystore.p12
+          storeType=pkcs12
           EOF
 
           ./gradlew assembleRelease
