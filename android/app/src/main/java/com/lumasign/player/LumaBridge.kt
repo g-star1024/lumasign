@@ -306,14 +306,14 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
                 try { mp.reset() } catch (_: Exception) {}
             }
             val fresh = MediaPlayer()
-            fresh.setDataSource(activity, java.net.URI(url))
+            fresh.setDataSource(url)
             fresh.isLooping = loop
             fresh.prepareAsync()
             fresh.setOnPreparedListener { m ->
                 try { m.start() } catch (_: Exception) {}
             }
             MUSIC_PLAYER.set(fresh)
-            return "{\"ok\":true,\"volume\":${fresh.volume}}"
+            return "{\"ok\":true}"
         } catch (e: Exception) {
             val msg = (e.message ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
             return "{\"ok\":false,\"error\":\"$msg\"}"
@@ -339,11 +339,11 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
 
     @JavascriptInterface
     fun musicSetVolume(v: Float): Float {
-        try {
+        return try {
             val clamped = v.coerceIn(0f, 1f)
             val mp = MUSIC_PLAYER.get()
             if (mp != null) { mp.setVolume(clamped, clamped) }
-            return clamped
+            clamped
         } catch (_: Exception) { 1f }
     }
 
