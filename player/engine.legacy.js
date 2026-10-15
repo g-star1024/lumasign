@@ -4630,6 +4630,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         return function() {};
     }
     function renderTimerPlay(holder, item) {
+        if (item.mode === "overlay") return renderTimerPlayOverlay(holder, item);
         var d = document.createElement("div");
         d.className = "w-timer-play";
         var fs = item.fontSize || 44;
@@ -4670,6 +4671,82 @@ function _unsupported_iterable_to_array(o, minLen) {
         };
         render();
         var id = setInterval(render, 1e3);
+        return function() {
+            return clearInterval(id);
+        };
+    }
+    function renderTimerPlayOverlay(holder, item) {
+        var d = document.createElement("div");
+        d.className = "w-timer-play-overlay";
+        d.style.cssText = "position:absolute;top:12px;right:12px;display:flex;align-items:center;gap:8px;padding:8px 14px;background:" + (item.bg || "rgba(0,0,0,0.7)") + ";color:" + (item.color || "#ffffff") + ";border-radius:22px;font-size:" + (item.fontSize || 16) + "px;font-weight:600;cursor:pointer;z-index:20;box-shadow:0 2px 12px rgba(0,0,0,0.3);";
+        d.innerHTML = '<span style="opacity:.7;">\u23F1</span><span class="ttm-badge-txt">--:--:--</span>';
+        holder.style.position = "relative";
+        holder.appendChild(d);
+        var startStr = item.startTime || "00:00";
+        var endStr = item.endTime || startStr;
+        var content = item.content || "\u8282\u76EE\u5185\u5BB9";
+        var title = item.title || "\u8282\u76EE";
+        var pad2n = function pad2n(n) {
+            return n < 10 ? "0" + n : "" + n;
+        };
+        var startSecCached = parseInt(startStr.split(":")[0], 10) * 3600 + (parseInt(startStr.split(":")[1], 10) || 0) * 60;
+        var endSecCached = parseInt(endStr.split(":")[0], 10) * 3600 + (parseInt(endStr.split(":")[1], 10) || 0) * 60;
+        var computeWindow = function computeWindow() {
+            var now = /* @__PURE__ */ new Date();
+            var nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+            var inWindow2, diff;
+            if (startSecCached <= endSecCached) {
+                inWindow2 = nowSec >= startSecCached && nowSec <= endSecCached;
+                if (!inWindow2) diff = nowSec > endSecCached ? startSecCached + 86400 - nowSec : startSecCached - nowSec;
+            } else {
+                inWindow2 = nowSec >= startSecCached || nowSec <= endSecCached;
+                if (!inWindow2) diff = startSecCached - nowSec;
+            }
+            return {
+                inWindow: inWindow2,
+                diff: diff
+            };
+        };
+        var tick = function tick() {
+            var w = computeWindow();
+            var h = Math.floor(w.diff / 3600), m = Math.floor(w.diff % 3600 / 60), s = w.diff % 60;
+            var badge = d.querySelector(".ttm-badge-txt");
+            if (badge) badge.textContent = w.inWindow ? "\u25B6 " + startStr + "~" + endStr : pad2n(h) + ":" + pad2n(m) + ":" + pad2n(s);
+        };
+        var showDialog = function showDialog() {
+            if (document.getElementById("ttm-dialog-mask")) return;
+            var mask = document.createElement("div");
+            mask.id = "ttm-dialog-mask";
+            mask.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:9998;display:flex;align-items:center;justify-content:center;";
+            var box = document.createElement("div");
+            box.style.cssText = "width:640px;max-width:90%;background:#1e1e1e;color:#fff;border-radius:12px;padding:28px;box-shadow:0 8px 32px rgba(0,0,0,0.5);";
+            box.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;"><div style="font-size:22px;font-weight:600;">' + esc(title) + '</div><button class="ttm-close" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:0 6px;">\xD7</button></div><div class="ttm-dialog-body" style="text-align:center;font-size:64px;font-weight:700;font-variant-numeric:tabular-nums;margin:24px 0;">--:--:--</div><div style="text-align:center;opacity:.7;margin-bottom:8px;">\u8D77\u64AD\u65F6\u6BB5\uFF1A' + esc(startStr) + " ~ " + esc(endStr) + '</div><div style="text-align:center;font-size:18px;margin-top:12px;">' + esc(content) + "</div>";
+            mask.appendChild(box);
+            document.body.appendChild(mask);
+            var body = box.querySelector(".ttm-dialog-body");
+            var closed = false;
+            var di = setInterval(function() {
+                if (closed) {
+                    clearInterval(di);
+                    return;
+                }
+                var w = computeWindow();
+                var h2 = Math.floor(w.diff / 3600), m2 = Math.floor(w.diff % 3600 / 60), s2 = w.diff % 60;
+                body.textContent = w.inWindow ? "\u25B6 \u64AD\u653E\u4E2D" : pad2n(h2) + ":" + pad2n(m2) + ":" + pad2n(s2);
+            }, 1e3);
+            var close = function close() {
+                closed = true;
+                clearInterval(di);
+                mask.remove();
+            };
+            mask.addEventListener("click", function(e) {
+                if (e.target === mask) close();
+            });
+            box.querySelector(".ttm-close").addEventListener("click", close);
+        };
+        d.addEventListener("click", showDialog);
+        tick();
+        var id = setInterval(tick, 1e3);
         return function() {
             return clearInterval(id);
         };
@@ -5557,6 +5634,96 @@ function _unsupported_iterable_to_array(o, minLen) {
         }
         return function() {};
     }
+    function renderMusic(holder, item, resolver2) {
+        var d = document.createElement("div");
+        d.className = "w-music";
+        var bg = item.bg || "rgba(0,0,0,0.55)";
+        var color = item.color || "#ffffff";
+        var fs = item.fontSize || 22;
+        d.style.cssText = "width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:" + bg + ";color:" + color + ";font-size:" + fs + "px;padding:12px;box-sizing:border-box;";
+        var titleEl = document.createElement("div");
+        titleEl.style.cssText = "font-size:" + (fs + 4) + "px;font-weight:600;margin-bottom:4px;opacity:.95;";
+        var artistEl = document.createElement("div");
+        artistEl.style.cssText = "font-size:" + Math.max(14, fs - 6) + "px;opacity:.7;margin-bottom:16px;";
+        var lyricEl = document.createElement("div");
+        lyricEl.style.cssText = "font-size:" + Math.max(16, fs - 2) + "px;text-align:center;line-height:1.5;margin-bottom:10px;max-height:" + Math.max(60, fs * 3) + "px;overflow:hidden;";
+        var nowEl = document.createElement("div");
+        nowEl.style.cssText = "font-size:" + Math.max(12, fs - 10) + "px;opacity:.55;font-variant-numeric:tabular-nums;";
+        d.appendChild(titleEl);
+        d.appendChild(artistEl);
+        d.appendChild(lyricEl);
+        d.appendChild(nowEl);
+        holder.appendChild(d);
+        titleEl.textContent = item.title || "\u97F3\u4E50\u64AD\u653E\u4E2D";
+        artistEl.textContent = item.artist || (item.playlistId ? "Playlist #" + item.playlistId : "\u266A");
+        var audioUrl = item.audioUrl || (item.audioMediaId ? resolver2 ? resolver2(item.audioMediaId) : item.audioMediaId : null);
+        var lyricsUrl = item.lyricsUrl || (item.lyricsMediaId ? resolver2 ? resolver2(item.lyricsMediaId) : item.lyricsMediaId : null);
+        var audio = null;
+        var parsedLrc = null;
+        var native2 = null;
+        var lyricTimer = null;
+        var is44 = window.navigator && /Chrome\/3[0-9]/.test(window.navigator.userAgent);
+        var fmt = function fmt(ms) {
+            if (!ms || ms < 0) ms = 0;
+            var s = Math.floor(ms / 1e3);
+            var m = Math.floor(s / 60);
+            var ss = s % 60;
+            var pad3 = function pad3(n) {
+                return n < 10 ? "0" + n : "" + n;
+            };
+            return pad3(m) + ":" + pad3(ss);
+        };
+        var updateLyric = function updateLyric() {
+            if (!parsedLrc || !parsedLrc.lines.length) return;
+            var t = audio && audio.currentTime ? audio.currentTime * 1e3 : 0;
+            var idx = window.LRCParser ? window.LRCParser.findIndex(parsedLrc, t) : -1;
+            lyricEl.textContent = idx >= 0 ? parsedLrc.lines[idx].text : "";
+            nowEl.textContent = fmt(t);
+        };
+        try {
+            if (window.LumaBridge && typeof window.LumaBridge.musicPlay === "function") {
+                native2 = window.LumaBridge.musicPlay(audioUrl);
+            }
+        } catch (e) {}
+        if (audioUrl) {
+            try {
+                audio = new Audio(audioUrl);
+                audio.loop = !!item.loop;
+                audio.volume = typeof item.volume === "number" ? Math.min(1, Math.max(0, item.volume)) : 1;
+                audio.addEventListener("loadedmetadata", updateLyric);
+                audio.addEventListener("timeupdate", updateLyric);
+                var p = audio.play && audio.play();
+                if (p && typeof p.catch === "function") p.catch(function() {});
+            } catch (e) {}
+        }
+        if (lyricsUrl && window.fetch) {
+            fetch(lyricsUrl).then(function(r) {
+                return r.ok ? r.text() : "";
+            }).then(function(t) {
+                if (t && window.LRCParser) {
+                    parsedLrc = window.LRCParser.parse(t);
+                    if (parsedLrc.meta.ti && !item.title) titleEl.textContent = parsedLrc.meta.ti;
+                    if (parsedLrc.meta.ar && !item.artist) artistEl.textContent = parsedLrc.meta.ar;
+                }
+            }).catch(function() {});
+        }
+        lyricTimer = setInterval(updateLyric, 250);
+        return function() {
+            if (lyricTimer) clearInterval(lyricTimer);
+            try {
+                if (audio) {
+                    audio.pause();
+                    audio.src = "";
+                    audio = null;
+                }
+            } catch (e) {}
+            try {
+                if (window.LumaBridge && typeof window.LumaBridge.musicStop === "function") {
+                    window.LumaBridge.musicStop();
+                }
+            } catch (e) {}
+        };
+    }
     var RENDERERS = {
         image: renderImage,
         video: renderVideo,
@@ -5576,7 +5743,8 @@ function _unsupported_iterable_to_array(o, minLen) {
         "data-text": renderDataText,
         "data-number": renderDataNumber,
         "data-chart": renderDataChart,
-        "form": renderForm
+        "form": renderForm,
+        music: renderMusic
     };
     function renderWidget(holder, item, resolver2, onEnd) {
         var fn = RENDERERS[item.widget] || renderText;
@@ -6081,6 +6249,24 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "buildStage",
                 value: function buildStage(layout) {
                     var _this = this;
+                    var isDual = layout.mode === "dual";
+                    if (isDual) {
+                        var dualWrap = document.createElement("div");
+                        dualWrap.className = "stage-dual";
+                        dualWrap.style.cssText = "position:relative;display:flex;width:100%;height:100%;";
+                        app.appendChild(dualWrap);
+                        this.stageDual = dualWrap;
+                        this.stage = null;
+                        this.regions = [];
+                        this.regions2 = [];
+                        this.buildDualPane(dualWrap, layout.regions || [], "left");
+                        this.buildDualPane(dualWrap, layout.regions2 || [], "right");
+                        this.rescaleDual();
+                        window.addEventListener("resize", this._onResize = function() {
+                            return _this.rescaleDual();
+                        });
+                        return;
+                    }
                     var stage = document.createElement("div");
                     stage.className = "stage";
                     stage.style.width = (layout.width || 1920) + "px";
@@ -6134,6 +6320,52 @@ function _unsupported_iterable_to_array(o, minLen) {
                 }
             },
             {
+                /* v1.3.32 dual_mode：构建单侧屏（左或右） */ key: "buildDualPane",
+                value: function buildDualPane(parent, regions, side) {
+                    var _this_layout, _this_layout1;
+                    var stage = document.createElement("div");
+                    stage.className = "stage stage-dual-pane";
+                    stage.dataset.side = side;
+                    stage.style.cssText = "position:relative;width:50%;height:100%;overflow:hidden;background:#000;";
+                    var bg = side === "left" ? (_this_layout = this.layout) === null || _this_layout === void 0 ? void 0 : _this_layout.background : ((_this_layout1 = this.layout) === null || _this_layout1 === void 0 ? void 0 : _this_layout1.background2) || {};
+                    if (bg && bg.mediaId) {
+                        var url = this.resolver(bg.mediaId);
+                        var img = document.createElement("img");
+                        img.src = url;
+                        img.className = "bg-media";
+                        img.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;";
+                        stage.appendChild(img);
+                    } else if (bg && bg.color) {
+                        stage.style.background = bg.color;
+                    }
+                    parent.appendChild(stage);
+                    for(var ri = 0; ri < regions.length; ri++){
+                        var r = regions[ri];
+                        var el2 = document.createElement("div");
+                        el2.className = "region";
+                        el2.dataset.transition = r.transition || "fade";
+                        el2.style.left = (r.x || 0) + "px";
+                        el2.style.top = (r.y || 0) + "px";
+                        el2.style.width = (r.w || 0) + "px";
+                        el2.style.height = (r.h || 0) + "px";
+                        el2.style.zIndex = r.z || 1;
+                        stage.appendChild(el2);
+                        r._el = el2;
+                        (side === "left" ? this.regions : this.regions2).push(r);
+                    }
+                }
+            },
+            {
+                /* v1.3.32 dual_mode：整体缩放（按宽度而非宽度/高度比值） */ key: "rescaleDual",
+                value: function rescaleDual() {
+                    if (!this.stageDual) return;
+                    var sw = window.innerWidth, sh = window.innerHeight;
+                    this.stageDual.style.transform = "none";
+                    this.stageDual.style.width = "100%";
+                    this.stageDual.style.height = "100%";
+                }
+            },
+            {
                 key: "rescale",
                 value: function rescale() {
                     if (!this.stage || !this.layout) return;
@@ -6149,8 +6381,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                 value: function startRegions(layout) {
                     var _this = this;
                     var regs = layout && layout.regions || [];
-                    for(var ri = 0; ri < regs.length; ri++){
-                        var r = regs[ri];
+                    var regs2 = layout && layout.regions2 || [];
+                    var all = regs.concat(regs2);
+                    for(var ri = 0; ri < all.length; ri++){
+                        var r = all[ri];
                         var its = r.items || [];
                         for(var ii = 0; ii < its.length; ii++)its[ii]._getData = function(id) {
                             return _this.dsCache[id];

@@ -45,6 +45,7 @@ export function mountShell(root, { onNavigate }) {
       el('div', { class: 'title', id: 'top-title', text: '灵屏标牌管理中心' }),
       el('div', { class: 'spacer' }),
       el('div', { class: 'search' }, el('span', { text: '⌕' }), el('input', { placeholder: '搜索…', id: 'global-search' })),
+      el('button', { class: 'icon-btn', title: '切换语言 / Switch Language', id: 'lang-toggle', onclick: cycleLang }, langShort()),
       el('button', { class: 'icon-btn', title: '切换主题', onclick: cycleTheme }, '◐'),
       el('div', { class: 'avatar', id: 'user-avatar', title: '账户', onclick: showUserMenu }, '?'),
     ),
@@ -60,6 +61,8 @@ export function mountShell(root, { onNavigate }) {
   connectEvents();
   initSidebarCollapse(sidebar);
   showServerAddr();
+  applyI18n();
+  if (window.I18N) window.I18N.on(function () { applyI18n(); });
 
   return {
     viewEl: content.querySelector('#view'),
@@ -133,7 +136,74 @@ function cycleTheme() {
   const order = ['light', 'dark', 'system'];
   const next = order[(order.indexOf(state.theme) + 1) % 3];
   applyTheme(next);
-  toast('主题：' + ({ light: '浅色', dark: '深色', system: '跟随系统' }[next]));
+  const I18N = window.I18N;
+  const label = !I18N ? ({ light: '浅色', dark: '深色', system: '跟随系统' }[next])
+    : I18N.t('common.theme.' + next, ({ light: '浅色', dark: '深色', system: '跟随系统' }[next]));
+  toast('主题：' + label);
+}
+
+/* v1.3.32 · 多语言切换 LanguageSelectDialog */
+function langShort() {
+  const I18N = window.I18N;
+  if (!I18N) return '中';
+  const list = I18N.languages();
+  const cur = I18N.lang();
+  for (var i = 0; i < list.length; i++) if (list[i].code === cur) return list[i].short;
+  return '中';
+}
+
+function cycleLang() {
+  const I18N = window.I18N;
+  if (!I18N) { toast('i18n 未加载', 'err'); return; }
+  const list = I18N.languages();
+  const cur = I18N.lang();
+  let idx = 0;
+  for (var i = 0; i < list.length; i++) if (list[i].code === cur) { idx = i; break; }
+  const next = list[(idx + 1) % list.length];
+  I18N.setLang(next.code);
+  const btn = document.getElementById('lang-toggle');
+  if (btn) btn.textContent = next.short;
+  toast('语言 / Language：' + next.label);
+}
+
+function applyI18n() {
+  const I18N = window.I18N;
+  if (!I18N) return;
+  const t = I18N.t;
+  // 顶栏标题
+  const title = document.getElementById('top-title');
+  if (title) title.textContent = t('app.name', '灵屏标牌管理中心');
+  // 全局搜索占位
+  const g = document.getElementById('global-search');
+  if (g) g.placeholder = t('common.search', '搜索…');
+  // 语言按钮短标
+  const lb = document.getElementById('lang-toggle');
+  if (lb) lb.textContent = langShort();
+  // 侧栏导航（按 dataset.id 匹配 nav.* key）
+  const navMap = {
+    dashboard: 'nav.dashboard', terminals: 'nav.terminals', media: 'nav.media',
+    layouts: 'nav.layouts', dataSources: 'nav.datasources', approvals: 'nav.approvals',
+    schedules: 'nav.schedules', lifecycle: 'nav.lifecycle', monitor: 'nav.monitors',
+    health: 'nav.health', proof: 'nav.proof', interactions: 'nav.interactions',
+    fleet: 'nav.fleet', crashLogs: 'nav.crashLogs', users: 'nav.users',
+    logs: 'nav.logs', security: 'nav.security', settings: 'nav.settings'
+  };
+  document.querySelectorAll('.nav-item').forEach(n => {
+    const id = n.dataset && n.dataset.id;
+    const key = navMap[id];
+    if (!key) return;
+    const span = n.querySelector('span:last-child');
+    if (span) span.textContent = t(key, span.textContent);
+  });
+  // 侧栏分组
+  const grpMap = { '总览': 'nav.group.overview', '运营': 'nav.group.ops', '系统': 'nav.group.system' };
+  document.querySelectorAll('.nav-group').forEach(g => {
+    const k = grpMap[g.textContent];
+    if (k) g.textContent = t(k, g.textContent);
+  });
+  // sidebar 品牌
+  const brandName = document.querySelector('.sidebar .brand .name');
+  if (brandName) brandName.textContent = t('app.name', '灵屏 LumaSign');
 }
 
 function showUserMenu(e) {

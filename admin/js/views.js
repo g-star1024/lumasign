@@ -809,6 +809,8 @@ function renderEditor(params) {
             el('span', { class: 'ico', text: '⏰' }), el('span', {}, '定时起播')),
           el('div', { class: 'ed-lib-item', onclick: () => addWidget('poweroff') },
             el('span', { class: 'ico', text: '🔌' }), el('span', {}, '关机倒计时')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('music') },
+            el('span', { class: 'ico', text: '🎵' }), el('span', {}, '音乐播放')),
         ),
         // 图部 widget 列表
         el('div', { class: 'ed-lib-sect' }),
@@ -887,6 +889,7 @@ function renderEditor(params) {
         else if (it.widget === 'logo') title = 'LOGO 水印属性';
         else if (it.widget === 'border-marquee') title = '边框滚动字属性';
         else if (it.widget === 'timer-play') title = '定时起播属性';
+        else if (it.widget === 'music') title = '音乐播放属性';
         else if (it.widget === 'poweroff') title = '关机倒计时属性';
         else title = it.widget + ' 属性';
       } else if (r) {
@@ -948,7 +951,7 @@ function renderEditor(params) {
             el('div', { style: { marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' } }),
             el('div', { class: 'ed-field-label', style: { marginBottom: '6px' }, text: '条目列表 (' + r.items.length + ')' }),
             ...r.items.map(item => el('div', { class: 'ed-region-item ' + (ed.selItem === item.id ? 'active' : ''), onclick: () => { ed.selItem = item.id; refreshProps(); pushPreview(); } },
-              el('span', {}, { image: '🖼 图片', video: '🎬 视频', text: 'T 文字', marquee: 'T 跑马灯', 'border-marquee': '◇ 边框字', clock: '🕐 时钟', date: '📅 日期', weekday: '周 星期', weather: '🌤 天气', logo: '◈ LOGO', 'timer-play': '⏰ 定时', poweroff: '🔌 关机', q: '二维码', meeting: '会议室', 'data-text': '∑ 模板', 'data-number': '# 数字', 'data-chart': '▤ 图表', form: '✎ 表单' }[item.widget] || item.widget),
+              el('span', {}, { image: '🖼 图片', video: '🎬 视频', text: 'T 文字', marquee: 'T 跑马灯', 'border-marquee': '◇ 边框字', clock: '🕐 时钟', date: '📅 日期', weekday: '周 星期', weather: '🌤 天气', logo: '◈ LOGO', 'timer-play': '⏰ 定时', poweroff: '🔌 关机', music: '🎵 音乐', q: '二维码', meeting: '会议室', 'data-text': '∑ 模板', 'data-number': '# 数字', 'data-chart': '▤ 图表', form: '✎ 表单' }[item.widget] || item.widget),
             ))
           ] : [
             el('div', { style: { textAlign: 'center', color: 'var(--text-3)', padding: '20px', fontSize: '12px' } }, '暂无条目，从左侧组件库添加')
@@ -1271,6 +1274,9 @@ function renderEditor(params) {
               el('div', { class: 'ed-field' },
                 el('label', { class: 'ed-field-label', text: '结束时间 (HH:MM)' }),
                 el('input', { class: 'ed-input', type: 'time', value: it.endTime || '18:00', onchange: e => changeField('endTime', e.target.value) })),
+              el('div', { class: 'ed-field', style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                el('input', { type: 'checkbox', id: 'ttm-mode-overlay', checked: it.mode === 'overlay' ? 'checked' : null, onchange: e => changeField('mode', e.target.checked ? 'overlay' : 'inline') }),
+                el('label', { class: 'ed-field-label', style: { margin: 0 }, for: 'ttm-mode-overlay', text: '独立弹窗显示（ChooseTimePlayDialog）' })),
               el('div', { class: 'ed-field' },
                 el('label', { class: 'ed-field-label', text: '字号 (px)' }),
                 el('input', { class: 'ed-input', type: 'number', value: it.fontSize ?? 44, oninput: e => changeField('fontSize', parseFloat(e.target.value) || 44) })),
@@ -1280,6 +1286,38 @@ function renderEditor(params) {
               el('div', { class: 'ed-field' },
                 el('label', { class: 'ed-field-label', text: '背景色' }),
                 el('input', { class: 'ed-input', value: it.bg || 'rgba(0,0,0,0.6)', oninput: e => changeField('bg', e.target.value) })),
+            );
+          }
+          // ★ v1.3.32：音乐播放 + 歌词（MediaService · LRC 同步）
+          else if (it.widget === 'music') {
+            children.push(
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '标题' }),
+                el('input', { class: 'ed-input', value: it.title || '', placeholder: '歌曲名', oninput: e => changeField('title', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '歌手' }),
+                el('input', { class: 'ed-input', value: it.artist || '', placeholder: '可选', oninput: e => changeField('artist', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '音频 URL（mp3/m4a）' }),
+                el('input', { class: 'ed-input', value: it.audioUrl || '', placeholder: '/api/media/xxx/raw 或 https://...', oninput: e => changeField('audioUrl', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '歌词 URL（LRC 文件）' }),
+                el('input', { class: 'ed-input', value: it.lyricsUrl || '', placeholder: '可选，格式：[mm:ss.xx] 歌词', oninput: e => changeField('lyricsUrl', e.target.value) })),
+              el('div', { class: 'ed-field', style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                el('input', { type: 'checkbox', id: 'music-loop', checked: it.loop !== false ? 'checked' : null, onchange: e => changeField('loop', e.target.checked) }),
+                el('label', { class: 'ed-field-label', style: { margin: 0 }, for: 'music-loop', text: '循环播放' })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '音量 (0-1)' }),
+                el('input', { class: 'ed-input', type: 'range', min: 0, max: 1, step: 0.05, value: it.volume ?? 0.8, oninput: e => changeField('volume', parseFloat(e.target.value)) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '字号 (px)' }),
+                el('input', { class: 'ed-input', type: 'number', value: it.fontSize ?? 22, oninput: e => changeField('fontSize', parseFloat(e.target.value) || 22) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '文字颜色' }),
+                el('input', { class: 'ed-input', type: 'color', value: it.color || '#ffffff', oninput: e => changeField('color', e.target.value) })),
+              el('div', { class: 'ed-field' },
+                el('label', { class: 'ed-field-label', text: '背景色' }),
+                el('input', { class: 'ed-input', value: it.bg || 'rgba(0,0,0,0.55)', oninput: e => changeField('bg', e.target.value) })),
             );
           }
           // ★ v1.3.31：关机倒计时（对齐竞品 PowerOffRem）
@@ -1519,6 +1557,7 @@ function defaultItem(w) {
   if (w === 'marquee') return { ...base, text: '滚动播报内容', fontSize: 40, color: '#ffffff', bg: 'rgba(0,0,0,0.5)', speed: 60 };
   if (w === 'border-marquee') return { ...base, text: '欢迎光临，感谢您的到访', fontSize: 28, color: '#ffffff', bg: 'rgba(0,0,0,0.5)', speed: 4, behavior: 'scroll' };
   if (w === 'timer-play') return { ...base, duration: 0, startTime: '09:00', endTime: '18:00', title: '节目', content: '节目内容播放中', fontSize: 44, color: '#ffffff', bg: 'rgba(0,0,0,0.6)' };
+  if (w === 'music') return { ...base, title: '背景音乐', artist: '', audioUrl: '', lyricsUrl: '', loop: true, volume: 0.8, fontSize: 22, color: '#ffffff', bg: 'rgba(0,0,0,0.55)' };
   if (w === 'poweroff') return { ...base, duration: 0, title: '即将关机', subtitle: '距下次关机', fontSize: 48, color: '#ffffff', bg: 'rgba(255,0,0,0.6)', autoExit: true };
   if (w === 'clock') return { ...base, format: 'digital', showDate: true, fontSize: 64, color: '#ffffff' };
   if (w === 'date') return { ...base, format: 'long', fontSize: 40, color: '#ffffff' };

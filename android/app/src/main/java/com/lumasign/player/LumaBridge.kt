@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -288,6 +289,64 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         } catch (_: Exception) { "" }
     }
 
+    /* -------- v1.3.32 · MediaService：媒体播放桥（MediaPlayer + MediaSession 占位） --------
+     * 前端 music widget 在 Android 上通过此桥播放音频。
+     * 实现说明：
+     *   - 使用静态 MediaPlayer 实例，进程存活期间持续播放；Activity 切换不影响。
+     *   - 网络音频通过 setDataSource(url)；本地通过 setDataSource(context, uri)。
+     *   - v1.3.33 计划：抽到前台 Service + MediaSession，让锁屏/后台也持续播放。
+     */
+    @JavascriptInterface
+    fun musicPlay(url: String, loop: Boolean = true): String {
+        try {
+            if (url.isEmpty()) return "{}"
+            val mp = MUSIC_PLAYER.get()
+            if (mp != null) {
+                try { mp.stop() } catch (_: Exception) {}
+                try { mp.reset() } catch (_: Exception) {}
+            }
+            val fresh = MediaPlayer()
+            fresh.setDataSource(activity, java.net.URI(url))
+            fresh.isLooping = loop
+            fresh.prepareAsync()
+            fresh.setOnPreparedListener { m ->
+                try { m.start() } catch (_: Exception) {}
+            }
+            MUSIC_PLAYER.set(fresh)
+            return "{\"ok\":true,\"volume\":${fresh.volume}}"
+        } catch (e: Exception) {
+            val msg = (e.message ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+            return "{\"ok\":false,\"error\":\"$msg\"}"
+        }
+    }
+
+    @JavascriptInterface
+    fun musicPause() {
+        try { val mp = MUSIC_PLAYER.get(); if (mp != null && mp.isPlaying) mp.pause() } catch (_: Exception) {}
+    }
+
+    @JavascriptInterface
+    fun musicStop() {
+        try {
+            val mp = MUSIC_PLAYER.get()
+            if (mp != null) {
+                try { mp.stop() } catch (_: Exception) {}
+                try { mp.release() } catch (_: Exception) {}
+            }
+            MUSIC_PLAYER.set(null)
+        } catch (_: Exception) {}
+    }
+
+    @JavascriptInterface
+    fun musicSetVolume(v: Float): Float {
+        try {
+            val clamped = v.coerceIn(0f, 1f)
+            val mp = MUSIC_PLAYER.get()
+            if (mp != null) { mp.setVolume(clamped, clamped) }
+            return clamped
+        } catch (_: Exception) { 1f }
+    }
+
     /** 定时开关机：JSON 数组 [{on:"07:00", off:"22:00"}, ...] */
     @JavascriptInterface
     fun setPowerSchedule(json: String) {
@@ -379,5 +438,11 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
             val pi = activity.packageManager.getPackageInfo(activity.packageName, 0)
             Pair(pi.versionName ?: "1.0.0", pi.versionCode)
         } catch (_: Exception) { Pair("1.0.0", 1) }
+    }
+
+    companion object {
+        /** v1.3.32 · 全局 MediaPlayer（进程级），music widget 播放用 */
+        val MUSIC_PLAYER: java.util.concurrent.atomic.AtomicReference<MediaPlayer?> =
+            java.util.concurrent.atomic.AtomicReference(null)
     }
 }

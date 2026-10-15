@@ -268,6 +268,25 @@ class Player {
   }
 
   buildStage(layout) {
+    // v1.3.32 dual_mode：layout.mode==='dual' 时把 stage 拆为左右两块，
+    // 分别承载 layout.regions（左屏）与 layout.regions2（右屏）。
+    // 后续 Android 侧可扩展为真正的多 Display WebView，此处先做单 WebView 内的双区渲染。
+    const isDual = layout.mode === 'dual';
+    if (isDual) {
+      const dualWrap = document.createElement('div');
+      dualWrap.className = 'stage-dual';
+      dualWrap.style.cssText = 'position:relative;display:flex;width:100%;height:100%;';
+      app.appendChild(dualWrap);
+      this.stageDual = dualWrap;
+      this.stage = null;
+      this.regions = [];
+      this.regions2 = [];
+      this.buildDualPane(dualWrap, layout.regions || [], 'left');
+      this.buildDualPane(dualWrap, layout.regions2 || [], 'right');
+      this.rescaleDual();
+      window.addEventListener('resize', this._onResize = () => this.rescaleDual());
+      return;
+    }
     const stage = document.createElement('div');
     stage.className = 'stage';
     stage.style.width = (layout.width || 1920) + 'px';
@@ -316,6 +335,47 @@ class Player {
     window.addEventListener('resize', this._onResize = () => this.rescale());
   }
 
+  /* v1.3.32 dual_mode：构建单侧屏（左或右） */
+  buildDualPane(parent, regions, side) {
+    const stage = document.createElement('div');
+    stage.className = 'stage stage-dual-pane';
+    stage.dataset.side = side;
+    stage.style.cssText = 'position:relative;width:50%;height:100%;overflow:hidden;background:#000;';
+    const bg = (side === 'left') ? this.layout?.background : (this.layout?.background2 || {});
+    if (bg && bg.mediaId) {
+      const url = this.resolver(bg.mediaId);
+      const img = document.createElement('img');
+      img.src = url; img.className = 'bg-media'; img.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;';
+      stage.appendChild(img);
+    } else if (bg && bg.color) {
+      stage.style.background = bg.color;
+    }
+    parent.appendChild(stage);
+    for (let ri = 0; ri < regions.length; ri++) {
+      const r = regions[ri];
+      const el = document.createElement('div');
+      el.className = 'region';
+      el.dataset.transition = r.transition || 'fade';
+      el.style.left = (r.x || 0) + 'px';
+      el.style.top = (r.y || 0) + 'px';
+      el.style.width = (r.w || 0) + 'px';
+      el.style.height = (r.h || 0) + 'px';
+      el.style.zIndex = r.z || 1;
+      stage.appendChild(el);
+      r._el = el;
+      (side === 'left' ? this.regions : this.regions2).push(r);
+    }
+  }
+
+  /* v1.3.32 dual_mode：整体缩放（按宽度而非宽度/高度比值） */
+  rescaleDual() {
+    if (!this.stageDual) return;
+    const sw = window.innerWidth, sh = window.innerHeight;
+    this.stageDual.style.transform = 'none';
+    this.stageDual.style.width = '100%';
+    this.stageDual.style.height = '100%';
+  }
+
   rescale() {
     if (!this.stage || !this.layout) return;
     const W = this.layout.width || 1920, H = this.layout.height || 1080;
@@ -327,8 +387,10 @@ class Player {
 
   startRegions(layout) {
     const regs = (layout && layout.regions) || [];
-    for (let ri = 0; ri < regs.length; ri++) {
-      const r = regs[ri];
+    const regs2 = (layout && layout.regions2) || [];
+    const all = regs.concat(regs2);
+    for (let ri = 0; ri < all.length; ri++) {
+      const r = all[ri];
       const its = r.items || [];
       for (let ii = 0; ii < its.length; ii++) its[ii]._getData = (id) => this.dsCache[id];
       if (r._el) this.runRegion(r);

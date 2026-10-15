@@ -134,8 +134,13 @@ function renderBorderMarquee(holder, item) {
 /* ---------------- 定时起播（对齐竞品 PlayListTimerInfo + ChooseTimePlayDialog） ----------------
  * 到达配置时间点后显示节目内容，未到/结束时间后显示倒计时卡片。
  * startTime / endTime 均为 "HH:MM" 格式，跨天（endTime < startTime）时视为次日。
+ *
+ * v1.3.32 新增 mode:
+ *   'inline'（默认）：内容填充当前 region（原有行为）
+ *   'overlay'：显示为右上角悬浮徽章，点开弹全屏对话框显示倒计时/内容
  */
 function renderTimerPlay(holder, item) {
+  if (item.mode === 'overlay') return renderTimerPlayOverlay(holder, item);
   const d = document.createElement('div');
   d.className = 'w-timer-play';
   const fs = item.fontSize || 44;
@@ -176,6 +181,83 @@ function renderTimerPlay(holder, item) {
   };
   render();
   const id = setInterval(render, 1000);
+  return () => clearInterval(id);
+}
+
+/* ---------------- ChooseTimePlayDialog 独立弹窗（v1.3.32） ----------------
+ * mode='overlay' 时使用：右上角悬浮小徽章显示倒计时，点击弹出全屏对话框。
+ * 徽章默认 48px；对话框覆盖全屏，含标题/倒计时/起播范围/内容摘要。
+ */
+function renderTimerPlayOverlay(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-timer-play-overlay';
+  d.style.cssText = 'position:absolute;top:12px;right:12px;display:flex;align-items:center;gap:8px;padding:8px 14px;background:' + (item.bg || 'rgba(0,0,0,0.7)') + ';color:' + (item.color || '#ffffff') + ';border-radius:22px;font-size:' + (item.fontSize || 16) + 'px;font-weight:600;cursor:pointer;z-index:20;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+  d.innerHTML = '<span style="opacity:.7;">⏱</span><span class="ttm-badge-txt">--:--:--</span>';
+  holder.style.position = 'relative';
+  holder.appendChild(d);
+
+  const startStr = item.startTime || '00:00';
+  const endStr = item.endTime || startStr;
+  const content = item.content || '节目内容';
+  const title = item.title || '节目';
+  const pad2n = n => (n < 10 ? '0' + n : '' + n);
+  const startSecCached = parseInt(startStr.split(':')[0], 10) * 3600 + (parseInt(startStr.split(':')[1], 10) || 0) * 60;
+  const endSecCached = parseInt(endStr.split(':')[0], 10) * 3600 + (parseInt(endStr.split(':')[1], 10) || 0) * 60;
+
+  const computeWindow = () => {
+    const now = new Date();
+    const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    let inWindow, diff;
+    if (startSecCached <= endSecCached) {
+      inWindow = nowSec >= startSecCached && nowSec <= endSecCached;
+      if (!inWindow) diff = (nowSec > endSecCached) ? (startSecCached + 86400 - nowSec) : (startSecCached - nowSec);
+    } else {
+      inWindow = nowSec >= startSecCached || nowSec <= endSecCached;
+      if (!inWindow) diff = startSecCached - nowSec;
+    }
+    return { inWindow, diff };
+  };
+
+  const tick = () => {
+    const w = computeWindow();
+    const h = Math.floor(w.diff / 3600), m = Math.floor((w.diff % 3600) / 60), s = w.diff % 60;
+    const badge = d.querySelector('.ttm-badge-txt');
+    if (badge) badge.textContent = w.inWindow ? '▶ ' + startStr + '~' + endStr : pad2n(h) + ':' + pad2n(m) + ':' + pad2n(s);
+  };
+
+  const showDialog = () => {
+    if (document.getElementById('ttm-dialog-mask')) return;
+    const mask = document.createElement('div');
+    mask.id = 'ttm-dialog-mask';
+    mask.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.65);z-index:9998;display:flex;align-items:center;justify-content:center;';
+    const box = document.createElement('div');
+    box.style.cssText = 'width:640px;max-width:90%;background:#1e1e1e;color:#fff;border-radius:12px;padding:28px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+    box.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">' +
+        '<div style="font-size:22px;font-weight:600;">' + esc(title) + '</div>' +
+        '<button class="ttm-close" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:0 6px;">×</button>' +
+      '</div>' +
+      '<div class="ttm-dialog-body" style="text-align:center;font-size:64px;font-weight:700;font-variant-numeric:tabular-nums;margin:24px 0;">--:--:--</div>' +
+      '<div style="text-align:center;opacity:.7;margin-bottom:8px;">起播时段：' + esc(startStr) + ' ~ ' + esc(endStr) + '</div>' +
+      '<div style="text-align:center;font-size:18px;margin-top:12px;">' + esc(content) + '</div>';
+    mask.appendChild(box);
+    document.body.appendChild(mask);
+    const body = box.querySelector('.ttm-dialog-body');
+    let closed = false;
+    const di = setInterval(() => {
+      if (closed) { clearInterval(di); return; }
+      const w = computeWindow();
+      const h2 = Math.floor(w.diff / 3600), m2 = Math.floor((w.diff % 3600) / 60), s2 = w.diff % 60;
+      body.textContent = w.inWindow ? '▶ 播放中' : pad2n(h2) + ':' + pad2n(m2) + ':' + pad2n(s2);
+    }, 1000);
+    const close = () => { closed = true; clearInterval(di); mask.remove(); };
+    mask.addEventListener('click', e => { if (e.target === mask) close(); });
+    box.querySelector('.ttm-close').addEventListener('click', close);
+  };
+
+  d.addEventListener('click', showDialog);
+  tick();
+  const id = setInterval(tick, 1000);
   return () => clearInterval(id);
 }
 
@@ -805,6 +887,118 @@ function renderForm(holder, item) {
   return () => {};
 }
 
+/* ---------------- 音乐播放 + 歌词（v1.3.32 · MediaService） ----------------
+ * 输入：
+ *   item.audioUrl / item.audioMediaId —— 音频源
+ *   item.lyricsUrl / item.lyricsMediaId —— LRC 歌词（可选）
+ *   item.title, item.artist —— 显示信息（可选）
+ *   item.loop, item.volume —— 循环 / 音量
+ * 播放策略：
+ *   优先 Android LumaBridge.musicPlay（MediaPlayer 前台服务，含 MediaSession）
+ *   回退到 HTMLAudio（Chromium 33+ 均可）
+ * 歌词同步：requestAnimationFrame + setInterval 双通道；onTimeUpdate 优先。
+ */
+function renderMusic(holder, item, resolver) {
+  const d = document.createElement('div');
+  d.className = 'w-music';
+  const bg = item.bg || 'rgba(0,0,0,0.55)';
+  const color = item.color || '#ffffff';
+  const fs = item.fontSize || 22;
+  d.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:' + bg + ';color:' + color + ';font-size:' + fs + 'px;padding:12px;box-sizing:border-box;';
+
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = 'font-size:' + (fs + 4) + 'px;font-weight:600;margin-bottom:4px;opacity:.95;';
+  const artistEl = document.createElement('div');
+  artistEl.style.cssText = 'font-size:' + Math.max(14, fs - 6) + 'px;opacity:.7;margin-bottom:16px;';
+  const lyricEl = document.createElement('div');
+  lyricEl.style.cssText = 'font-size:' + Math.max(16, fs - 2) + 'px;text-align:center;line-height:1.5;margin-bottom:10px;max-height:' + Math.max(60, fs * 3) + 'px;overflow:hidden;';
+  const nowEl = document.createElement('div');
+  nowEl.style.cssText = 'font-size:' + Math.max(12, fs - 10) + 'px;opacity:.55;font-variant-numeric:tabular-nums;';
+
+  d.appendChild(titleEl);
+  d.appendChild(artistEl);
+  d.appendChild(lyricEl);
+  d.appendChild(nowEl);
+  holder.appendChild(d);
+
+  titleEl.textContent = item.title || '音乐播放中';
+  artistEl.textContent = item.artist || (item.playlistId ? 'Playlist #' + item.playlistId : '♪');
+
+  const audioUrl = item.audioUrl || (item.audioMediaId ? (resolver ? resolver(item.audioMediaId) : item.audioMediaId) : null);
+  const lyricsUrl = item.lyricsUrl || (item.lyricsMediaId ? (resolver ? resolver(item.lyricsMediaId) : item.lyricsMediaId) : null);
+
+  let audio = null;
+  let parsedLrc = null;
+  let native = null;
+  let lyricTimer = null;
+
+  const is44 = (window.navigator && /Chrome\/3[0-9]/.test(window.navigator.userAgent));
+
+  const fmt = (ms) => {
+    if (!ms || ms < 0) ms = 0;
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    const pad = n => (n < 10 ? '0' + n : '' + n);
+    return pad(m) + ':' + pad(ss);
+  };
+
+  const updateLyric = () => {
+    if (!parsedLrc || !parsedLrc.lines.length) return;
+    const t = (audio && audio.currentTime) ? audio.currentTime * 1000 : 0;
+    const idx = window.LRCParser ? window.LRCParser.findIndex(parsedLrc, t) : -1;
+    lyricEl.textContent = idx >= 0 ? parsedLrc.lines[idx].text : '';
+    nowEl.textContent = fmt(t);
+  };
+
+  // 优先尝试 Android 前台服务桥
+  try {
+    if (window.LumaBridge && typeof window.LumaBridge.musicPlay === 'function') {
+      native = window.LumaBridge.musicPlay(audioUrl);
+    }
+  } catch (e) { /* 回退 HTMLAudio */ }
+
+  if (audioUrl) {
+    try {
+      audio = new Audio(audioUrl);
+      audio.loop = !!item.loop;
+      audio.volume = (typeof item.volume === 'number') ? Math.min(1, Math.max(0, item.volume)) : 1;
+      audio.addEventListener('loadedmetadata', updateLyric);
+      audio.addEventListener('timeupdate', updateLyric);
+      // 4.4 上 audio.play() 可能受 autoplay 策略限制，try 兜底
+      const p = audio.play && audio.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* 无 audio 也 OK */ }
+  }
+
+  // LRC 加载
+  if (lyricsUrl && window.fetch) {
+    fetch(lyricsUrl).then(r => r.ok ? r.text() : '').then(t => {
+      if (t && window.LRCParser) {
+        parsedLrc = window.LRCParser.parse(t);
+        // 元信息补齐 title/artist
+        if (parsedLrc.meta.ti && !item.title) titleEl.textContent = parsedLrc.meta.ti;
+        if (parsedLrc.meta.ar && !item.artist) artistEl.textContent = parsedLrc.meta.ar;
+      }
+    }).catch(() => {});
+  }
+
+  // 每 250ms 刷一次歌词（4.4 上 audio timeupdate 频率低）
+  lyricTimer = setInterval(updateLyric, 250);
+
+  return () => {
+    if (lyricTimer) clearInterval(lyricTimer);
+    try {
+      if (audio) { audio.pause(); audio.src = ''; audio = null; }
+    } catch (e) {}
+    try {
+      if (window.LumaBridge && typeof window.LumaBridge.musicStop === 'function') {
+        window.LumaBridge.musicStop();
+      }
+    } catch (e) {}
+  };
+}
+
 const RENDERERS = {
   image: renderImage,
   video: renderVideo,
@@ -825,6 +1019,7 @@ const RENDERERS = {
   'data-number': renderDataNumber,
   'data-chart': renderDataChart,
   'form': renderForm,
+  music: renderMusic,
 };
 
 export function renderWidget(holder, item, resolver, onEnd) {
