@@ -1820,16 +1820,22 @@ function _unsupported_iterable_to_array(o, minLen) {
                 }
             },
             {
-                /* ---------------- 欢迎页（终端无展示任务时展示） ---------------- */ key: "hideWelcome",
+                /* ---------------- 欢迎页（终端无展示任务时展示，对标竞品"液晶互动"空闲屏） ----------------
+       竞品空闲屏展示：版本号 + 节目状态 + 鼠标/键盘交互入口。这里镜像其信息密度，
+       让嵌墙设备在无任务时也清楚"我是谁、连没连上、在等什么"，而非黑屏或纯 logo。 */ key: "hideWelcome",
                 value: function hideWelcome() {
                     if (welcome) welcome.classList.add("hidden");
+                    if (this._welcomeTimer) {
+                        clearInterval(this._welcomeTimer);
+                        this._welcomeTimer = null;
+                    }
                 }
             },
             {
                 key: "showWelcome",
                 value: function showWelcome() {
                     return _async_to_generator(function() {
-                        var ip, r, hw, model;
+                        var ip, ver, hw, model, playerVer, r, raw, info, ok, statusText, statusEl, self;
                         return _ts_generator(this, function(_state) {
                             this.stop();
                             hideFallback();
@@ -1837,16 +1843,39 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 2
                             ];
                             ip = "";
+                            ver = "";
+                            hw = this._hwInfo || {};
+                            model = hw.model || "";
+                            playerVer = window.__LUMA_PLAYER__ && window.__LUMA_PLAYER__.version || "";
                             try {
                                 if (native("getIpAddress")) {
                                     r = window.LumaBridge.getIpAddress();
                                     ip = typeof r === "string" ? r.trim() : "";
                                 }
                             } catch (e) {}
-                            hw = this._hwInfo || {};
-                            model = hw.model || "";
-                            welcome.innerHTML = '<div class="welcome-ip">\u672C\u673AIP\uFF1A' + (ip || "\u672A\u8FDE\u63A5") + '</div><div class="welcome-center"><div class="welcome-title">\u7075\u5C4F\u7535\u5B50\u5C4F\u7BA1\u7406\u7528\u7CFB\u7EDF</div><div class="welcome-sub">LumaSign \xB7 \u5C40\u57DF\u7F51\u6570\u5B57\u6807\u724C</div>' + (model ? '<div class="welcome-sub" style="font-size:16px;opacity:.4;margin-top:8px">' + escapeHtml(model) + "</div>" : "") + '<div class="welcome-pulse"></div></div>';
+                            try {
+                                if (native("getNativeStatus")) {
+                                    raw = window.LumaBridge.getNativeStatus();
+                                    info = typeof raw === "string" ? JSON.parse(raw) : raw;
+                                    if (info && info.appVersion) ver = String(info.appVersion);
+                                }
+                            } catch (e) {}
+                            ok = !!this.terminalId;
+                            statusText = ok ? "\u5DF2\u8FDE\u63A5\u7BA1\u7406\u7AEF \xB7 \u7B49\u5F85\u5206\u914D\u64AD\u653E\u4EFB\u52A1" : "\u6B63\u5728\u8FDE\u63A5\u7BA1\u7406\u7AEF\u2026";
+                            welcome.innerHTML = '<div class="welcome-ip">\u672C\u673AIP\uFF1A' + (ip || "\u672A\u8FDE\u63A5") + "</div>" + (ver ? '<div class="welcome-version">\u7075\u5C4F v' + escapeHtml(ver) + (playerVer ? " \xB7 \u5F15\u64CE " + escapeHtml(playerVer) : "") + "</div>" : "") + '<div class="welcome-center"><div class="welcome-title">\u7075\u5C4F LumaSign</div><div class="welcome-sub">\u5C40\u57DF\u7F51\u6570\u5B57\u6807\u724C\u64AD\u653E\u7AEF</div>' + (model ? '<div class="welcome-sub" style="font-size:16px;opacity:.4;margin-top:8px">' + escapeHtml(model) + "</div>" : "") + '<div class="welcome-status ' + (ok ? "ok" : "wait") + '"><span class="dot"></span>' + statusText + '</div><div class="welcome-pulse"></div></div><div class="welcome-hint">\u53F3\u952E / \u83DC\u5355\u952E\uFF1A\u8FD0\u7EF4\u83DC\u5355\u3000\xB7\u3000\u957F\u6309 2 \u79D2\uFF1A\u9000\u51FA\u3000\xB7\u3000\u7B49\u5F85\u64AD\u653E\u5185\u5BB9\u4E2D\u2026</div>';
                             welcome.classList.remove("hidden");
+                            if (this._welcomeTimer) clearInterval(this._welcomeTimer);
+                            statusEl = welcome.querySelector(".welcome-status");
+                            self = this;
+                            this._welcomeTimer = setInterval(function() {
+                                if (!welcome || welcome.classList.contains("hidden") || !statusEl) {
+                                    clearInterval(self._welcomeTimer);
+                                    return;
+                                }
+                                var live = !!self.terminalId;
+                                statusEl.className = "welcome-status " + (live ? "ok" : "wait");
+                                statusEl.innerHTML = '<span class="dot"></span>' + (live ? "\u5DF2\u8FDE\u63A5\u7BA1\u7406\u7AEF \xB7 \u7B49\u5F85\u5206\u914D\u64AD\u653E\u4EFB\u52A1" : "\u6B63\u5728\u8FDE\u63A5\u7BA1\u7406\u7AEF\u2026");
+                            }, 4e3);
                             return [
                                 2
                             ];

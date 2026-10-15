@@ -127,26 +127,50 @@ class Player {
     this.navBar = null; this.cancelNavTimer();
   }
 
-  /* ---------------- 欢迎页（终端无展示任务时展示） ---------------- */
-  hideWelcome() { if (welcome) welcome.classList.add('hidden'); }
+  /* ---------------- 欢迎页（终端无展示任务时展示，对标竞品"液晶互动"空闲屏） ----------------
+     竞品空闲屏展示：版本号 + 节目状态 + 鼠标/键盘交互入口。这里镜像其信息密度，
+     让嵌墙设备在无任务时也清楚"我是谁、连没连上、在等什么"，而非黑屏或纯 logo。 */
+  hideWelcome() {
+    if (welcome) welcome.classList.add('hidden');
+    if (this._welcomeTimer) { clearInterval(this._welcomeTimer); this._welcomeTimer = null; }
+  }
 
   async showWelcome() {
     this.stop();
     hideFallback();
     if (!welcome) return;
     let ip = '';
-    try { if (native('getIpAddress')) { const r = window.LumaBridge.getIpAddress(); ip = (typeof r === 'string') ? r.trim() : ''; } } catch (e) { /* 桥不可用则留空 */ }
+    let ver = '';
     const hw = this._hwInfo || {};
     const model = hw.model || '';
+    const playerVer = (window.__LUMA_PLAYER__ && window.__LUMA_PLAYER__.version) || '';
+    try { if (native('getIpAddress')) { const r = window.LumaBridge.getIpAddress(); ip = (typeof r === 'string') ? r.trim() : ''; } } catch (e) { /* 桥不可用则留空 */ }
+    // 取原生 App 版本（Android build.gradle versionName，如 1.3.28），由 LumaBridge.getNativeStatus 提供
+    try { if (native('getNativeStatus')) { const raw = window.LumaBridge.getNativeStatus(); const info = (typeof raw === 'string') ? JSON.parse(raw) : raw; if (info && info.appVersion) ver = String(info.appVersion); } } catch (e) { /* 忽略 */ }
+    const ok = !!this.terminalId;
+    const statusText = ok ? '已连接管理端 · 等待分配播放任务' : '正在连接管理端…';
     welcome.innerHTML =
       '<div class="welcome-ip">本机IP：' + (ip || '未连接') + '</div>' +
+      (ver ? '<div class="welcome-version">灵屏 v' + escapeHtml(ver) + (playerVer ? ' · 引擎 ' + escapeHtml(playerVer) : '') + '</div>' : '') +
       '<div class="welcome-center">' +
-        '<div class="welcome-title">灵屏电子屏管理用系统</div>' +
-        '<div class="welcome-sub">LumaSign · 局域网数字标牌</div>' +
+        '<div class="welcome-title">灵屏 LumaSign</div>' +
+        '<div class="welcome-sub">局域网数字标牌播放端</div>' +
         (model ? '<div class="welcome-sub" style="font-size:16px;opacity:.4;margin-top:8px">' + escapeHtml(model) + '</div>' : '') +
+        '<div class="welcome-status ' + (ok ? 'ok' : 'wait') + '"><span class="dot"></span>' + statusText + '</div>' +
         '<div class="welcome-pulse"></div>' +
-      '</div>';
+      '</div>' +
+      '<div class="welcome-hint">右键 / 菜单键：运维菜单　·　长按 2 秒：退出　·　等待播放内容中…</div>';
     welcome.classList.remove('hidden');
+    // 空闲屏常驻期间，每 4s 刷新连接状态（注册成功后自动变绿），隐藏/退出即停表
+    if (this._welcomeTimer) clearInterval(this._welcomeTimer);
+    const statusEl = welcome.querySelector('.welcome-status');
+    const self = this;
+    this._welcomeTimer = setInterval(function () {
+      if (!welcome || welcome.classList.contains('hidden') || !statusEl) { clearInterval(self._welcomeTimer); return; }
+      const live = !!self.terminalId;
+      statusEl.className = 'welcome-status ' + (live ? 'ok' : 'wait');
+      statusEl.innerHTML = '<span class="dot"></span>' + (live ? '已连接管理端 · 等待分配播放任务' : '正在连接管理端…');
+    }, 4000);
   }
 
   /** opts.resolver: (mediaId)=>url; opts.fromNav=true 表示来自导航栈跳转（不清空栈） */

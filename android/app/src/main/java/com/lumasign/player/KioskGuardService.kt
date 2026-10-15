@@ -95,6 +95,7 @@ class KioskGuardService : Service() {
             return
         }
         // 被抢占 → 挡住对方画面 + 立即拉回自己
+        Log.i(TAG, "foreground stolen by $foreground, bringing LumaSign back")
         showOverlay()
         bringSelfToFront()
     }
@@ -106,10 +107,12 @@ class KioskGuardService : Service() {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 )
             }
             startActivity(i)
+            Log.i(TAG, "bringSelfToFront invoked")
         } catch (e: Exception) {
             Log.w(TAG, "bringSelfToFront failed: ${e.message}")
         }

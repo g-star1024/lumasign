@@ -34,6 +34,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
@@ -59,12 +60,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayText: TextView
     private var loadFailed = false
     private var retryRunnable: Runnable? = null
+    // 常驻状态条：竞品「Version-5.99SM + 状态」式运维可见性设计
+    private lateinit var statusView: TextView
     // v1.3.15：连续加载失败计数。≥ FAIL_STREAK_LIMIT 时清空错误地址并回到零配置发现。
     // 现场事故：设备存了错/不可达的 server_url 后永不重新发现，黑屏死锁。
     private var failStreak = 0
 
     // 5.0+ Kiosk 进入标记（onResume 只尝试一次，避免反复调用 DevicePolicyManager）
     private var kioskAttempted = false
+    // 默认桌面引导弹窗：同进程只提示一次，避免反复打扰
+    private var homePromptShown = false
 
     // 网络连通性监听
     private val connectivityManager by lazy {
@@ -168,6 +173,7 @@ class MainActivity : AppCompatActivity() {
             crashCount = prefs.getInt("crash_count", 0)
 
             setupOverlay()
+            setupStatusOverlay()
 
             showBootStatus("② 初始化 WebView 引擎")
             webView = findViewById(R.id.webview)
@@ -195,6 +201,9 @@ class MainActivity : AppCompatActivity() {
             //   每次 onCreate 都注册一次是幂等的（同 requestCode + FLAG_UPDATE_CURRENT 覆盖旧 Alarm），
             //   同时覆盖「安装后从未重启过」的场景（那种情况下 BootReceiver 不会触发）。
             WatchdogReceiver.schedule(this)
+            // 竞品「液晶互动」式默认桌面引导：没被设为默认桌面时主动提示用户设置，
+            // 这是保证 LumaSign 持续驻守屏幕、不会被系统桌面覆盖的最有效手段。
+            maybePromptSetDefaultHome()
         } catch (e: Throwable) {
             // 启动期任意异常都写到崩溃日志并展示在屏幕上，避免静默黑屏
             try { writeCrashLog(e) } catch (_: Exception) {}
@@ -383,6 +392,7 @@ class MainActivity : AppCompatActivity() {
                 loadFailed = false
                 retryRunnable?.let { uiHandler.removeCallbacks(it) }
                 hideOverlay()
+                updateStatusOverlay("已连接")
             }
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) onMainFrameError(error?.description?.toString())
@@ -406,6 +416,7 @@ class MainActivity : AppCompatActivity() {
             "将自动重试…（第 $failStreak 次失败）"
         }
         showOverlay("无法连接服务端\n${desc ?: ""}\n$hint")
+        updateStatusOverlay("连接失败", desc)
         scheduleRetry()
     }
 
@@ -506,6 +517,102 @@ class MainActivity : AppCompatActivity() {
         failStreak = 0
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // 竞品学习落地：常驻状态条 + 默认桌面引导（v1.3.29）
+    // 液晶互动 MPlayer 在空闲屏始终显示 Version +「没有可播放的任务节目」；
+    // LumaSign 也应在任何状态下让运维看到版本、终端、服务、网络状态。
+    // ─────────────────────────────────────────────────────────────
+
+    /** 初始化顶部状态条，点击打开运维菜单 */
+    private fun setupStatusOverlay() {
+        try {
+            val root = findViewById<ViewGroup>(R.id.root)
+            statusView = TextView(this).apply {
+                textSize = 11f
+                setTextColor(Color.parseColor("#d1d5db"))
+                setBackgroundColor(Color.parseColor("#cc0d1117"))
+                setPadding(14, 6, 14, 6)
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                isClickable = true
+                setOnClickListener { showOpsMenu() }
+            }
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = 6
+                rightMargin = 6
+            }
+            root.addView(statusView, lp)
+            updateStatusOverlay()
+        } catch (_: Exception) {}
+    }
+
+    /** 更新状态条；main/sub 为 null 时按当前状态自动推断 */
+    private fun updateStatusOverlay(main: String? = null, sub: String? = null) {
+        try {
+            if (!::statusView.isInitialized) return
+            val ver = try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+            } catch (_: Exception) { "?" }
+            val code = prefs.getString(KEY_CODE, "") ?: ""
+            val server = prefs.getString(KEY_SERVER, "") ?: ""
+            val net = when (lastNetOnline) {
+                true -> "在线"
+                false -> "离线"
+                else -> "?"
+            }
+            val statusMain = main ?: when {
+                loadFailed -> "连接失败"
+                server.isBlank() -> "未配置服务端"
+                else -> "已连接"
+            }
+            val statusSub = sub ?: "终端：${code.ifBlank { "未绑定" }} | 服务：${server.ifBlank { "-" }}"
+            statusView.text = "灵屏 LumaSign v$ver | $statusMain | 网络$net\n$statusSub\n点此打开运维菜单"
+            statusView.visibility = View.VISIBLE
+        } catch (_: Exception) {}
+    }
+
+    /** LumaSign 是否已被设为默认 HOME（默认桌面） */
+    private fun isDefaultHome(): Boolean {
+        return try {
+            val home = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            val info = packageManager.resolveActivity(home, 0)
+            info?.activityInfo?.packageName == packageName
+        } catch (_: Exception) { false }
+    }
+
+    /** 引导用户将 LumaSign 设为默认桌面；同进程只弹一次，且只在已配置服务端后提示 */
+    private fun maybePromptSetDefaultHome() {
+        if (homePromptShown || isDefaultHome()) return
+        val server = prefs.getString(KEY_SERVER, "") ?: ""
+        if (server.isBlank()) return
+        homePromptShown = true
+        try {
+            AlertDialog.Builder(this)
+                .setTitle("设为默认桌面")
+                .setMessage("为保证灵屏播放端持续驻守屏幕，请将「灵屏播放端」设为默认桌面。\n\n设置后按 Home 键将始终回到灵屏，不会被系统桌面覆盖。")
+                .setCancelable(false)
+                .setPositiveButton("去设置") { _, _ ->
+                    try {
+                        val intent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            addCategory(Intent.CATEGORY_DEFAULT)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+                .setNegativeButton("暂不") { _, _ -> }
+                .show()
+        } catch (_: Exception) {}
+    }
+
     private fun loadPlayer(server: String) {
         val base = normalizeServerUrl(server)
         if (base == null) {
@@ -522,12 +629,14 @@ class MainActivity : AppCompatActivity() {
             if (code.isNotBlank()) append("&code=").append(code)
         }
         webView.loadUrl(url)
+        updateStatusOverlay("正在加载…")
     }
 
     /** 网络连通性变化：恢复时通知引擎重连指令流+刷新清单，并兜底重载失败的页面 */
     private fun onConnectivityChanged(online: Boolean) {
         if (lastNetOnline == online) return
         lastNetOnline = online
+        updateStatusOverlay()
         if (!online) return
         webView.post {
             webView.evaluateJavascript("try{window.__onNetworkChange&&window.__onNetworkChange(true)}catch(e){}", null)
@@ -657,6 +766,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 首次无配置：先尝试零配置发现，发现不到再弹手填框 */
     private fun showDiscoveringThenConfig() {
+        updateStatusOverlay("自动发现中…")
         val spinner = android.widget.ProgressBar(this).apply {
             isIndeterminate = true
             val p = android.widget.LinearLayout.LayoutParams(
@@ -721,6 +831,8 @@ class MainActivity : AppCompatActivity() {
                 if (c.isNotBlank()) prefs.edit().putString(KEY_CODE, c).apply()
                 failStreak = 0
                 loadPlayer(normalized)
+                // 首次配置好服务端后，引导用户把 LumaSign 设为默认桌面，保证长期驻守前台
+                maybePromptSetDefaultHome()
             }
             .setNegativeButton(R.string.cancel, null)
             .setCancelable(false)

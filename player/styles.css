@@ -136,6 +136,29 @@ html, body {
 }
 @keyframes lumaPulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 
+/* 版本号徽标（对标竞品空闲屏右上角的 Version 标注） */
+.welcome-version {
+  position: absolute; top: 20px; right: 24px;
+  font-size: 16px; color: #c4b5fd;
+  background: rgba(196, 181, 253, 0.10); border: 1px solid rgba(196, 181, 253, 0.30);
+  padding: 7px 14px; border-radius: 8px; letter-spacing: .5px;
+}
+/* 连接状态行（带状态点）：ok=已连管理端，wait=连接中 */
+.welcome-status {
+  margin-top: 26px; font-size: 18px; color: rgba(255, 255, 255, .78);
+  display: flex; align-items: center; justify-content: center; gap: 10px; letter-spacing: 1px;
+}
+.welcome-status .dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 auto;
+}
+.welcome-status.ok .dot { background: #34d399; box-shadow: 0 0 10px rgba(52, 211, 153, .7); }
+.welcome-status.wait .dot { background: #fbbf24; animation: lumaPulse 1.4s infinite; }
+/* 底部操作提示（对标竞品"左键/右键进入播放器设置"） */
+.welcome-hint {
+  position: absolute; bottom: 22px; left: 0; right: 0; text-align: center;
+  font-size: 15px; color: rgba(255, 255, 255, .38); letter-spacing: 1px;
+}
+
 /* ============ P1 动态内容数据组件 ============ */
 
 /* 数字翻牌器 */
