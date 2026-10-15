@@ -129,6 +129,200 @@ function renderClock(holder, item) {
   return () => clearInterval(id);
 }
 
+/* ---------------- 日期（对齐竞品 DateWindowPosition） ----------------
+ * 独立日期窗：不显示时间。支持 format:
+ *   'long'  2024年5月3日
+ *   'md'    05-03
+ *   'ym'    2024/05
+ *   'dmy'   2024-05-03
+ */
+function renderDate(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-date';
+  const fs = item.fontSize ? `font-size:${item.fontSize}px;` : '';
+  const color = item.color ? `color:${item.color};` : '';
+  const bg = item.bg ? `background:${item.bg};` : '';
+  d.style.cssText = fs + color + bg;
+  holder.appendChild(d);
+  const fmt = item.format || 'long';
+  const tick = () => {
+    const now = new Date();
+    if (fmt === 'md') d.textContent = pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    else if (fmt === 'ym') d.textContent = now.getFullYear() + '/' + pad(now.getMonth() + 1);
+    else if (fmt === 'dmy') d.textContent = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    else d.textContent = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`;
+  };
+  tick();
+  const id = setInterval(tick, 30000); // 30s 刷新足够，日期变化频率低
+  return () => clearInterval(id);
+}
+
+/* ---------------- 星期（对齐竞品 WeekWindowPosition） ----------------
+ * 中文星期显示。format:
+ *   'cn'      星期四
+ *   'cn-short' 四
+ *   'en'      Thursday
+ *   'en-short' Thu
+ */
+function renderWeekday(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-weekday';
+  const fs = item.fontSize ? `font-size:${item.fontSize}px;` : '';
+  const color = item.color ? `color:${item.color};` : '';
+  const bg = item.bg ? `background:${item.bg};` : '';
+  d.style.cssText = fs + color + bg;
+  holder.appendChild(d);
+  const cn = ['日', '一', '二', '三', '四', '五', '六'];
+  const cnFull = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  const enFull = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const enShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const fmt = item.format || 'cn';
+  const tick = () => {
+    const i = new Date().getDay();
+    d.textContent = fmt === 'cn-short' ? cn[i] : fmt === 'en' ? enFull[i] : fmt === 'en-short' ? enShort[i] : cnFull[i];
+  };
+  tick();
+  const id = setInterval(tick, 30000);
+  return () => clearInterval(id);
+}
+
+/* ---------------- 天气（对齐竞品 WeatherWindowPosition + city.db） ----------------
+ * 竞品方案：本地 city.db 城市库 + 服务器拉取天气。
+ * LumaSign 方案：终端直连 wttr.in 天气 API（返回 JSON，纯文本无鉴权），本地缓存 30 分钟；
+ * 降级链：wttr.in JSON → wttr.in 纯文本 → 提示卡。全部离线时显示 fallback 或占位。
+ * 兼容 Chromium 33：fetch + JSON.parse 走 polyfill。
+ */
+function renderWeather(holder, item) {
+  const box = document.createElement('div');
+  box.className = 'w-weather';
+  const color = item.color || '#ffffff';
+  const bg = item.bg || 'rgba(0,0,0,0.4)';
+  box.style.cssText = `width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${bg};color:${color};padding:10px;box-sizing:border-box;`;
+  holder.appendChild(box);
+  const city = (item.city || 'Beijing').trim();
+  const ttl = Math.max(5, item.ttl || 30) * 60 * 1000;
+  const fallback = item.fallback || '';
+  let cache = null;
+  let cacheExp = 0;
+  let lastErr = null;
+
+  const icon = (w) => {
+    w = (w || '').toLowerCase();
+    if (/clear|晴|sunshine/.test(w)) return '☀';
+    if (/partly|多云|云/.test(w)) return '☁';
+    if (/cloudy|阴/.test(w)) return '☁';
+    if (/rain|雨/.test(w)) return '🌧';
+    if (/snow|雪/.test(w)) return '❄';
+    if (/fog|mist|雾|霾/.test(w)) return '🌫';
+    if (/thunder|雷/.test(w)) return '⚡';
+    if (/haze|霾/.test(w)) return '🌫';
+    return '🌤';
+  };
+
+  const renderCard = (data) => {
+    const t = data.temperature_2m?.current != null ? Math.round(data.temperature_2m.current) : null;
+    const tMin = data.temperature_2m?.min_24h != null ? Math.round(data.temperature_2m.min_24h) : null;
+    const tMax = data.temperature_2m?.max_24h != null ? Math.round(data.temperature_2m.max_24h) : null;
+    const desc = (data.weather_code != null || data.weather_code) ? data.weather_code_desc || '—' : '—';
+    box.innerHTML = '';
+    const card = document.createElement('div');
+    card.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
+    const head = document.createElement('div');
+    head.style.cssText = `font-size:${item.fontSize || 20}px;font-weight:600;letter-spacing:1px;`;
+    head.textContent = item.title || city;
+    card.appendChild(head);
+    const line = document.createElement('div');
+    line.style.cssText = `font-size:${item.bigFontSize || 44}px;line-height:1.1;`;
+    line.textContent = `${icon(desc)} ${t == null ? '—' : t + '°'}`;
+    card.appendChild(line);
+    const range = document.createElement('div');
+    range.style.cssText = 'font-size:14px;opacity:.85;';
+    range.textContent = tMin != null && tMax != null ? `${tMin}° ~ ${tMax}°` : (desc || '');
+    card.appendChild(range);
+    if (item.showUpdated && cacheExp) {
+      const up = document.createElement('div');
+      up.style.cssText = 'font-size:11px;opacity:.5;margin-top:2px;';
+      up.textContent = '更新于 ' + new Date(cacheExp - ttl).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      card.appendChild(up);
+    }
+    box.appendChild(card);
+  };
+
+  const showError = () => {
+    if (fallback) {
+      box.textContent = fallback;
+    } else {
+      box.innerHTML = '';
+      const card = document.createElement('div');
+      card.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;opacity:.7;';
+      const title = document.createElement('div');
+      title.style.cssText = `font-size:${item.fontSize || 18}px;`;
+      title.textContent = (item.title || city) + ' —';
+      card.appendChild(title);
+      const err = document.createElement('div');
+      err.style.cssText = 'font-size:12px;opacity:.8;';
+      err.textContent = lastErr || '天气加载中…';
+      card.appendChild(err);
+      box.appendChild(card);
+    }
+  };
+
+  const doFetch = async () => {
+    const url = 'https://wttr.in/' + encodeURIComponent(city) + '?format=j1';
+    try {
+      const r = await fetch(url, { credentials: 'omit' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      cache = j;
+      cacheExp = Date.now() + ttl;
+      if (j && j.current_condition && j.current_condition[0]) {
+        // 兼容 wttr.in 顶层字段
+        const cc = j.current_condition[0];
+        cache.temperature_2m = { current: Number(cc.temp_C), min_24h: j.weather && j.weather[0] ? Number(j.weather[0].mintempC) : null, max_24h: j.weather && j.weather[0] ? Number(j.weather[0].maxtempC) : null };
+        cache.weather_code_desc = cc.weatherDesc && cc.weatherDesc[0] ? cc.weatherDesc[0].value : '';
+      }
+      renderCard(cache);
+    } catch (e) {
+      lastErr = '网络异常';
+      if (!cache) showError();
+      else renderCard(cache);
+    }
+  };
+
+  const refresh = () => {
+    const now = Date.now();
+    if (cache && now < cacheExp) { renderCard(cache); return; }
+    doFetch();
+  };
+  refresh();
+  const id = setInterval(refresh, ttl);
+  return () => clearInterval(id);
+}
+
+/* ---------------- LOGO 水印（对齐竞品 LogoInfo） ----------------
+ * 图片 LOGO，支持 opacity/fit 与固定/自适应尺寸。
+ */
+function renderLogo(holder, item) {
+  const wrap = document.createElement('div');
+  wrap.className = 'w-logo';
+  wrap.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;';
+  holder.appendChild(wrap);
+  const img = document.createElement('img');
+  const fit = item.fit || 'contain';
+  img.style.cssText = `object-fit:${fit};opacity:${item.opacity == null ? 0.9 : item.opacity};`;
+  if (item.w) img.style.width = item.w + (String(item.w).indexOf('%') >= 0 ? '%' : 'px');
+  if (item.h) img.style.height = item.h + (String(item.h).indexOf('%') >= 0 ? '%' : 'px');
+  img.className = 'w-logo-img';
+  img.onerror = () => {
+    wrap.textContent = item.fallback || '';
+  };
+  wrap.appendChild(img);
+  const url = item.mediaId ? (typeof resolver === 'function' ? resolver(item.mediaId) : item.mediaId) : (item.url || '');
+  if (url) img.src = url;
+  else wrap.textContent = item.fallback || '';
+  return () => {};
+}
+
 /* ---------------- 二维码 ----------------
  * 若宿主页面注入了 window.LumaQRGen(text) -> dataURL，则渲染真实可扫码二维码；
  * 否则优雅降级为明显的占位卡（显示内容文本），保证内容可见、可用。
@@ -463,6 +657,10 @@ const RENDERERS = {
   text: renderText,
   marquee: renderMarquee,
   clock: renderClock,
+  date: renderDate,
+  weekday: renderWeekday,
+  weather: renderWeather,
+  logo: renderLogo,
   qrcode: renderQR,
   meeting: renderMeeting,
   html: renderHtml,

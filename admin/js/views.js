@@ -793,6 +793,19 @@ function renderEditor(params) {
           el('div', { class: 'ed-lib-type', onclick: () => addWidget('clock') },
             el('span', { class: 'ico', text: '🕐' }), el('span', {}, '时钟')),
         ),
+        // 信息窗口组件（v1.3.30 对齐竞品 DateWindow/WeekWindow/WeatherWindow/Logo）
+        el('div', { class: 'ed-lib-sect' }),
+        el('div', { class: 'ed-lib-sect-title', text: '信息窗口' }),
+        el('div', {},
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('date') },
+            el('span', { class: 'ico', text: '📅' }), el('span', {}, '日期窗')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('weekday') },
+            el('span', { class: 'ico', text: '周' }), el('span', {}, '星期窗')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('weather') },
+            el('span', { class: 'ico', text: '🌤' }), el('span', {}, '天气窗')),
+          el('div', { class: 'ed-lib-item', onclick: () => addWidget('logo') },
+            el('span', { class: 'ico', text: '◈' }), el('span', {}, 'LOGO 水印')),
+        ),
         // 图部 widget 列表
         el('div', { class: 'ed-lib-sect' }),
         el('div', { class: 'ed-lib-sect-title', text: '图部' }),
@@ -862,6 +875,10 @@ function renderEditor(params) {
         else if (it.widget === 'text' || it.widget === 'marquee') title = '文字属性';
         else if (it.widget === 'clock') title = '时钟属性';
         else if (it.widget === 'qrcode') title = '二维码属性';
+        else if (it.widget === 'date') title = '日期窗属性';
+        else if (it.widget === 'weekday') title = '星期窗属性';
+        else if (it.widget === 'weather') title = '天气窗属性';
+        else if (it.widget === 'logo') title = 'LOGO 水印属性';
         else title = it.widget + ' 属性';
       } else if (r) {
         title = '区域属性';
@@ -1015,6 +1032,96 @@ function renderEditor(params) {
             el('div', { class: 'ed-field' },
               el('label', { class: 'ed-field-label', text: 'Y 坐标' }),
               el('input', { class: 'ed-input', type: 'number', value: it.y ?? 0, oninput: e => changeField('y', parseFloat(e.target.value) || 0) })),
+          );
+        }
+
+        // 日期窗（v1.3.30）
+        else if (it.widget === 'date') {
+          children.push(
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '格式' }),
+              el('select', { class: 'ed-select', onchange: e => changeField('format', e.target.value) },
+                el('option', { value: 'long', selected: (it.format || 'long') === 'long', text: '2024年5月3日' }),
+                el('option', { value: 'md', selected: it.format === 'md', text: '05-03' }),
+                el('option', { value: 'ym', selected: it.format === 'ym', text: '2024/05' }),
+                el('option', { value: 'dmy', selected: it.format === 'dmy', text: '2024-05-03' }))),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '字号 (px)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.fontSize || 40, min: 12, oninput: e => changeField('fontSize', parseInt(e.target.value) || 40) })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '颜色' }),
+              el('input', { class: 'ed-input', type: 'color', value: it.color || '#ffffff', style: { height: '36px', padding: '2px' }, oninput: e => changeField('color', e.target.value) })),
+          );
+        }
+        // 星期窗（v1.3.30）
+        else if (it.widget === 'weekday') {
+          children.push(
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '格式' }),
+              el('select', { class: 'ed-select', onchange: e => changeField('format', e.target.value) },
+                el('option', { value: 'cn', selected: (it.format || 'cn') === 'cn', text: '星期四（中文全称）' }),
+                el('option', { value: 'cn-short', selected: it.format === 'cn-short', text: '四（中文简写）' }),
+                el('option', { value: 'en', selected: it.format === 'en', text: 'Thursday（英文全称）' }),
+                el('option', { value: 'en-short', selected: it.format === 'en-short', text: 'Thu（英文简写）' }))),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '字号 (px)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.fontSize || 40, min: 12, oninput: e => changeField('fontSize', parseInt(e.target.value) || 40) })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '颜色' }),
+              el('input', { class: 'ed-input', type: 'color', value: it.color || '#ffffff', style: { height: '36px', padding: '2px' }, oninput: e => changeField('color', e.target.value) })),
+          );
+        }
+        // 天气窗（v1.3.30）
+        else if (it.widget === 'weather') {
+          children.push(
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '城市（中英文均可，默认 Beijing）' }),
+              el('input', { class: 'ed-input', value: it.city || 'Beijing', oninput: e => changeField('city', e.target.value), placeholder: 'Beijing / Shanghai / 成都' })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '标题' }),
+              el('input', { class: 'ed-input', value: it.title || '', oninput: e => changeField('title', e.target.value), placeholder: '不填显示城市名' })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '标题字号 (px)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.fontSize ?? 20, oninput: e => changeField('fontSize', parseInt(e.target.value) || 20) })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '温度字号 (px)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.bigFontSize ?? 44, oninput: e => changeField('bigFontSize', parseInt(e.target.value) || 44) })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '文字颜色' }),
+              el('input', { class: 'ed-input', type: 'color', value: it.color || '#ffffff', style: { height: '36px', padding: '2px' }, oninput: e => changeField('color', e.target.value) })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '刷新间隔 (分钟，5~120)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.ttl ?? 30, min: 5, max: 120, oninput: e => changeField('ttl', parseInt(e.target.value) || 30) })),
+            el('div', { class: 'ed-field' },
+              el('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-2)' }, text: '显示更新时间' },
+                el('input', { type: 'checkbox', checked: !!it.showUpdated, onchange: e => changeField('showUpdated', e.target.checked), style: { width: '16px', height: '16px' } }))),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '离线降级文本' }),
+              el('input', { class: 'ed-input', value: it.fallback || '', oninput: e => changeField('fallback', e.target.value), placeholder: '不填则显示"天气加载中"' })),
+          );
+        }
+        // LOGO 水印（v1.3.30）
+        else if (it.widget === 'logo') {
+          children.push(
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: 'LOGO 素材' }),
+              el('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+                el('input', { class: 'ed-input', value: it.mediaId || '', oninput: e => changeField('mediaId', e.target.value), placeholder: '素材 ID 或图片 URL', style: { flex: 1 } }),
+                el('button', { class: 't-btn ghost', onclick: () => uploadMediaForItem(it) }, '上传'))),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '宽度（留空=自适应）' }),
+              el('input', { class: 'ed-input', value: it.w ?? '', oninput: e => changeField('w', e.target.value), placeholder: '如 120 或 30%' })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '高度（留空=自适应）' }),
+              el('input', { class: 'ed-input', value: it.h ?? '', oninput: e => changeField('h', e.target.value), placeholder: '如 60 或 25%' })),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '适配方式' }),
+              el('select', { class: 'ed-select', onchange: e => changeField('fit', e.target.value) },
+                el('option', { value: 'contain', selected: (it.fit || 'contain') === 'contain', text: '包含（contain，保持比例）' }),
+                el('option', { value: 'cover', selected: it.fit === 'cover', text: '覆盖（cover，铺满）' }))),
+            el('div', { class: 'ed-field' },
+              el('label', { class: 'ed-field-label', text: '不透明度 (0~1)' }),
+              el('input', { class: 'ed-input', type: 'number', value: it.opacity ?? 0.9, min: 0, max: 1, step: 0.05, oninput: e => changeField('opacity', parseFloat(e.target.value)) })),
           );
         }
 
@@ -1314,6 +1421,10 @@ function defaultItem(w) {
   if (w === 'text') return { ...base, text: '示例文本', fontSize: 48, color: '#ffffff', align: 'center' };
   if (w === 'marquee') return { ...base, text: '滚动播报内容', fontSize: 40, color: '#ffffff', bg: 'rgba(0,0,0,0.5)', speed: 60 };
   if (w === 'clock') return { ...base, format: 'digital', showDate: true, fontSize: 64, color: '#ffffff' };
+  if (w === 'date') return { ...base, format: 'long', fontSize: 40, color: '#ffffff' };
+  if (w === 'weekday') return { ...base, format: 'cn', fontSize: 40, color: '#ffffff' };
+  if (w === 'weather') return { ...base, city: 'Beijing', title: '', fontSize: 20, bigFontSize: 44, color: '#ffffff', bg: 'rgba(0,0,0,0.4)', ttl: 30, showUpdated: true, fallback: '' };
+  if (w === 'logo') return { ...base, mediaId: '', w: '', h: '', fit: 'contain', opacity: 0.9 };
   if (w === 'qrcode') return { ...base, content: 'https://example.com', showText: true };
   if (w === 'meeting') return { ...base, roomName: '会议室 A', busy: false };
   if (w === 'data-text') return { id: base.id, widget: w, duration: 0, dataSourceId: '', html: '当前值：{{data.value}}', fallback: '数据加载中…', fontSize: 48, color: '#ffffff', align: 'center' };
