@@ -21,6 +21,7 @@ import android.view.PixelCopy
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -110,6 +111,9 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
             // ★ v1.3.31：挂载的存储设备列表（DeviceChangeListener 刷新）
             val devicesJson = JSONArray()
             for (d in activity.mountedDevices) devicesJson.put(d)
+            // 先取局部变量：MainActivity.crashCount 是 @JvmField 静态 Int，
+            // 直接放进 JSONObject.put 会触发 Kotlin 对 java int/long 平台类型的重载歧义（编译报 Overload resolution ambiguity）。
+            val cc = MainActivity.crashCount
             JSONObject().apply {
                 put("volume", if (max > 0) (cur * 100 / max) else 0)
                 put("storageTotal", total)
@@ -120,7 +124,7 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
                 put("mem", memPct)
                 put("battery", batteryPct())
                 put("uptime", uptime)
-                put("crashCount", MainActivity.crashCount)
+                put("crashCount", cc)
                 put("devices", devicesJson)
             }.toString()
         } catch (e: Exception) {

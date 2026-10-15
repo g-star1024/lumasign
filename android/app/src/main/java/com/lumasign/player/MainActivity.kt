@@ -20,6 +20,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.provider.Settings
 import android.view.Gravity
 import android.view.KeyEvent
@@ -103,7 +104,7 @@ class MainActivity : AppCompatActivity() {
             val action = intent?.action ?: return
             Log.w(TAG, "system power event: $action")
             try {
-                webview?.evaluateJavascript(
+                webView.evaluateJavascript(
                     "window.__lumaPlayer && (window.__lumaPlayer.exit('${java.lang.String(action).replace("'", "\\'")}'), 1)",
                     null
                 )
@@ -112,6 +113,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val TAG = "LumaSign"
         const val PREFS = "luma_config"
         const val KEY_SERVER = "server_url"
         const val KEY_CODE = "terminal_code"
