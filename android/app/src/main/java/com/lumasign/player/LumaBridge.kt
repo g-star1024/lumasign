@@ -71,12 +71,11 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         }
     }
 
-    /** 实时状态：音量 / 存储 / 版本 / 温度 / CPU / 内存 / 运行时长 / 崩溃次数 */
-    @JavascriptInterface
     private val statusLock = Any()
     private var cachedStatusJson: String? = null
     private var cachedStatusAt = 0L
 
+    /** 实时状态：音量 / 存储 / 版本 / 温度 / CPU / 内存 / 运行时长 / 崩溃次数 */
     @JavascriptInterface
     fun getNativeStatus(): String {
         // ★ 采集限流（v1.3.25）：storageBytes()/cpuLoadPct()/cpuTempC()/batteryPct() 全是同步文件
