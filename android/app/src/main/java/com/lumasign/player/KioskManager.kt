@@ -110,6 +110,11 @@ object KioskManager {
     // 自动 restart 该粘性服务，其 2s 轮询(bringSelfToFront)会在 30s Alarm 之前把应用拉回。
     // 用持久化标记让「即使被 restart 的守护」也跳过拉回；守护自身在静默期内 stopSelf 并返回
     // START_NOT_STICKY，系统不会再因被杀而重启。
+    //
+    // v1.3.25 再修「静默仍不生效」：原实现用 SharedPreferences.apply()（异步落盘），
+    // 而 doExit 紧接着就 killProcess() 杀进程 —— 磁盘写入很可能还没完成，进程一死标记即丢失，
+    // 守护被系统 restart 后读不到静默期 → 照样秒回。改用 commit() 同步落盘，
+    // 保证 killProcess 之前数据已经写进磁盘。
     private const val PREFS_NAME = "lumasign_kiosk"
     private const val KEY_EXIT_GRACE_UNTIL = "exit_grace_until"
 
@@ -117,7 +122,7 @@ object KioskManager {
     fun markExitGrace(ctx: Context, durationMs: Long) {
         try {
             ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putLong(KEY_EXIT_GRACE_UNTIL, System.currentTimeMillis() + durationMs).apply()
+                .edit().putLong(KEY_EXIT_GRACE_UNTIL, System.currentTimeMillis() + durationMs).commit()
         } catch (_: Exception) { }
     }
 

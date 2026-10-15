@@ -191,6 +191,10 @@ class MainActivity : AppCompatActivity() {
 
             // ── Kiosk 抢占：前台探测 + 应急悬浮窗（压制触拓等第三方抢前台）──
             startKioskGuard()
+            // ── 系统级周期看门狗：进程若被 OOM 回收，由 AlarmManager 定期把应用拉回来 ──
+            //   每次 onCreate 都注册一次是幂等的（同 requestCode + FLAG_UPDATE_CURRENT 覆盖旧 Alarm），
+            //   同时覆盖「安装后从未重启过」的场景（那种情况下 BootReceiver 不会触发）。
+            WatchdogReceiver.schedule(this)
         } catch (e: Throwable) {
             // 启动期任意异常都写到崩溃日志并展示在屏幕上，避免静默黑屏
             try { writeCrashLog(e) } catch (_: Exception) {}

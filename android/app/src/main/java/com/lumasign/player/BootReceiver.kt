@@ -34,6 +34,9 @@ class BootReceiver : BroadcastReceiver() {
                     context.startService(g)
                 }
             } catch (_: Exception) { }
+            // 系统级周期看门狗：AlarmManager 驱动，应用进程被 OOM 回收后自动复活。
+            // KioskGuardService 与主进程同生死，管不了「进程已死」，这一个是补那一档的。
+            WatchdogReceiver.schedule(context)
         }
     }
 }

@@ -34,8 +34,12 @@ function renderVideo(holder, item, resolver, onEnd) {
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
   // ★ Chromium 33 / Android 4.4 兼容：muted 必须在 src 之前设置，否则自动播放策略可能拦截；
   //   显式写入 muted/autoplay/playsinline(+webkit-) 属性，避免视频被系统强制全屏或无法内联自动播放。
+  //   v.1.3.25：额外写 v.volume = 0 —— 现场发现 4.4 上 region 内视频每轮会重建 <video> 元素
+  //   （单视频项 loop=false 时播完重渲染），新元素上 muted 属性时序不稳定，声音会间歇漏出；
+  //   volume 属性走的是播放器增益，比 muted 标志位更底层可靠，两者叠加保证全程静音。
   v.muted = true; v.defaultMuted = true;
   v.setAttribute('muted', '');
+  v.volume = 0;
   v.setAttribute('autoplay', '');
   v.setAttribute('playsinline', '');
   v.setAttribute('webkit-playsinline', '');

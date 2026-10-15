@@ -73,7 +73,30 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
 
     /** 实时状态：音量 / 存储 / 版本 / 温度 / CPU / 内存 / 运行时长 / 崩溃次数 */
     @JavascriptInterface
+    private val statusLock = Any()
+    private var cachedStatusJson: String? = null
+    private var cachedStatusAt = 0L
+
+    @JavascriptInterface
     fun getNativeStatus(): String {
+        // ★ 采集限流（v1.3.25）：storageBytes()/cpuLoadPct()/cpuTempC()/batteryPct() 全是同步文件
+        //   IO，在 rk312x 这种低端板子上慢时上百毫秒。@JavascriptInterface 方法是在 WebView 的
+        //   JS 线程上同步执行的 —— 一旦 IO 卡住，整个 JS 线程被堵死，心跳循环里的 fetch 永远
+        //   发不出去，服务端 60s 后判离线（画面照常在播，看着像"假掉线"）。
+        //   2 秒内的重复请求直接吐缓存，把 IO 压力砍掉一个量级；JS 侧也已改成异步取、
+        //   心跳不 await，双保险。
+        synchronized(statusLock) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val cached = cachedStatusJson
+            if (cached != null && now - cachedStatusAt < 2000) return cached
+            val json = collectNativeStatus()
+            cachedStatusJson = json
+            cachedStatusAt = now
+            return json
+        }
+    }
+
+    private fun collectNativeStatus(): String {
         return try {
             val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC)

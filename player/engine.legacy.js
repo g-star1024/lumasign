@@ -993,6 +993,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         v.muted = true;
         v.defaultMuted = true;
         v.setAttribute("muted", "");
+        v.volume = 0;
         v.setAttribute("autoplay", "");
         v.setAttribute("playsinline", "");
         v.setAttribute("webkit-playsinline", "");
@@ -2079,11 +2080,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                         var isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || bg.mime && String(bg.mime).indexOf("video") === 0;
                         if (isVideo) {
                             var v = document.createElement("video");
-                            v.src = url;
+                            v.muted = true;
+                            v.volume = 0;
                             v.autoplay = true;
                             v.loop = true;
-                            v.muted = true;
                             v.playsInline = true;
+                            v.src = url;
                             v.className = "bg-media";
                             stage.appendChild(v);
                         } else {
@@ -3281,9 +3283,26 @@ function _unsupported_iterable_to_array(o, minLen) {
                     if (this.hbTimer) return;
                     var iv = 15;
                     this._hbLatency = null;
+                    this._nsCache = null;
+                    this._nsAt = 0;
+                    var pullNativeStatus = function pullNativeStatus() {
+                        if (!native("getNativeStatus")) return;
+                        var now = Date.now();
+                        if (now - _this._nsAt < 5e3) return;
+                        _this._nsAt = now;
+                        try {
+                            Promise.resolve(window.LumaBridge.getNativeStatus()).then(function(raw) {
+                                try {
+                                    var info = typeof raw === "string" ? JSON.parse(raw) : raw;
+                                    if (info) _this._nsCache = info;
+                                } catch (e) {}
+                            }).catch(function() {});
+                        } catch (e) {}
+                    };
+                    pullNativeStatus();
                     this.hbTimer = setInterval(function() {
                         return _async_to_generator(function() {
-                            var _this_layout, body, st, raw, _tmp, info, unused, t0, dt, unused1;
+                            var _this_layout, body, info, t0, dt, unused;
                             return _ts_generator(this, function(_state) {
                                 switch(_state.label){
                                     case 0:
@@ -3294,9 +3313,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     case 1:
                                         _state.trys.push([
                                             1,
-                                            11,
+                                            3,
                                             ,
-                                            12
+                                            4
                                         ]);
                                         body = {
                                             terminalId: this.terminalId,
@@ -3304,39 +3323,8 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             playing: ((_this_layout = this.layout) === null || _this_layout === void 0 ? void 0 : _this_layout.name) || null,
                                             latency: this._hbLatency || void 0
                                         };
-                                        if (!native("getNativeStatus")) return [
-                                            3,
-                                            8
-                                        ];
-                                        _state.label = 2;
-                                    case 2:
-                                        _state.trys.push([
-                                            2,
-                                            6,
-                                            ,
-                                            7
-                                        ]);
-                                        st = raceBridge(window.LumaBridge.getNativeStatus());
-                                        if (!(st && typeof st.then === "function")) return [
-                                            3,
-                                            4
-                                        ];
-                                        return [
-                                            4,
-                                            st
-                                        ];
-                                    case 3:
-                                        _tmp = _state.sent();
-                                        return [
-                                            3,
-                                            5
-                                        ];
-                                    case 4:
-                                        _tmp = st;
-                                        _state.label = 5;
-                                    case 5:
-                                        raw = _tmp;
-                                        info = typeof raw === "string" ? JSON.parse(raw) : raw;
+                                        pullNativeStatus();
+                                        info = this._nsCache;
                                         if (info) {
                                             if (info.volume != null) body.volume = info.volume;
                                             if (info.storageFree != null) {
@@ -3349,28 +3337,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             if (info.mem != null) body.mem = info.mem;
                                             if (info.uptime != null) body.uptime = info.uptime;
                                             if (info.crashCount != null) body.crashCount = info.crashCount;
-                                        }
-                                        return [
-                                            3,
-                                            7
-                                        ];
-                                    case 6:
-                                        unused = _state.sent();
-                                        return [
-                                            3,
-                                            7
-                                        ];
-                                    case 7:
-                                        return [
-                                            3,
-                                            9
-                                        ];
-                                    case 8:
-                                        if (typeof performance !== "undefined") {
+                                        } else if (typeof performance !== "undefined") {
                                             body.uptime = Math.floor(performance.now() / 1e3);
                                         }
-                                        _state.label = 9;
-                                    case 9:
                                         t0 = performance.now();
                                         return [
                                             4,
@@ -3383,21 +3352,21 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                 body: JSON.stringify(body)
                                             })
                                         ];
-                                    case 10:
+                                    case 2:
                                         _state.sent();
                                         dt = Math.round(performance.now() - t0);
                                         if (dt > 0 && dt < 6e4) this._hbLatency = dt;
                                         return [
                                             3,
-                                            12
+                                            4
                                         ];
-                                    case 11:
-                                        unused1 = _state.sent();
+                                    case 3:
+                                        unused = _state.sent();
                                         return [
                                             3,
-                                            12
+                                            4
                                         ];
-                                    case 12:
+                                    case 4:
                                         return [
                                             2
                                         ];

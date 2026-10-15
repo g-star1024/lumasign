@@ -225,8 +225,10 @@ class Player {
       const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(url) || (bg.mime && String(bg.mime).indexOf('video') === 0);
       if (isVideo) {
         const v = document.createElement('video');
-        v.src = url; v.autoplay = true; v.loop = true; v.muted = true; v.playsInline = true;
-        v.className = 'bg-media';
+        // muted + volume=0 双保险（v1.3.25）：4.4 上 muted 属性在部分时序下不生效，
+        // 导致声音间歇漏出；volume 走播放器增益更可靠。两者都必须在 src 之前设置。
+        v.muted = true; v.volume = 0; v.autoplay = true; v.loop = true; v.playsInline = true;
+        v.src = url; v.className = 'bg-media';
         stage.appendChild(v);
       } else {
         const img = document.createElement('img');
@@ -856,6 +858,29 @@ class Player {
     if (this.hbTimer) return;     // 防重入
     const iv = 15;
     this._hbLatency = null;
+    // ★ 桥状态改为「后台异步采集 + 心跳只读缓存」（v1.3.25 加固软掉线）。
+    //   背景：@JavascriptInterface 方法是在 WebView 的 JS 线程上同步执行的，而 getNativeStatus
+    //   内部是同步文件 IO（存储 / CPU / 温度 / 电量），rk312x 上慢时上百毫秒。原先在心跳里
+    //   await 桥调用，一旦 IO 卡住就堵死 JS 线程 → 心跳 fetch 永远发不出去 → 服务端 60s 判
+    //   离线，而画面其实还在正常播放（典型的"假掉线"）。
+    //   现在心跳只读缓存，桥在后台刷新；Java 侧另有 2s 采集限流，双保险。
+    this._nsCache = null;
+    this._nsAt = 0;
+    const pullNativeStatus = () => {
+      if (!native('getNativeStatus')) return;
+      const now = Date.now();
+      if (now - this._nsAt < 5000) return;   // 5s 内不重复采（Java 侧另有 2s 限流）
+      this._nsAt = now;
+      try {
+        Promise.resolve(window.LumaBridge.getNativeStatus()).then(raw => {
+          try {
+            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (info) this._nsCache = info;
+          } catch (e) { /* ignore */ }
+        }).catch(() => {});
+      } catch (e) { /* ignore */ }
+    };
+    pullNativeStatus();
     this.hbTimer = setInterval(async () => {
       if (!this.terminalId) return;
       try {
@@ -864,23 +889,17 @@ class Player {
           playing: this.layout?.name || null,
           latency: this._hbLatency || undefined,
         };
-        if (native('getNativeStatus')) {
-          try {
-            // raceBridge：4.4 上桥 await 卡死会冻结整个心跳循环（fetch 永不到达）
-            const st = raceBridge(window.LumaBridge.getNativeStatus());
-            const raw = (st && typeof st.then === 'function') ? await st : st;
-            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            if (info) {
-              if (info.volume != null) body.volume = info.volume;
-              if (info.storageFree != null) { body.storageFree = info.storageFree; body.storageTotal = info.storageTotal; }
-              if (info.appVersion) body.appVersion = info.appVersion;
-              if (info.cpuTemp != null) body.cpuTemp = info.cpuTemp;
-              if (info.cpu != null) body.cpu = info.cpu;
-              if (info.mem != null) body.mem = info.mem;
-              if (info.uptime != null) body.uptime = info.uptime;
-              if (info.crashCount != null) body.crashCount = info.crashCount;
-            }
-          } catch {}
+        pullNativeStatus();
+        const info = this._nsCache;
+        if (info) {
+          if (info.volume != null) body.volume = info.volume;
+          if (info.storageFree != null) { body.storageFree = info.storageFree; body.storageTotal = info.storageTotal; }
+          if (info.appVersion) body.appVersion = info.appVersion;
+          if (info.cpuTemp != null) body.cpuTemp = info.cpuTemp;
+          if (info.cpu != null) body.cpu = info.cpu;
+          if (info.mem != null) body.mem = info.mem;
+          if (info.uptime != null) body.uptime = info.uptime;
+          if (info.crashCount != null) body.crashCount = info.crashCount;
         } else if (typeof performance !== 'undefined') {
           body.uptime = Math.floor(performance.now() / 1000);
         }

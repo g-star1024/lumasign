@@ -119,6 +119,19 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- 系统级周期看门狗：AlarmManager 驱动，进程被 OOM 回收后自动复活应用
+             （KioskGuardService 同进程同生死，管不了「进程已死」这一档） -->
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.lumasign.player.action.WATCHDOG_KEEPALIVE" />
+            </intent-filter>
+        </receiver>
+
         <!-- 自升级 APK 安装 -->
         <provider
             android:name="androidx.core.content.FileProvider"
