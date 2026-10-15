@@ -282,3 +282,129 @@ html, body {
   100% { transform: scale(28); opacity: 0; }
 }
 .hs-ripple { pointer-events: none; }
+
+/* ==================== v1.3.31: 24 种切换动画（对齐竞品 24 动画集） ====================
+ * engine.js 会给 holder 加 t-{name} class；配合 .show 触发 keyframes 动画。
+ * 时长与 engine.js TRANSITION_MS 表一致。动画结束后用 fill-mode: forwards 保持状态。
+ * 注意：base .widget-holder 有 transition: opacity .5s, transform .5s。
+ *       animation 优先级高于 transition，此处覆盖为 animation 生效。
+ */
+.widget-holder.show { animation-fill-mode: forwards; }
+
+/* 1. fade（默认） */
+@keyframes lumafade { from { opacity: 0; } to { opacity: 1; } }
+.widget-holder.t-fade.show { animation: lumafade 550ms ease forwards; }
+
+/* 2-5. slide (滑动进入) */
+@keyframes lumaslidel { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes lumaslider { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes lumaslidet { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes lumaslued { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.widget-holder.t-slide-left.show  { animation: lumaslidel  500ms ease-out forwards; }
+.widget-holder.t-slide-right.show { animation: lumaslider  500ms ease-out forwards; }
+.widget-holder.t-slide-up.show    { animation: lumaslidet  500ms ease-out forwards; }
+.widget-holder.t-slide-down.show  { animation: lumaslued   500ms ease-out forwards; }
+
+/* 6-9. push (推入，伴随轻淡入) */
+@keyframes lumapushl { from { transform: translateX(-100%); opacity: .6; } to { transform: translateX(0); opacity: 1; } }
+@keyframes lumapushr { from { transform: translateX(100%);  opacity: .6; } to { transform: translateX(0); opacity: 1; } }
+@keyframes lumapusht { from { transform: translateY(-100%); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
+@keyframes lumapushed { from { transform: translateY(100%);  opacity: .6; } to { transform: translateY(0); opacity: 1; } }
+.widget-holder.t-push-left.show  { animation: lumapushl  500ms ease-out forwards; }
+.widget-holder.t-push-right.show { animation: lumapushr  500ms ease-out forwards; }
+.widget-holder.t-push-up.show    { animation: lumapusht  500ms ease-out forwards; }
+.widget-holder.t-push-down.show  { animation: lumapushed 500ms ease-out forwards; }
+
+/* 10-13. wipe (擦除，clip-path) */
+@keyframes lumawipel { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes lumawiper { from { clip-path: inset(0 0 0 100%); } to { clip-path: inset(0 0 0 0); } }
+@keyframes lumawipet { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes lumawiped { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+.widget-holder.t-wipe-left.show  { animation: lumawipel  500ms linear forwards; }
+.widget-holder.t-wipe-right.show { animation: lumawiper  500ms linear forwards; }
+.widget-holder.t-wipe-up.show    { animation: lumawipet  500ms linear forwards; }
+.widget-holder.t-wipe-down.show  { animation: lumawiped  500ms linear forwards; }
+
+/* 14-15. zoom (缩放) */
+@keyframes lumazoomin  { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes lumazoomout { from { transform: scale(2);  opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.widget-holder.t-zoom-in.show  { animation: lumazoomin  600ms cubic-bezier(.2,.7,.3,1) forwards; }
+.widget-holder.t-zoom-out.show { animation: lumazoomout 600ms cubic-bezier(.2,.7,.3,1) forwards; }
+
+/* 16-17. spin (旋转) */
+@keyframes lumaspinin  { from { transform: rotate(-180deg) scale(.4); opacity: 0; } to { transform: rotate(0) scale(1); opacity: 1; } }
+@keyframes lumaspinout { from { transform: rotate(180deg) scale(2);   opacity: 0; } to { transform: rotate(0) scale(1); opacity: 1; } }
+.widget-holder.t-spin-in.show  { animation: lumaspinin  600ms ease-out forwards; }
+.widget-holder.t-spin-out.show { animation: lumaspinout 600ms ease-out forwards; }
+
+/* 18-19. flip (翻转 3D) */
+@keyframes lumafiph { from { transform: perspective(700px) rotateY(-90deg); opacity: 0; } to { transform: perspective(700px) rotateY(0); opacity: 1; } }
+@keyframes lumafipv { from { transform: perspective(700px) rotateX(-90deg); opacity: 0; } to { transform: perspective(700px) rotateX(0); opacity: 1; } }
+.widget-holder.t-flip-h.show { animation: lumafiph 700ms cubic-bezier(.3,.7,.3,1) forwards; }
+.widget-holder.t-flip-v.show { animation: lumafipv 700ms cubic-bezier(.3,.7,.3,1) forwards; }
+
+/* 20-21. blur (模糊) */
+@keyframes lumaburin  { from { filter: blur(20px); opacity: 0; } to { filter: blur(0); opacity: 1; } }
+@keyframes lumaburout { from { filter: blur(0);    opacity: 0; } to { filter: blur(0); opacity: 1; } }
+.widget-holder.t-blur-in.show  { animation: lumaburin  400ms ease-out forwards; }
+.widget-holder.t-blur-out.show { animation: lumaburout 400ms ease-out forwards; }
+
+/* 22. glitch (故障风) */
+@keyframes lumaglitch {
+  0%,100% { transform: none; opacity: 1; filter: none; }
+  15%     { transform: translate(4px,-3px); filter: hue-rotate(90deg); }
+  30%     { transform: translate(-3px,4px); filter: hue-rotate(-60deg); }
+  45%     { transform: translate(2px,2px); filter: hue-rotate(45deg); }
+  60%     { transform: translate(-2px,-2px); filter: hue-rotate(-30deg); }
+  75%     { transform: translate(1px,1px); }
+}
+.widget-holder.t-glitch.show { animation: lumaglitch 500ms steps(6) forwards; }
+
+/* 23. shake (抖动) */
+@keyframes lumashake {
+  0%,100% { transform: translateX(0); opacity: 1; }
+  10% { transform: translateX(-8px); opacity: .8; }
+  20% { transform: translateX(8px); }
+  30% { transform: translateX(-6px); opacity: .8; }
+  40% { transform: translateX(6px); }
+  50% { transform: translateX(-4px); opacity: .8; }
+  60% { transform: translateX(4px); }
+  70% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); opacity: .9; }
+}
+.widget-holder.t-shake.show { animation: lumashake 500ms ease-out forwards; }
+
+/* 24. flip-book / cube (翻书 / 立方体) */
+@keyframes lumafipb {
+  from { transform: perspective(900px) rotateY(90deg); transform-origin: left center; opacity: 0; }
+  to   { transform: perspective(900px) rotateY(0);     transform-origin: left center; opacity: 1; }
+}
+.widget-holder.t-flip-book.show { animation: lumafipb 700ms cubic-bezier(.3,.7,.3,1) forwards; }
+@keyframes lumacube {
+  from { transform: perspective(900px) rotateY(-90deg) translateZ(-50%); transform-origin: left center; opacity: 0; }
+  to   { transform: perspective(900px) rotateY(0)      translateZ(0);    transform-origin: left center; opacity: 1; }
+}
+.widget-holder.t-cube.show { animation: lumacube 700ms cubic-bezier(.3,.7,.3,1) forwards; }
+
+/* ==================== v1.3.31: 3 个新组件基础样式 ==================== */
+
+/* 边框滚动字（4 条 marquee 沿矩形边框） */
+.w-border-marquee {
+  position: relative; width: 100%; height: 100%;
+  overflow: hidden; box-sizing: border-box;
+}
+.w-border-marquee > marquee {
+  position: absolute; overflow: hidden; box-sizing: border-box;
+}
+/* 顺序：1=上（横向），2=右（纵向），3=左（纵向），4=下（横向） */
+.w-border-marquee > marquee:nth-child(1) { top: 0; left: 0; right: 0; height: 26%; }
+.w-border-marquee > marquee:nth-child(4) { bottom: 0; left: 0; right: 0; height: 26%; }
+.w-border-marquee > marquee:nth-child(2) { top: 0; bottom: 0; right: 0; width: 26%; }
+.w-border-marquee > marquee:nth-child(3) { top: 0; bottom: 0; left: 0; width: 26%; }
+
+/* 定时起播（简化占位） */
+.w-timer-play { width: 100%; height: 100%; }
+
+/* 关机倒计时提醒 */
+.w-poweroff { width: 100%; height: 100%; }
+

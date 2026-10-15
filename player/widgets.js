@@ -63,7 +63,161 @@ function renderVideo(holder, item, resolver, onEnd) {
   v.addEventListener('error', () => { if (!started) { clearTimeout(watchdog); onEnd && onEnd(); } });
   const p = v.play();
   if (p && p.catch) p.catch(() => {});
-  return () => { clearTimeout(watchdog); try { v.pause(); } catch (e) { /* ignore */ } };
+
+  // ★ 断点续播（v1.3.31，对齐竞品 BreakPointDBAdapter）：
+  //   1. 加载完成后查询服务端保存的播放位置，有则 seek
+  //   2. 播放中每 3s 上报一次进度，切换/退出前上报最终位置
+  //   3. 单 region 不循环时（视频自然播完切下一条）跳过上报——避免污染下一条素材的位置
+  if (window.__lumaPlayer) {
+    const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
+    v.addEventListener('loadedmetadata', () => {
+      if (window.__lumaPlayer.loadBreakpoint) {
+        const bp = window.__lumaPlayer.loadBreakpoint(bpKey);
+        if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
+          try { v.currentTime = bp.position; } catch (e) { /* ignore */ }
+        }
+      }
+    });
+    let lastReport = 0;
+    v.addEventListener('timeupdate', () => {
+      if (!item.duration && window.__lumaPlayer.reportBreakpoint) {
+        const now = Date.now();
+        if (now - lastReport > 3000 && v.currentTime > 0) {
+          lastReport = now;
+          try { window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0); } catch (e) { /* ignore */ }
+        }
+      }
+    });
+  }
+
+  return () => {
+    clearTimeout(watchdog);
+    if (window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint && item.id) {
+      const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
+      try { if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration); } catch (e) { /* ignore */ }
+    }
+    try { v.pause(); } catch (e) { /* ignore */ }
+  };
+}
+
+/* ---------------- 边框滚动字（对齐竞品 BorderTextViews） ----------------
+ * 4 条 marquee 沿矩形 4 边滚动：上下水平 + 左右垂直，形成"沿边框绕圈"的公告效果。
+ * Chromium 33 支持 <marquee>（vertical 属性）。
+ */
+function renderBorderMarquee(holder, item) {
+  const wrap = document.createElement('div');
+  wrap.className = 'w-border-marquee';
+  const fs = item.fontSize ? `font-size:${item.fontSize}px;` : 'font-size:28px;';
+  const color = item.color ? `color:${item.color};` : 'color:#ffffff;';
+  const bg = item.bg ? `background:${item.bg};` : 'background:rgba(0,0,0,0.5);';
+  const pad = item.padding != null ? item.padding : 4;
+  wrap.style.cssText = fs + color + bg + `padding:${pad}px;box-sizing:border-box;`;
+  const text = item.text || '欢迎光临，请多多关照';
+  const speed = item.speed || 4; // marquee 默认速度（1-10）
+  const behavior = item.behavior || 'scroll'; // scroll | slide | alternate
+  const makeLine = (vertical) => {
+    const m = document.createElement('marquee');
+    m.textContent = text + '　　' + text;
+    m.setAttribute('scrollamount', String(speed));
+    m.setAttribute('scrolldelay', item.delay || '90');
+    m.setAttribute('behavior', behavior);
+    if (vertical) m.setAttribute('direction', 'up');
+    m.className = vertical ? 'bm-v' : 'bm-h';
+    return m;
+  };
+  // 4 条：上、下、左、右
+  appendAll(wrap, [makeLine(false), makeLine(true), makeLine(true), makeLine(false)]);
+  holder.appendChild(wrap);
+  return () => {};
+}
+
+/* ---------------- 定时起播（对齐竞品 PlayListTimerInfo + ChooseTimePlayDialog） ----------------
+ * 到达配置时间点后显示节目内容，未到/结束时间后显示倒计时卡片。
+ * startTime / endTime 均为 "HH:MM" 格式，跨天（endTime < startTime）时视为次日。
+ */
+function renderTimerPlay(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-timer-play';
+  const fs = item.fontSize || 44;
+  const color = item.color || '#ffffff';
+  const bg = item.bg || 'rgba(0,0,0,0.6)';
+  d.style.cssText = `width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${bg};color:${color};font-size:${fs}px;font-weight:600;text-align:center;line-height:1.4;`;
+  holder.appendChild(d);
+
+  const startStr = item.startTime || '00:00';
+  const endStr = item.endTime || startStr;
+  const content = item.content || '节目内容';
+  const title = item.title || '';
+  const render = () => {
+    const now = new Date();
+    const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const [sh, sm] = String(startStr).split(':').map(Number);
+    const [eh, em] = String(endStr).split(':').map(Number);
+    const startSec = sh * 3600 + sm * 60;
+    const endSec = eh * 3600 + em * 60;
+    let inWindow, diff;
+    if (startSec <= endSec) {
+      inWindow = nowSec >= startSec && nowSec <= endSec;
+      if (!inWindow) diff = (nowSec > endSec) ? (startSec + 86400 - nowSec) : (startSec - nowSec);
+    } else {
+      // 跨天：[startSec, 86400) 或 [0, endSec]
+      inWindow = nowSec >= startSec || nowSec <= endSec;
+      if (!inWindow) diff = startSec - nowSec;
+    }
+    if (inWindow) {
+      d.innerHTML = `<div><div style="font-size:${fs + 8}px;margin-bottom:8px;">${esc(title || '节目播放中')}</div><div>${esc(content)}</div></div>`;
+    } else {
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      const s = diff % 60;
+      const pad2n = n => (n < 10 ? '0' + n : '' + n);
+      d.innerHTML = `<div><div style="opacity:.7;font-size:${fs - 8}px;margin-bottom:6px;">${esc(title || '节目')}</div><div>距离开始还有 <span style="font-variant-numeric:tabular-nums;">${pad2n(h)}:${pad2n(m)}:${pad2n(s)}</span></div><div style="opacity:.5;font-size:${fs - 16}px;margin-top:4px;">${esc(startStr)} ~ ${esc(endStr)}</div></div>`;
+    }
+  };
+  render();
+  const id = setInterval(render, 1000);
+  return () => clearInterval(id);
+}
+
+/* ---------------- 关机倒计时提醒（对齐竞品 PowerOffRem） ----------------
+ * 读取 window.__lumaPlayer.getServerState().poweroffAt（服务端下发的计划关机时间戳）；
+ * 显示 HH:MM:SS 倒计时；倒计时归零后可选自动调用 exit() 触发退出静默期流程。
+ */
+function renderPoweroff(holder, item) {
+  const d = document.createElement('div');
+  d.className = 'w-poweroff';
+  const fs = item.fontSize || 48;
+  const color = item.color || '#ffffff';
+  const bg = item.bg || 'rgba(255,0,0,0.6)';
+  const title = item.title || '即将关机';
+  d.style.cssText = `width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${bg};color:${color};font-size:${fs}px;font-weight:700;text-align:center;line-height:1.4;`;
+  holder.appendChild(d);
+
+  let autoExitFired = false;
+  const render = () => {
+    const st = (window.__lumaPlayer && window.__lumaPlayer.getServerState) ? window.__lumaPlayer.getServerState() : null;
+    const target = (st && st.poweroffAt) || item.fixedAt || 0;
+    if (!target) {
+      d.innerHTML = `<div style="opacity:.8;font-size:${fs - 8}px;">未设置关机计划</div>`;
+      return;
+    }
+    const diff = Math.max(0, target - Date.now());
+    if (diff === 0 && !autoExitFired) {
+      autoExitFired = true;
+      if (item.autoExit && window.__lumaPlayer && window.__lumaPlayer.exit) {
+        try { window.__lumaPlayer.exit('poweroff-scheduled'); } catch (e) { /* ignore */ }
+      }
+    }
+    const s = Math.floor(diff / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const pad2n = n => (n < 10 ? '0' + n : '' + n);
+    d.innerHTML = `<div style="opacity:.9;font-size:${fs - 8}px;margin-bottom:8px;">${esc(title)}</div><div style="font-variant-numeric:tabular-nums;letter-spacing:.05em;">${pad2n(h)}:${pad2n(m)}:${pad2n(sec)}</div><div style="opacity:.7;font-size:${fs - 20}px;margin-top:6px;">${esc(item.subtitle || '距下次关机')}</div>`;
+  };
+  render();
+  const id = setInterval(render, 1000);
+  return () => clearInterval(id);
 }
 
 /* ---------------- 文本 ---------------- */
@@ -656,6 +810,9 @@ const RENDERERS = {
   video: renderVideo,
   text: renderText,
   marquee: renderMarquee,
+  'border-marquee': renderBorderMarquee,
+  'timer-play': renderTimerPlay,
+  poweroff: renderPoweroff,
   clock: renderClock,
   date: renderDate,
   weekday: renderWeekday,

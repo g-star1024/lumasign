@@ -85,6 +85,32 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(ctx: Context?, intent: Intent?) { onConnectivityChanged(isNetworkOnline()) }
     }
 
+    // ★ v1.3.31：存储热插拔监听（对齐竞品 DeviceChangeListener / DiskChangeReceiver）
+    // 收到 ACTION_MEDIA_MOUNTED/EJECT/REMOVED 后重建挂载路径列表，通过 getNativeStatus 上报给心跳
+    internal var mountedDevices: List<String> = emptyList()
+    private val storageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            refreshMountedDevices()
+            // 广播给前台 WebView：让播放端有机会触发 storage-changed 事件（暂仅记录日志）
+            Log.i(TAG, "storage changed: ${intent?.action} -> $mountedDevices")
+        }
+    }
+
+    // ★ v1.3.31：关机/重启广播（对齐竞品 PowerOffRem）
+    // 收到系统关机广播后主动通知 WebView 立即上报退出 + 保存断点
+    private val shutdownReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            Log.w(TAG, "system power event: $action")
+            try {
+                webview?.evaluateJavascript(
+                    "window.__lumaPlayer && (window.__lumaPlayer.exit('${java.lang.String(action).replace("'", "\\'")}'), 1)",
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     companion object {
         const val PREFS = "luma_config"
         const val KEY_SERVER = "server_url"
@@ -183,6 +209,7 @@ class MainActivity : AppCompatActivity() {
             handleIntent(intent)
             val server = prefs.getString(KEY_SERVER, "") ?: ""
             registerConnectivity()
+            registerSystemReceivers()
             if (server.isBlank()) {
                 showBootStatus("④ 未配置服务端：零配置发现 / 手动配置")
                 showDiscoveringThenConfig()
@@ -690,6 +717,54 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    // ★ v1.3.31：存储挂载路径刷新（SD/USB 卡热插拔）
+    internal fun refreshMountedDevices() {
+        val list = mutableListOf<String>()
+        // 内置存储（作为基线，始终包含）
+        try {
+            val st = android.os.Environment.getExternalStorageDirectory()
+            list.add(st.absolutePath)
+        } catch (_: Exception) {}
+        // 外部挂载点（SD/USB）：遍历 /mnt 与 /storage
+        for (root in arrayOf("/mnt", "/storage", "/mnt/sdcard")) {
+            try {
+                val d = java.io.File(root)
+                d.listFiles()?.forEach { if (it.isDirectory && it.canRead()) list.add(it.absolutePath) }
+            } catch (_: Exception) {}
+        }
+        // 去重
+        mountedDevices = list.distinct()
+    }
+
+    // ★ v1.3.31：存储/关机广播注册
+    private fun registerSystemReceivers() {
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_MEDIA_MOUNTED)
+                addAction(Intent.ACTION_MEDIA_EJECT)
+                addAction(Intent.ACTION_MEDIA_REMOVED)
+                addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+                addAction(Intent.ACTION_MEDIA_CHECKING)
+            }
+            registerReceiver(storageReceiver, filter)
+        } catch (_: Exception) {}
+
+        try {
+            val shutdownFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_SHUTDOWN)
+                addAction(Intent.ACTION_REBOOT)
+            }
+            registerReceiver(shutdownReceiver, shutdownFilter)
+        } catch (_: Exception) {}
+
+        refreshMountedDevices()
+    }
+
+    private fun unregisterSystemReceivers() {
+        try { unregisterReceiver(storageReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(shutdownReceiver) } catch (_: Exception) {}
+    }
+
     /** 深链配置：lumasync://config?server=http://192.168.1.10:7788&code=LS-0001 */
     private fun handleIntent(intent: Intent?) {
         val data = intent?.data ?: return
@@ -964,6 +1039,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         unregisterConnectivity()
+        unregisterSystemReceivers()
         retryRunnable?.let { uiHandler.removeCallbacks(it) }
         webView.destroy()
         super.onDestroy()

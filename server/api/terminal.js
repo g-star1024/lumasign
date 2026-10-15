@@ -126,6 +126,10 @@ export function registerTerminalApi(router, ctx) {
     };
     if (b.storageFree != null) patch.hardware = { ...t.hardware, storageFree: b.storageFree, storageTotal: b.storageTotal ?? t.hardware?.storageTotal };
     if (b.volume != null) patch.volume = b.volume;
+    // ★ v1.3.31：存储热插拔设备列表（Android DeviceChangeListener 上报挂载的 SD/USB 路径）
+    if (Array.isArray(b.devices)) patch.devices = b.devices;
+    // ★ v1.3.31：计划关机时间戳（管理端下发，客户端渲染 PowerOffRem 组件）
+    if (b.poweroffAt != null) patch.poweroffAt = b.poweroffAt;
     S('terminals').touch(t.id, patch);
 
     logger.task({ kind: 'heartbeat', terminalId: t.id });
@@ -149,6 +153,9 @@ export function registerTerminalApi(router, ctx) {
       syncGroupId: t.syncGroupId || null,
       videoWall: t.videoWall || null,
       name: t.name, code: t.code,
+      // ★ v1.3.31：客户端 PowerOffRem widget 消费 poweroffAt；同步 devices 回包便于诊断
+      poweroffAt: t.poweroffAt ?? null,
+      devices: t.devices ?? [],
     });
   });
 
@@ -436,6 +443,9 @@ export function registerTerminalApi(router, ctx) {
       ok(res);
     } catch (_e) { fail(res, '删除失败', 500); }
   });
+
+  // ★ v1.3.31: 断点续播 + 关机计划下发（对齐竞品 BreakPointDBAdapter / PowerOffRem）
+  registerBreakpointRoutes(router, store, ctx);
 }
 
 /* ================= 工具 ================= */
@@ -476,4 +486,65 @@ export function raiseAlertThrottled(store, bus, key, a, ms = 3600000) {
   if (Date.now() - last < ms) return null;
   alertThrottle.set(key, Date.now());
   return raiseAlert(store, bus, a);
+}
+
+// ============ v1.3.31: 断点续播（对齐竞品 BreakPointDBAdapter） ============
+// collection: breakpoints  [{ id, terminalId, key, position, duration, updatedAt }]
+// key 由客户端生成：itemId|mediaId，用于定位到具体素材
+export function registerBreakpointRoutes(router, store, ctx) {
+  const S = n => store.col(n);
+
+  // 客户端上报播放进度（节流：只在关键时点调用）
+  router.post('/api/t/breakpoint', async (req, res, p, url) => {
+    const b = await readJson(req);
+    const t = authTerminal(req, url, b);
+    if (!t) return fail(res, '终端未注册或令牌无效', 401);
+    if (!b.key || typeof b.position !== 'number' || b.position <= 0) {
+      return fail(res, '参数错误', 400);
+    }
+    const col = S('breakpoints');
+    let row = col.find(r => r.terminalId === t.id && r.key === b.key)[0];
+    if (row) {
+      col.update(row.id, { position: b.position, duration: b.duration || 0, updatedAt: Date.now() });
+    } else {
+      col.insert({
+        id: uid('bp_'), terminalId: t.id, key: b.key,
+        position: b.position, duration: b.duration || 0,
+      });
+    }
+    // 每终端最多保留 200 条断点（LRU）
+    const all = col.find(r => r.terminalId === t.id);
+    if (all.length > 200) {
+      all.sort((a, b2) => (a.updatedAt || 0) - (b2.updatedAt || 0));
+      for (const r of all.slice(200)) col.remove(r.id);
+    }
+    // 每天清理一次全库过期（>7d）
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 3600 * 1000;
+    col.removeWhere(r => (r.updatedAt || 0) < weekAgo);
+    ok(res, { ok: true });
+  });
+
+  // 客户端拉取该终端所有断点（新节目加载时）
+  router.get('/api/t/breakpoints', async (req, res, p, url) => {
+    const t = authTerminal(req, url, p);
+    if (!t) return fail(res, '终端未注册或令牌无效', 401);
+    const list = S('breakpoints').find(r => r.terminalId === t.id).map(r => ({
+      key: r.key, position: r.position, duration: r.duration || 0, updatedAt: r.updatedAt,
+    }));
+    ok(res, { ok: true, breakpoints: list });
+  });
+
+  // 管理端下发关机计划（对齐竞品 PowerOffRem 的调度源）
+  router.post('/api/admin/terminals/:id/poweroff', async (req, res, p, url) => {
+    const user = ctx.user || ctx.auth?.user;
+    if (!ctx.auth?.can(user, 'terminal:update')) return fail(res, '无权限', 403);
+    const b = await readJson(req);
+    const t = S('terminals').byId(p.id);
+    if (!t) return fail(res, '终端不存在', 404);
+    const patch = { poweroffAt: b.poweroffAt ?? null, updatedAt: Date.now() };
+    S('terminals').update(t.id, patch);
+    bus.broadcastTerminal(t.id, { type: 'poweroff', payload: { poweroffAt: b.poweroffAt ?? null } });
+    ok(res, { ok: true, poweroffAt: patch.poweroffAt });
+  });
 }

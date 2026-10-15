@@ -4561,11 +4561,158 @@ function _unsupported_iterable_to_array(o, minLen) {
         });
         var p = v.play();
         if (p && p.catch) p.catch(function() {});
+        if (window.__lumaPlayer) {
+            var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
+            v.addEventListener("loadedmetadata", function() {
+                if (window.__lumaPlayer.loadBreakpoint) {
+                    var bp = window.__lumaPlayer.loadBreakpoint(bpKey);
+                    if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
+                        try {
+                            v.currentTime = bp.position;
+                        } catch (e) {}
+                    }
+                }
+            });
+            var lastReport = 0;
+            v.addEventListener("timeupdate", function() {
+                if (!item.duration && window.__lumaPlayer.reportBreakpoint) {
+                    var now = Date.now();
+                    if (now - lastReport > 3e3 && v.currentTime > 0) {
+                        lastReport = now;
+                        try {
+                            window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0);
+                        } catch (e) {}
+                    }
+                }
+            });
+        }
         return function() {
             clearTimeout(watchdog);
+            if (window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint && item.id) {
+                var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
+                try {
+                    if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration);
+                } catch (e) {}
+            }
             try {
                 v.pause();
             } catch (e) {}
+        };
+    }
+    function renderBorderMarquee(holder, item) {
+        var wrap = document.createElement("div");
+        wrap.className = "w-border-marquee";
+        var fs = item.fontSize ? "font-size:".concat(item.fontSize, "px;") : "font-size:28px;";
+        var color = item.color ? "color:".concat(item.color, ";") : "color:#ffffff;";
+        var bg = item.bg ? "background:".concat(item.bg, ";") : "background:rgba(0,0,0,0.5);";
+        var pad3 = item.padding != null ? item.padding : 4;
+        wrap.style.cssText = fs + color + bg + "padding:".concat(pad3, "px;box-sizing:border-box;");
+        var text = item.text || "\u6B22\u8FCE\u5149\u4E34\uFF0C\u8BF7\u591A\u591A\u5173\u7167";
+        var speed = item.speed || 4;
+        var behavior = item.behavior || "scroll";
+        var makeLine = function makeLine(vertical) {
+            var m = document.createElement("marquee");
+            m.textContent = text + "\u3000\u3000" + text;
+            m.setAttribute("scrollamount", String(speed));
+            m.setAttribute("scrolldelay", item.delay || "90");
+            m.setAttribute("behavior", behavior);
+            if (vertical) m.setAttribute("direction", "up");
+            m.className = vertical ? "bm-v" : "bm-h";
+            return m;
+        };
+        appendAll(wrap, [
+            makeLine(false),
+            makeLine(true),
+            makeLine(true),
+            makeLine(false)
+        ]);
+        holder.appendChild(wrap);
+        return function() {};
+    }
+    function renderTimerPlay(holder, item) {
+        var d = document.createElement("div");
+        d.className = "w-timer-play";
+        var fs = item.fontSize || 44;
+        var color = item.color || "#ffffff";
+        var bg = item.bg || "rgba(0,0,0,0.6)";
+        d.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:".concat(bg, ";color:").concat(color, ";font-size:").concat(fs, "px;font-weight:600;text-align:center;line-height:1.4;");
+        holder.appendChild(d);
+        var startStr = item.startTime || "00:00";
+        var endStr = item.endTime || startStr;
+        var content = item.content || "\u8282\u76EE\u5185\u5BB9";
+        var title = item.title || "";
+        var render = function render() {
+            var now = /* @__PURE__ */ new Date();
+            var nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+            var _String_split_map = _sliced_to_array(String(startStr).split(":").map(Number), 2), sh = _String_split_map[0], sm = _String_split_map[1];
+            var _String_split_map1 = _sliced_to_array(String(endStr).split(":").map(Number), 2), eh = _String_split_map1[0], em = _String_split_map1[1];
+            var startSec = sh * 3600 + sm * 60;
+            var endSec = eh * 3600 + em * 60;
+            var inWindow2, diff;
+            if (startSec <= endSec) {
+                inWindow2 = nowSec >= startSec && nowSec <= endSec;
+                if (!inWindow2) diff = nowSec > endSec ? startSec + 86400 - nowSec : startSec - nowSec;
+            } else {
+                inWindow2 = nowSec >= startSec || nowSec <= endSec;
+                if (!inWindow2) diff = startSec - nowSec;
+            }
+            if (inWindow2) {
+                d.innerHTML = '<div><div style="font-size:'.concat(fs + 8, 'px;margin-bottom:8px;">').concat(esc(title || "\u8282\u76EE\u64AD\u653E\u4E2D"), "</div><div>").concat(esc(content), "</div></div>");
+            } else {
+                var h = Math.floor(diff / 3600);
+                var m = Math.floor(diff % 3600 / 60);
+                var s = diff % 60;
+                var pad2n = function pad2n(n) {
+                    return n < 10 ? "0" + n : "" + n;
+                };
+                d.innerHTML = '<div><div style="opacity:.7;font-size:'.concat(fs - 8, 'px;margin-bottom:6px;">').concat(esc(title || "\u8282\u76EE"), '</div><div>距离开始还有 <span style="font-variant-numeric:tabular-nums;">').concat(pad2n(h), ":").concat(pad2n(m), ":").concat(pad2n(s), '</span></div><div style="opacity:.5;font-size:').concat(fs - 16, 'px;margin-top:4px;">').concat(esc(startStr), " ~ ").concat(esc(endStr), "</div></div>");
+            }
+        };
+        render();
+        var id = setInterval(render, 1e3);
+        return function() {
+            return clearInterval(id);
+        };
+    }
+    function renderPoweroff(holder, item) {
+        var d = document.createElement("div");
+        d.className = "w-poweroff";
+        var fs = item.fontSize || 48;
+        var color = item.color || "#ffffff";
+        var bg = item.bg || "rgba(255,0,0,0.6)";
+        var title = item.title || "\u5373\u5C06\u5173\u673A";
+        d.style.cssText = "width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:".concat(bg, ";color:").concat(color, ";font-size:").concat(fs, "px;font-weight:700;text-align:center;line-height:1.4;");
+        holder.appendChild(d);
+        var autoExitFired = false;
+        var render = function render() {
+            var st = window.__lumaPlayer && window.__lumaPlayer.getServerState ? window.__lumaPlayer.getServerState() : null;
+            var target = st && st.poweroffAt || item.fixedAt || 0;
+            if (!target) {
+                d.innerHTML = '<div style="opacity:.8;font-size:'.concat(fs - 8, 'px;">未设置关机计划</div>');
+                return;
+            }
+            var diff = Math.max(0, target - Date.now());
+            if (diff === 0 && !autoExitFired) {
+                autoExitFired = true;
+                if (item.autoExit && window.__lumaPlayer && window.__lumaPlayer.exit) {
+                    try {
+                        window.__lumaPlayer.exit("poweroff-scheduled");
+                    } catch (e) {}
+                }
+            }
+            var s = Math.floor(diff / 1e3);
+            var h = Math.floor(s / 3600);
+            var m = Math.floor(s % 3600 / 60);
+            var sec = s % 60;
+            var pad2n = function pad2n(n) {
+                return n < 10 ? "0" + n : "" + n;
+            };
+            d.innerHTML = '<div style="opacity:.9;font-size:'.concat(fs - 8, 'px;margin-bottom:8px;">').concat(esc(title), '</div><div style="font-variant-numeric:tabular-nums;letter-spacing:.05em;">').concat(pad2n(h), ":").concat(pad2n(m), ":").concat(pad2n(sec), '</div><div style="opacity:.7;font-size:').concat(fs - 20, 'px;margin-top:6px;">').concat(esc(item.subtitle || "\u8DDD\u4E0B\u6B21\u5173\u673A"), "</div>");
+        };
+        render();
+        var id = setInterval(render, 1e3);
+        return function() {
+            return clearInterval(id);
         };
     }
     function renderText(holder, item) {
@@ -5415,6 +5562,9 @@ function _unsupported_iterable_to_array(o, minLen) {
         video: renderVideo,
         text: renderText,
         marquee: renderMarquee,
+        "border-marquee": renderBorderMarquee,
+        "timer-play": renderTimerPlay,
+        poweroff: renderPoweroff,
         clock: renderClock,
         date: renderDate,
         weekday: renderWeekday,
@@ -5458,7 +5608,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
-    var HTML_V = "1443";
+    var HTML_V = "1450";
     var pad22 = function pad22(n) {
         return n < 10 ? "0" + n : "" + n;
     };
@@ -5475,6 +5625,46 @@ function _unsupported_iterable_to_array(o, minLen) {
             if (ns[i] != null) p.appendChild(ns[i]);
         }
         return p;
+    };
+    var TRANSITION_MS = {
+        "fade": 550,
+        "none": 0,
+        // 滑动推拉（4）
+        "slide-left": 500,
+        "slide-right": 500,
+        "slide-up": 500,
+        "slide-down": 500,
+        // 推入（4）
+        "push-left": 500,
+        "push-right": 500,
+        "push-up": 500,
+        "push-down": 500,
+        // 擦除（4）
+        "wipe-left": 500,
+        "wipe-right": 500,
+        "wipe-up": 500,
+        "wipe-down": 500,
+        // 缩放（2）
+        "zoom-in": 600,
+        "zoom-out": 600,
+        // 旋转（2）
+        "spin-in": 600,
+        "spin-out": 600,
+        // 翻转（2）
+        "flip-h": 700,
+        "flip-v": 700,
+        // 模糊（2）
+        "blur-in": 400,
+        "blur-out": 400,
+        // 特效（3）
+        "glitch": 500,
+        "shake": 500,
+        "flip-book": 700,
+        // 3D 视差（1）
+        "cube": 700
+    };
+    var transitionMs = function transitionMs(name) {
+        return TRANSITION_MS[name] != null ? TRANSITION_MS[name] : 550;
     };
     var el = function el(tag, opts, kids) {
         var d = document.createElement(tag);
@@ -5572,6 +5762,9 @@ function _unsupported_iterable_to_array(o, minLen) {
             this.navStack = [];
             this.navBar = null;
             this.navTimer = null;
+            this._serverState = {};
+            this._breakpointCache = {};
+            this._bpTimer = null;
         }
         _create_class(Player, [
             {
@@ -5702,6 +5895,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                             }
                             hideFallback();
                             ping("build-stage");
+                            if (this.mode === "term" && this.terminalId) this.refreshBreakpoints();
                             this.buildStage(layout);
                             ping("stage-built");
                             this.startRegions(layout);
@@ -6584,7 +6778,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 switch(_state.label){
                                     case 0:
                                         _loop = function() {
-                                            var items, item, warm, holder, ended, onEnd, stop, prev, single, ms, startedAt, endedAt;
+                                            var items, item, warm, holder, ended, onEnd, stop, tName, tDur, prev, single, ms, startedAt, endedAt, tName2;
                                             return _ts_generator(this, function(_state) {
                                                 switch(_state.label){
                                                     case 0:
@@ -6635,6 +6829,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         requestAnimationFrame(function() {
                                                             return holder.classList.add("show");
                                                         });
+                                                        tName = region.transition || "fade";
+                                                        if (tName !== "none") holder.classList.add("t-" + tName);
+                                                        tDur = transitionMs(tName);
                                                         prev = showing;
                                                         showing = {
                                                             holder: holder,
@@ -6647,7 +6844,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                                 } catch (e) {}
                                                                 if (prev.holder.parentNode) prev.holder.remove();
                                                             }
-                                                        }, region.transition === "none" ? 30 : 550);
+                                                        }, tName === "none" ? 30 : tDur);
                                                         single = items.length === 1;
                                                         ms = void 0;
                                                         if (item.widget === "video" && !(item.duration > 0)) ms = -1;
@@ -6682,9 +6879,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         ];
                                                         holder.classList.remove("show");
                                                         holder.classList.add("hide");
+                                                        tName2 = region.transition || "fade";
                                                         return [
                                                             4,
-                                                            _this.wait(region.transition === "none" ? 0 : 450, function() {
+                                                            _this.wait(tName2 === "none" ? 0 : transitionMs(tName2), function() {
                                                                 return true;
                                                             }, ctl)
                                                         ];
@@ -7119,7 +7317,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                     pullNativeStatus();
                     this.hbTimer = setInterval(function() {
                         return _async_to_generator(function() {
-                            var _this_layout, body, info, t0, dt, unused;
+                            var _this_layout, body, info, t0, hr, js, unused, dt, unused1;
                             return _ts_generator(this, function(_state) {
                                 switch(_state.label){
                                     case 0:
@@ -7130,9 +7328,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     case 1:
                                         _state.trys.push([
                                             1,
-                                            3,
+                                            8,
                                             ,
-                                            4
+                                            9
                                         ]);
                                         body = {
                                             terminalId: this.terminalId,
@@ -7154,10 +7352,19 @@ function _unsupported_iterable_to_array(o, minLen) {
                                             if (info.mem != null) body.mem = info.mem;
                                             if (info.uptime != null) body.uptime = info.uptime;
                                             if (info.crashCount != null) body.crashCount = info.crashCount;
+                                            if (Array.isArray(info.devices)) body.devices = info.devices;
                                         } else if (typeof performance !== "undefined") {
                                             body.uptime = Math.floor(performance.now() / 1e3);
                                         }
                                         t0 = performance.now();
+                                        _state.label = 2;
+                                    case 2:
+                                        _state.trys.push([
+                                            2,
+                                            6,
+                                            ,
+                                            7
+                                        ]);
                                         return [
                                             4,
                                             fetch("/api/t/heartbeat", {
@@ -7169,21 +7376,45 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                 body: JSON.stringify(body)
                                             })
                                         ];
-                                    case 2:
-                                        _state.sent();
+                                    case 3:
+                                        hr = _state.sent();
+                                        if (!hr.ok) return [
+                                            3,
+                                            5
+                                        ];
+                                        return [
+                                            4,
+                                            hr.json()
+                                        ];
+                                    case 4:
+                                        js = _state.sent();
+                                        if (js && js.ok !== false) this._serverState = js;
+                                        _state.label = 5;
+                                    case 5:
+                                        return [
+                                            3,
+                                            7
+                                        ];
+                                    case 6:
+                                        unused = _state.sent();
+                                        return [
+                                            3,
+                                            7
+                                        ];
+                                    case 7:
                                         dt = Math.round(performance.now() - t0);
                                         if (dt > 0 && dt < 6e4) this._hbLatency = dt;
                                         return [
                                             3,
-                                            4
+                                            9
                                         ];
-                                    case 3:
-                                        unused = _state.sent();
+                                    case 8:
+                                        unused1 = _state.sent();
                                         return [
                                             3,
-                                            4
+                                            9
                                         ];
-                                    case 4:
+                                    case 9:
                                         return [
                                             2
                                         ];
@@ -7191,6 +7422,166 @@ function _unsupported_iterable_to_array(o, minLen) {
                             });
                         }).call(_this);
                     }, Math.max(10, iv) * 1e3);
+                }
+            },
+            {
+                // ★ v1.3.31：暴露服务端状态给 widget（PowerOff / TimerPlay 等）
+                key: "getServerState",
+                value: function getServerState() {
+                    return this._serverState || {};
+                }
+            },
+            {
+                // ★ v1.3.31：断点续播（对齐竞品 BreakPointDBAdapter）
+                //   key 格式：itemId|mediaId 或 itemId|url；返回 {position, duration} 或 null
+                key: "loadBreakpoint",
+                value: function loadBreakpoint(key) {
+                    var c = this._breakpointCache;
+                    var b = c[key];
+                    if (!b) return null;
+                    if (b.expired && b.expired < Date.now()) return null;
+                    return {
+                        position: b.position || 0,
+                        duration: b.duration || 0
+                    };
+                }
+            },
+            {
+                // ★ v1.3.31：断点续播上报（本地缓存 + 服务端持久化）
+                key: "reportBreakpoint",
+                value: function reportBreakpoint(key, position, duration) {
+                    var _this = this;
+                    if (!key || !position) return;
+                    var now = Date.now();
+                    var expireMs = 24 * 3600 * 1e3;
+                    this._breakpointCache[key] = {
+                        position: position,
+                        duration: duration,
+                        at: now,
+                        expired: now + expireMs
+                    };
+                    if (!this._bpTimer) {
+                        this._bpTimer = setInterval(function() {
+                            var t = Date.now();
+                            for(var k in _this._breakpointCache){
+                                if (_this._breakpointCache[k].expired < t) delete _this._breakpointCache[k];
+                            }
+                        }, 60 * 60 * 1e3);
+                    }
+                    if (!this.terminalId) return;
+                    fetch("/api/t/breakpoint", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        credentials: "same-origin",
+                        body: JSON.stringify({
+                            terminalId: this.terminalId,
+                            token: this.token || "",
+                            key: key,
+                            position: position,
+                            duration: duration
+                        })
+                    }).catch(function() {});
+                }
+            },
+            {
+                key: "refreshBreakpoints",
+                value: // ★ v1.3.31：请求服务端刷新断点缓存（新节目加载时拉取最近 24h 保存的进度）
+                function refreshBreakpoints() {
+                    return _async_to_generator(function() {
+                        var r, js, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, b, now, unused;
+                        return _ts_generator(this, function(_state) {
+                            switch(_state.label){
+                                case 0:
+                                    if (!this.terminalId) return [
+                                        2
+                                    ];
+                                    _state.label = 1;
+                                case 1:
+                                    _state.trys.push([
+                                        1,
+                                        4,
+                                        ,
+                                        5
+                                    ]);
+                                    return [
+                                        4,
+                                        fetch("/api/t/breakpoints?terminalId=".concat(encodeURIComponent(this.terminalId), "&token=").concat(encodeURIComponent(this.token || "")))
+                                    ];
+                                case 2:
+                                    r = _state.sent();
+                                    if (!r.ok) return [
+                                        2
+                                    ];
+                                    return [
+                                        4,
+                                        r.json()
+                                    ];
+                                case 3:
+                                    js = _state.sent();
+                                    if (js && js.ok && js.breakpoints) {
+                                        _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
+                                        try {
+                                            for(_iterator = js.breakpoints[Symbol.iterator](); !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
+                                                b = _step.value;
+                                                if (b.key && b.position > 0) {
+                                                    now = Date.now();
+                                                    this._breakpointCache[b.key] = {
+                                                        position: b.position,
+                                                        duration: b.duration || 0,
+                                                        at: now,
+                                                        expired: now + 24 * 3600 * 1e3
+                                                    };
+                                                }
+                                            }
+                                        } catch (err) {
+                                            _didIteratorError = true;
+                                            _iteratorError = err;
+                                        } finally{
+                                            try {
+                                                if (!_iteratorNormalCompletion && _iterator.return != null) {
+                                                    _iterator.return();
+                                                }
+                                            } finally{
+                                                if (_didIteratorError) {
+                                                    throw _iteratorError;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return [
+                                        3,
+                                        5
+                                    ];
+                                case 4:
+                                    unused = _state.sent();
+                                    return [
+                                        3,
+                                        5
+                                    ];
+                                case 5:
+                                    return [
+                                        2
+                                    ];
+                            }
+                        });
+                    }).call(this);
+                }
+            },
+            {
+                // ★ v1.3.31：退出播放（PowerOff 倒计时归零、管理员触发等场景）
+                key: "exit",
+                value: function exit(reason) {
+                    try {
+                        if (typeof window.LumaBridge !== "undefined" && window.LumaBridge && window.LumaBridge.exitApp) window.LumaBridge.exitApp();
+                    } catch (unused) {}
+                    try {
+                        if (typeof window.LumaBridge !== "undefined" && window.LumaBridge && window.LumaBridge.shutdown) window.LumaBridge.shutdown();
+                    } catch (unused) {}
+                    try {
+                        if (this.terminalId) fetch("/api/t/ping?stage=exit&reason=".concat(encodeURIComponent(reason || "js-exit"), "&t=").concat(Date.now())).catch(function() {});
+                    } catch (unused) {}
                 }
             },
             {

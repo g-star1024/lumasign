@@ -27,7 +27,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 //   4.4 WebView 会把旧 index.html 永久钉死在缓存里（无验证器跳过重验），引擎文件却因
 //   mtime 变化总能更新 —— 引擎一旦比 HTML 新，用 sessionStorage 戳检测并强制换新 URL，
 //   穿透死缓存。URL 带 _v 参数则不再跳（双保险防循环）。
-const HTML_V = '1443';
+const HTML_V = '1450';
 
 // ★ Chromium 33（Android 4.4 WebView）兼容层 —— 以下方法在 33 上不存在，全项目禁用：
 //   padStart/padEnd(ES2017)、Array.includes(ES2016)、startsWith/endsWith/find/findIndex/
@@ -36,6 +36,31 @@ const HTML_V = '1443';
 const pad2 = n => (n < 10 ? '0' + n : '' + n);
 const objAssign = (t, s) => { if (s) { for (const k in s) { if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k]; } } return t; };
 const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] != null) p.appendChild(ns[i]); } return p; };
+
+// ★ v1.3.31：24 种切换动画时长表（对齐竞品 MPlayer-5.99SM 的 24 动画集）
+//   CSS keyframes 定义在 styles.css，class 前缀 t-，holder 上加 t-{name} 生效。
+const TRANSITION_MS = {
+  'fade': 550, 'none': 0,
+  // 滑动推拉（4）
+  'slide-left': 500, 'slide-right': 500, 'slide-up': 500, 'slide-down': 500,
+  // 推入（4）
+  'push-left': 500, 'push-right': 500, 'push-up': 500, 'push-down': 500,
+  // 擦除（4）
+  'wipe-left': 500, 'wipe-right': 500, 'wipe-up': 500, 'wipe-down': 500,
+  // 缩放（2）
+  'zoom-in': 600, 'zoom-out': 600,
+  // 旋转（2）
+  'spin-in': 600, 'spin-out': 600,
+  // 翻转（2）
+  'flip-h': 700, 'flip-v': 700,
+  // 模糊（2）
+  'blur-in': 400, 'blur-out': 400,
+  // 特效（3）
+  'glitch': 500, 'shake': 500, 'flip-book': 700,
+  // 3D 视差（1）
+  'cube': 700,
+};
+const transitionMs = name => (TRANSITION_MS[name] != null ? TRANSITION_MS[name] : 550);
 const el = (tag, opts, kids) => {
   const d = document.createElement(tag);
   if (opts) { for (const k in opts) { if (!Object.prototype.hasOwnProperty.call(opts, k)) continue;
@@ -111,6 +136,9 @@ class Player {
     this.navStack = [];        // 热区跳转导航栈：[{id, name}, ...]
     this.navBar = null;        // 返回按钮容器 DOM
     this.navTimer = null;      // 自动返回定时器
+    this._serverState = {};    // ★ v1.3.31：心跳返回的服务端状态（poweroffAt/devices 等）
+    this._breakpointCache = {}; // ★ v1.3.31：断点续播本地缓存 key -> {position, duration}
+    this._bpTimer = null;
   }
 
   stop() {
@@ -186,6 +214,8 @@ class Player {
     if (!opts.fromNav) { this.navStack = []; this.cancelNavTimer(); }
     hideFallback();
     ping('build-stage');
+    // ★ v1.3.31：拉取服务端保存的断点续播位置（本地缓存 + 服务端合并）
+    if (this.mode === 'term' && this.terminalId) this.refreshBreakpoints();
     this.buildStage(layout);
     ping('stage-built');
     this.startRegions(layout);
@@ -706,11 +736,16 @@ class Player {
 
         // ★ 交叉淡入淡出：新层盖在旧层之上淡入，完成后才移除旧层 —— 切换全程无黑屏。
         //   旧实现先淡出旧层（450ms 露出黑色舞台背景）再淡入新层，图片切换必闪一下黑。
+        //   ★ v1.3.31：24 种切换动画。tName 从 region.transition 读取（默认 fade），
+        //   给 holder 加 t-{name} class，CSS keyframes 按 name 触发；过渡时长查 TRANSITION_MS 表。
+        const tName = region.transition || 'fade';
+        if (tName !== 'none') holder.classList.add('t-' + tName);
+        const tDur = transitionMs(tName);
         const prev = showing;
         showing = { holder, stop };
         setTimeout(() => {
           if (prev) { try { prev.stop(); } catch (e) { /* ignore */ } if (prev.holder.parentNode) prev.holder.remove(); }
-        }, (region.transition === 'none') ? 30 : 550);
+        }, (tName === 'none') ? 30 : tDur);
 
         const single = items.length === 1;
         let ms;
@@ -731,7 +766,8 @@ class Player {
           // 不循环的最后一项：淡出后收尾（循环播放的切换由下一轮交叉淡入接管，不做淡出）
           holder.classList.remove('show');
           holder.classList.add('hide');
-          await this.wait((region.transition === 'none') ? 0 : 450, () => true, ctl);
+          const tName2 = region.transition || 'fade';
+          await this.wait((tName2 === 'none') ? 0 : transitionMs(tName2), () => true, ctl);
           try { stop(); } catch (e2) { /* ignore */ }
           if (holder.parentNode) holder.remove();
           showing = null;
@@ -924,18 +960,88 @@ class Player {
           if (info.mem != null) body.mem = info.mem;
           if (info.uptime != null) body.uptime = info.uptime;
           if (info.crashCount != null) body.crashCount = info.crashCount;
+          // ★ v1.3.31：存储热插拔设备列表（对齐竞品 DeviceChangeListener）
+          if (Array.isArray(info.devices)) body.devices = info.devices;
         } else if (typeof performance !== 'undefined') {
           body.uptime = Math.floor(performance.now() / 1000);
         }
         const t0 = performance.now();
-        await fetch('/api/t/heartbeat', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-          body: JSON.stringify(body),
-        });
+        // ★ v1.3.31：读取心跳响应保存服务端状态（poweroffAt / devices 存储列表 / powerSchedule 等）
+        try {
+          const hr = await fetch('/api/t/heartbeat', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+            body: JSON.stringify(body),
+          });
+          if (hr.ok) {
+            const js = await hr.json();
+            if (js && js.ok !== false) this._serverState = js;
+          }
+        } catch { /* 心跳失败不影响主循环 */ }
         const dt = Math.round(performance.now() - t0);
         if (dt > 0 && dt < 60000) this._hbLatency = dt;
       } catch {}
     }, Math.max(10, iv) * 1000);
+  }
+
+  // ★ v1.3.31：暴露服务端状态给 widget（PowerOff / TimerPlay 等）
+  getServerState() { return this._serverState || {}; }
+
+  // ★ v1.3.31：断点续播（对齐竞品 BreakPointDBAdapter）
+  //   key 格式：itemId|mediaId 或 itemId|url；返回 {position, duration} 或 null
+  loadBreakpoint(key) {
+    const c = this._breakpointCache;
+    const b = c[key];
+    if (!b) return null;
+    if (b.expired && b.expired < Date.now()) return null;
+    return { position: b.position || 0, duration: b.duration || 0 };
+  }
+
+  // ★ v1.3.31：断点续播上报（本地缓存 + 服务端持久化）
+  reportBreakpoint(key, position, duration) {
+    if (!key || !position) return;
+    const now = Date.now();
+    const expireMs = 24 * 3600 * 1000; // 断点 24 小时后失效
+    this._breakpointCache[key] = { position, duration, at: now, expired: now + expireMs };
+    // 定期清理过期
+    if (!this._bpTimer) {
+      this._bpTimer = setInterval(() => {
+        const t = Date.now();
+        for (const k in this._breakpointCache) {
+          if (this._breakpointCache[k].expired < t) delete this._breakpointCache[k];
+        }
+      }, 60 * 60 * 1000);
+    }
+    if (!this.terminalId) return;
+    fetch('/api/t/breakpoint', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ terminalId: this.terminalId, token: this.token || '', key, position, duration }),
+    }).catch(() => {});
+  }
+
+  // ★ v1.3.31：请求服务端刷新断点缓存（新节目加载时拉取最近 24h 保存的进度）
+  async refreshBreakpoints() {
+    if (!this.terminalId) return;
+    try {
+      const r = await fetch(`/api/t/breakpoints?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`);
+      if (!r.ok) return;
+      const js = await r.json();
+      if (js && js.ok && js.breakpoints) {
+        for (const b of js.breakpoints) {
+          if (b.key && b.position > 0) {
+            const now = Date.now();
+            this._breakpointCache[b.key] = { position: b.position, duration: b.duration || 0, at: now, expired: now + 24 * 3600 * 1000 };
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ★ v1.3.31：退出播放（PowerOff 倒计时归零、管理员触发等场景）
+  exit(reason) {
+    try { if (typeof window.LumaBridge !== 'undefined' && window.LumaBridge && window.LumaBridge.exitApp) window.LumaBridge.exitApp(); } catch { /* ignore */ }
+    try { if (typeof window.LumaBridge !== 'undefined' && window.LumaBridge && window.LumaBridge.shutdown) window.LumaBridge.shutdown(); } catch { /* ignore */ }
+    // 兜底：Android 4.4 无 bridge 时走 location 触发关闭意图（浏览器环境无害）
+    try { if (this.terminalId) fetch(`/api/t/ping?stage=exit&reason=${encodeURIComponent(reason || 'js-exit')}&t=${Date.now()}`).catch(() => {}); } catch { /* ignore */ }
   }
 
   startCommands() {

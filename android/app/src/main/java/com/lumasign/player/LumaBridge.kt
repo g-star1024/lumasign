@@ -107,6 +107,9 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
             val memPct = if (mi.totalMem > 0) ((mi.totalMem - mi.availMem) * 100 / mi.totalMem).toInt() else 0
             val cpuPct = cpuLoadPct()
             val uptime = SystemClock.elapsedRealtime() / 1000
+            // ★ v1.3.31：挂载的存储设备列表（DeviceChangeListener 刷新）
+            val devicesJson = JSONArray()
+            for (d in activity.mountedDevices) devicesJson.put(d)
             JSONObject().apply {
                 put("volume", if (max > 0) (cur * 100 / max) else 0)
                 put("storageTotal", total)
@@ -118,6 +121,7 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
                 put("battery", batteryPct())
                 put("uptime", uptime)
                 put("crashCount", MainActivity.crashCount)
+                put("devices", devicesJson)
             }.toString()
         } catch (e: Exception) {
             JSONObject().put("error", e.message ?: "unknown").toString()
