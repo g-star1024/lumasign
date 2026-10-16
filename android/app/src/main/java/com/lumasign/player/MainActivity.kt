@@ -1133,20 +1133,28 @@ class MainActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
-                // 诊断日志（v1.3.35）：不同模拟器/固件对鼠标右键的映射千差万别——标准
+                // 诊断日志（v1.3.35/v1.3.38）：不同模拟器/固件对鼠标右键的映射千差万别——标准
                 // BUTTON_SECONDARY 鼠标事件 / MENU 键（rk312x）/ 直接映射为 BACK 键（蓝叠等
                 // 第三方模拟器）/ 降级为 buttonState=0 的普通触摸。打全字段，用户复现一次抓
                 // logcat 即可定位是哪条路径，不再靠猜。
+                //
+                // ★ v1.3.38 关键修复：MotionEvent.getActionButton() 是 API 23+，Android 4.4（API19）
+                // 上没有该方法；v1.3.35 里无条件调用 ev.actionButton 会导致每个触摸事件都抛
+                // NoSuchMethodError 并崩溃（RK312x 真机事故）。pre-M 设备用 "N/A" 占位，
+                // 仅在 M+ 读取 actionButton；判据同样只在 M+ 生效。
+                val canReadActionButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                val actionButtonStr = if (canReadActionButton) ev.actionButton.toString() else "N/A"
+                val actionButtonSecondary = canReadActionButton && (ev.actionButton and MotionEvent.BUTTON_SECONDARY) != 0
                 Log.i("LumaSign", "touch DOWN: buttonState=" + ev.buttonState +
-                    " actionButton=" + ev.actionButton +
+                    " actionButton=" + actionButtonStr +
                     " secondary=" + ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) +
+                    " actionSecondary=" + actionButtonSecondary +
                     " source=0x" + Integer.toHexString(ev.source) +
                     " mouse=" + ((ev.source and android.view.InputDevice.SOURCE_MOUSE) != 0))
                 // 鼠标右键（标准 BUTTON_SECONDARY 路径，rk312x 固件右键走 MENU 键见 onKeyDown）→ 弹运维菜单
                 // 判据放宽：buttonState 或 actionButton 命中 BUTTON_SECONDARY 均算右键
                 // （部分模拟器/固件只在 actionButton 里给按钮，buttonState 为 0）
-                if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0 ||
-                    (ev.actionButton and MotionEvent.BUTTON_SECONDARY) != 0) {
+                if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0 || actionButtonSecondary) {
                     showOpsMenu()
                 } else {
                     exitDownX = ev.x; exitDownY = ev.y
