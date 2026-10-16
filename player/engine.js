@@ -27,7 +27,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 //   4.4 WebView 会把旧 index.html 永久钉死在缓存里（无验证器跳过重验），引擎文件却因
 //   mtime 变化总能更新 —— 引擎一旦比 HTML 新，用 sessionStorage 戳检测并强制换新 URL，
 //   穿透死缓存。URL 带 _v 参数则不再跳（双保险防循环）。
-const HTML_V = '1452';
+const HTML_V = '1453';
 
 // ★ Chromium 33（Android 4.4 WebView）兼容层 —— 以下方法在 33 上不存在，全项目禁用：
 //   padStart/padEnd(ES2017)、Array.includes(ES2016)、startsWith/endsWith/find/findIndex/
@@ -1127,6 +1127,7 @@ class Player {
     let ok = true, message = '';
     try {
       switch (cmd.type) {
+        case 'refresh_manifest': await this.refreshTerm(); break;   // 管理端停用/发布/删除排期时推送：立即重算排期（v1.3.34 补，此前落到 default 被忽略，纯靠 30s 轮询兜底）
         case 'reload': await this.refreshTerm(); break;
         case 'restart': if (native('restartApp')) window.LumaBridge.restartApp(); else location.reload(); break;
         case 'screenshot': await this.captureAndSend(); break;

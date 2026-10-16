@@ -943,7 +943,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
 }
 (function() {
-    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/widgets.js
+    // widgets.js
     var esc = function esc(s) {
         return String(s !== null && s !== void 0 ? s : "").replace(/[&<>"]/g, function(c) {
             return ({
@@ -2227,7 +2227,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         var fn = RENDERERS[item.widget] || renderText;
         return fn(holder, item, resolver2, onEnd) || function() {};
     }
-    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/engine.js
+    // engine.js
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");
@@ -2253,7 +2253,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
-    var HTML_V = "1452";
+    var HTML_V = "1453";
     var pad22 = function pad22(n) {
         return n < 10 ? "0" + n : "" + n;
     };
@@ -4338,81 +4338,86 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 case 1:
                                     _state.trys.push([
                                         1,
-                                        21,
+                                        23,
                                         ,
-                                        22
+                                        24
                                     ]);
                                     _ = cmd.type;
                                     switch(_){
-                                        case "reload":
+                                        case "refresh_manifest":
                                             return [
                                                 3,
                                                 2
                                             ];
-                                        case "restart":
+                                        case "reload":
                                             return [
                                                 3,
                                                 4
                                             ];
-                                        case "screenshot":
+                                        case "restart":
                                             return [
                                                 3,
-                                                5
+                                                6
                                             ];
-                                        case "volume":
+                                        case "screenshot":
                                             return [
                                                 3,
                                                 7
                                             ];
-                                        case "reboot":
-                                            return [
-                                                3,
-                                                8
-                                            ];
-                                        case "screen_on":
+                                        case "volume":
                                             return [
                                                 3,
                                                 9
                                             ];
-                                        case "screen_off":
+                                        case "reboot":
                                             return [
                                                 3,
                                                 10
                                             ];
-                                        case "set_brightness":
+                                        case "screen_on":
                                             return [
                                                 3,
                                                 11
                                             ];
-                                        case "power_schedule":
+                                        case "screen_off":
                                             return [
                                                 3,
                                                 12
                                             ];
-                                        case "upgrade_apk":
+                                        case "set_brightness":
                                             return [
                                                 3,
                                                 13
                                             ];
-                                        case "clear_cache":
+                                        case "power_schedule":
                                             return [
                                                 3,
                                                 14
                                             ];
-                                        case "show":
+                                        case "upgrade_apk":
                                             return [
                                                 3,
                                                 15
+                                            ];
+                                        case "clear_cache":
+                                            return [
+                                                3,
+                                                16
+                                            ];
+                                        case "show":
+                                            return [
+                                                3,
+                                                17
                                             ];
                                         case "play":
                                             return [
                                                 3,
-                                                15
+                                                17
                                             ];
                                     }
                                     return [
                                         3,
-                                        19
+                                        21
                                     ];
                                 case 2:
                                     return [
@@ -4423,70 +4428,81 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     _state.sent();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
                                 case 4:
+                                    return [
+                                        4,
+                                        this.refreshTerm()
+                                    ];
+                                case 5:
+                                    _state.sent();
+                                    return [
+                                        3,
+                                        22
+                                    ];
+                                case 6:
                                     if (native("restartApp")) window.LumaBridge.restartApp();
                                     else location.reload();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 5:
+                                case 7:
                                     return [
                                         4,
                                         this.captureAndSend()
                                     ];
-                                case 6:
+                                case 8:
                                     _state.sent();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 7:
+                                case 9:
                                     if (native("setVolume")) window.LumaBridge.setVolume((_ref = (_ref1 = (_cmd_payload = cmd.payload) === null || _cmd_payload === void 0 ? void 0 : _cmd_payload.volume) !== null && _ref1 !== void 0 ? _ref1 : this.volume) !== null && _ref !== void 0 ? _ref : 60);
                                     else this.volume = (_cmd_payload1 = cmd.payload) === null || _cmd_payload1 === void 0 ? void 0 : _cmd_payload1.volume;
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 8:
+                                case 10:
                                     if (native("reboot")) window.LumaBridge.reboot();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 9:
+                                case 11:
                                     if (native("screenOn")) window.LumaBridge.screenOn();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 10:
+                                case 12:
                                     if (native("screenOff")) window.LumaBridge.screenOff();
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 11:
+                                case 13:
                                     if (native("setBrightness")) window.LumaBridge.setBrightness((_ref2 = (_cmd_payload2 = cmd.payload) === null || _cmd_payload2 === void 0 ? void 0 : _cmd_payload2.level) !== null && _ref2 !== void 0 ? _ref2 : 100);
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 12:
+                                case 14:
                                     if (native("setPowerSchedule")) window.LumaBridge.setPowerSchedule(JSON.stringify(((_cmd_payload3 = cmd.payload) === null || _cmd_payload3 === void 0 ? void 0 : _cmd_payload3.schedule) || []));
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 13:
+                                case 15:
                                     if (native("downloadAndInstallApk") && ((_cmd_payload4 = cmd.payload) === null || _cmd_payload4 === void 0 ? void 0 : _cmd_payload4.url)) window.LumaBridge.downloadAndInstallApk(cmd.payload.url, ((_cmd_payload5 = cmd.payload) === null || _cmd_payload5 === void 0 ? void 0 : _cmd_payload5.sha256) || null);
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 14:
+                                case 16:
                                     try {
                                         if (native("clearCache")) window.LumaBridge.clearCache();
                                     } catch (unused) {}
@@ -4495,59 +4511,59 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     } catch (unused) {}
                                     return [
                                         3,
-                                        20
+                                        22
                                     ];
-                                case 15:
+                                case 17:
                                     if (!((_cmd_payload6 = cmd.payload) === null || _cmd_payload6 === void 0 ? void 0 : _cmd_payload6.layoutId)) return [
                                         3,
-                                        18
+                                        20
                                     ];
                                     this.hideWelcome();
                                     return [
                                         4,
                                         fetch("/api/layouts/".concat(encodeURIComponent(cmd.payload.layoutId)))
                                     ];
-                                case 16:
+                                case 18:
                                     r = _state.sent();
                                     if (!r.ok) return [
                                         3,
-                                        18
+                                        20
                                     ];
                                     return [
                                         4,
                                         r.json()
                                     ];
-                                case 17:
+                                case 19:
                                     data = _state.sent();
                                     this.load(data.item || data, {
                                         resolver: this.resolver,
                                         mode: "term"
                                     });
-                                    _state.label = 18;
-                                case 18:
-                                    return [
-                                        3,
-                                        20
-                                    ];
-                                case 19:
-                                    return [
-                                        3,
-                                        20
-                                    ];
+                                    _state.label = 20;
                                 case 20:
                                     return [
                                         3,
                                         22
                                     ];
                                 case 21:
-                                    e = _state.sent();
-                                    ok = false;
-                                    message = String(e.message || e);
                                     return [
                                         3,
                                         22
                                     ];
                                 case 22:
+                                    return [
+                                        3,
+                                        24
+                                    ];
+                                case 23:
+                                    e = _state.sent();
+                                    ok = false;
+                                    message = String(e.message || e);
+                                    return [
+                                        3,
+                                        24
+                                    ];
+                                case 24:
                                     this.ack(cmd.cmdId, ok, message);
                                     return [
                                         2
