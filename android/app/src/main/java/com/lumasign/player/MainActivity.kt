@@ -1133,8 +1133,20 @@ class MainActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
+                // 诊断日志（v1.3.35）：不同模拟器/固件对鼠标右键的映射千差万别——标准
+                // BUTTON_SECONDARY 鼠标事件 / MENU 键（rk312x）/ 直接映射为 BACK 键（蓝叠等
+                // 第三方模拟器）/ 降级为 buttonState=0 的普通触摸。打全字段，用户复现一次抓
+                // logcat 即可定位是哪条路径，不再靠猜。
+                Log.i("LumaSign", "touch DOWN: buttonState=" + ev.buttonState +
+                    " actionButton=" + ev.actionButton +
+                    " secondary=" + ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) +
+                    " source=0x" + Integer.toHexString(ev.source) +
+                    " mouse=" + ((ev.source and android.view.InputDevice.SOURCE_MOUSE) != 0))
                 // 鼠标右键（标准 BUTTON_SECONDARY 路径，rk312x 固件右键走 MENU 键见 onKeyDown）→ 弹运维菜单
-                if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) {
+                // 判据放宽：buttonState 或 actionButton 命中 BUTTON_SECONDARY 均算右键
+                // （部分模拟器/固件只在 actionButton 里给按钮，buttonState 为 0）
+                if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0 ||
+                    (ev.actionButton and MotionEvent.BUTTON_SECONDARY) != 0) {
                     showOpsMenu()
                 } else {
                     exitDownX = ev.x; exitDownY = ev.y
