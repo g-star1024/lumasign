@@ -151,6 +151,7 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         try {
             activity.cacheDir?.listFiles()?.forEach { deleteRecursive(it) }
             webView.clearCache(true)
+            MediaCache.clear() // v1.3.34：连本地素材缓存一并清
         } catch (_: Exception) { }
     }
 

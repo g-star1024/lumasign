@@ -31,6 +31,7 @@ import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -409,11 +410,32 @@ class MainActivity : AppCompatActivity() {
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (debuggable) WebView.setWebContentsDebuggingEnabled(true)
 
+        // 播放素材本地缓存（v1.3.34）：<img>/<video> 的 /api/t/media/* 命中本地即离线回源，
+        // 实现「视频/图片下载到屏幕端再播放」；需在 loadUrl 前初始化。
+        MediaCache.init(this)
         bridge = LumaBridge(this, webView)
         webView.addJavascriptInterface(bridge, "LumaBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean = false
+
+            // v1.3.34：/api/t/media/<id> 命中本地缓存即从本机回源（下载到屏幕端再播放，断网也能放）；
+            // 未缓存则返回 null 走网络正常加载，同时后台完整下载一份供次播/断网使用。
+            // 用 String 重载（API 1+）而非 WebResourceRequest 重载（API 21+）以保证 Android 4.4 生效。
+            @Suppress("DEPRECATION")
+            override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse? {
+                if (url == null) return null
+                return try {
+                    val path = android.net.Uri.parse(url).path ?: return null
+                    if (!path.startsWith("/api/t/media/")) return null
+                    val seg = path.trimEnd('/').substringAfterLast('/')
+                    if (seg.isBlank()) return null
+                    val key = seg.replace(Regex("\\.[^.]+$"), "") // 去掉可能的后缀（hash.ext）
+                    MediaCache.serve(key) ?: run { MediaCache.prefetch(url, key); null }
+                } catch (_: Exception) {
+                    null
+                }
+            }
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (loadFailed) showOverlay("灵屏 LumaSign\n正在重新连接服务端…")
             }
