@@ -945,7 +945,7 @@ function renderEditor(params) {
                 ['blur-in', '模糊·进'], ['blur-out', '模糊·出'],
                 ['glitch', '故障风'], ['shake', '抖动'], ['flip-book', '翻书'], ['cube', '立方体'],
                 ['none', '无（直接切换）'],
-              ].map(o => el('option', { value: o[0], selected: o[0] === (r.transition || 'fade'), text: o[1] }))),
+              ].map(o => el('option', { value: o[0], selected: o[0] === (r.transition || 'fade'), text: o[1] })))),
           // 区域内条目列表
           ...(r.items && r.items.length ? [
             el('div', { style: { marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' } }),

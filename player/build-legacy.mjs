@@ -50,7 +50,25 @@ const es5Fixed = es5.replace(TS_VALUES_ANCHOR, TS_VALUES_PATCH);
 console.log('patched _ts_values for no-Symbol engines (Android 4.4)');
 
 // ── Step 3: polyfill header (fetch via whatwg-fetch UMD + mini URLSearchParams, zero backslash) ──
-const fetchPf = fs.readFileSync('C:/Users/DMax/AppData/Local/Temp/fetch.umd.js', 'utf8');
+// ⚠️ 历史事故（2026-10-16 定位）：此前从 Temp 读 fetch.umd.js，该文件被误写成了
+//    engine.legacy.js 的陈旧截断副本（194KB，含未闭合的 __LUMA_PLAYER__ 对象），
+//    导致最终产物 = 假 polyfill + 真引擎 = 双份代码且整体语法错误 → 4.4 设备全黑。
+//    v1.3.30/31/32 的 engine.legacy.js 均被此污染（v1.3.27 及之前健康）。
+// 修复：polyfill 固化进仓库 player/fetch.umd.js，并加断言防再次被污染。
+const fetchPfPath = path.join(PLAYER, 'fetch.umd.js');
+const fetchPf = fs.readFileSync(fetchPfPath, 'utf8');
+// 断言 1：必须是 whatwg-fetch UMD，而不是引擎产物
+if (!fetchPf.includes('WHATWGFetch') || !fetchPf.includes('exports.fetch = fetch')) {
+  throw new Error('fetch polyfill sanity check failed: ' + fetchPfPath + ' is not whatwg-fetch UMD');
+}
+// 断言 2：不得含引擎特征（被污染的典型信号）
+if (fetchPf.includes('__LUMA_PLAYER__') || fetchPf.includes('bootstrap();')) {
+  throw new Error('fetch polyfill sanity check failed: ' + fetchPfPath + ' looks like a stale engine build');
+}
+// 断言 3：体积合理（whatwg-fetch UMD 约 20KB；被污染时通常 >100KB）
+if (fetchPf.length > 60000) {
+  throw new Error('fetch polyfill sanity check failed: ' + fetchPfPath + ' too large (' + fetchPf.length + ' bytes)');
+}
 const uspLines = [
   '/* mini URLSearchParams polyfill (ES5) for Chromium<49 */',
   '(function () {',
@@ -96,3 +114,22 @@ const final = header + '\n' + es5Fixed;
 fs.writeFileSync(path.join(PLAYER, 'engine.legacy.js'), final);
 fs.unlinkSync(TMP);
 console.log('BUILT player/engine.legacy.js bytes=', final.length);
+
+// ── Step 4: 产物自检（防止再次出现「双份代码 / 未闭合」静默事故） ──
+const outPath = path.join(PLAYER, 'engine.legacy.js');
+const built = fs.readFileSync(outPath, 'utf8');
+const countOf = (s) => built.split(s).length - 1;
+const checks = [
+  ['bootstrap(); 恰好一次', countOf('bootstrap();') === 1],
+  ['__LUMA_PLAYER__ 恰好一次', countOf('__LUMA_PLAYER__ = {') === 1],
+  ['_ts_values 补丁已注入', built.includes('if (o && typeof o.next === "function") { return o; }')],
+  ['IIFE 正常闭合', /\};\s*\n\s*\}\)\(\);\s*$/.test(built.trimEnd())],
+  ['体积合理(<300KB)', built.length < 300000],
+];
+let bad = 0;
+for (const [name, ok] of checks) {
+  console.log((ok ? '  ✓ ' : '  ✗ ') + name);
+  if (!ok) bad++;
+}
+if (bad > 0) throw new Error('engine.legacy.js self-check failed (' + bad + ' issue(s))');
+console.log('SELF-CHECK PASSED');
