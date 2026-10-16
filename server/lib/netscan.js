@@ -6,7 +6,9 @@
  * 能力：
  *   1) 本机网段自动枚举（多网卡环境按 RFC1918 优先级排序）
  *   2) 高并发扫描池（默认 64 并发，254 台 /24 网段约 6~10 秒扫完）
- *   3) 两阶段探测：先快筛存活（3 个高频端口 + 短超时），存活的才做全端口深扫
+ *   3) 两阶段探测：先快筛存活（3 个高频端口 + 短超时，端口全关则 ICMP ping 兜底），
+ *      存活的才做全端口深扫。ICMP 兜底让"在线但无开放端口"的设备（典型如只开了
+ *      USB 调试、没开 adb over TCP 的安卓，或防火墙全关的 IoT 设备）也能被发现。
  *   4) ARP 表读取 → MAC 地址 → OUI 厂商识别（Windows/Linux/macOS 三平台）
  *   5) **ADB 原生握手**：直接用 socket 说 ADB 协议，无需 adb 二进制即可拿到
  *      设备型号 / 产品名 / 序列号 / 授权状态 —— 这是判定"是不是安卓屏"最硬的证据
@@ -25,6 +27,7 @@ import { exec } from 'node:child_process';
 
 const FAST_TIMEOUT = 400;      // 快筛超时
 const DEEP_TIMEOUT = 1200;     // 深扫超时
+const PING_TIMEOUT = 1000;     // ICMP 兜底超时（Wi-Fi 抖动大，放宽到 1s）
 const DEFAULT_CONCURRENCY = 64;
 
 /** 快筛端口：命中任意一个即认为存活，覆盖 90% 的安卓屏与网络设备 */
@@ -224,6 +227,32 @@ function tcpProbe(ip, port, timeout) {
   });
 }
 
+/**
+ * ICMP 存活探测（跨平台兜底）。
+ * 快筛 3 个高频端口（5555/80/8080）全关的主机——典型如"只开了 USB 调试、没开
+ * adb over TCP"的安卓设备，或防火墙把端口全关掉的 IoT 设备——在纯 TCP 快筛阶段
+ * 会被直接判死，永远进不了台账。这里用系统 ping 兜底，让"在线但无开放端口"的
+ * 设备至少能被发现（标为 unknown / 低置信度）。
+ * 走系统 ping 而非原生 ICMP 套接字，规避 Linux 上需 root(CAP_NET_RAW) 的权限问题。
+ */
+function icmpPing(ip, timeout = PING_TIMEOUT) {
+  const plat = process.platform;
+  const cmd = plat === 'win32'
+    ? `ping -n 1 -w ${timeout} ${ip}`
+    : plat === 'darwin'
+      ? `ping -c 1 -W ${timeout} ${ip}`
+      : `ping -c 1 -W ${Math.max(1, Math.ceil(timeout / 1000))} ${ip}`;
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: timeout + 2000, windowsHide: true, maxBuffer: 64 * 1024 }, (err, stdout) => {
+      const out = String(stdout || '');
+      // 仅用 ASCII 标记判定（TTL=/bytes=/Reply 等），规避中文 Windows 下 GBK 输出
+      // 被按 UTF-8 解码乱码、导致"回复"无法匹配的问题；无回复即判不存活。
+      const replied = /(TTL=|ttl=|bytes=|icmp_seq|Reply|reply|bytes from)/i.test(out);
+      resolve(replied);
+    });
+  });
+}
+
 /* ══════════════ ADB 原生握手 ══════════════ */
 /*
  * ADB 传输层协议（无需 adb 二进制，直接说协议）：
@@ -375,7 +404,7 @@ const SIG = {
  * 根据全部探测证据判定设备类型。
  * 判定优先级：本机 > 已注册 > 灵屏服务 > 触拓 > ADB 握手 > 服务端口特征 > banner 特征 > 未知
  */
-function classify({ openPorts, banners, adb, vendor, registered, isSelf }) {
+function classify({ openPorts, banners, adb, vendor, registered, isSelf, pingOnly }) {
   const has = p => openPorts.includes(p);
   const bannerList = Object.values(banners);
   const allText = bannerList.map(b => `${b.title} ${b.server} ${b.realm} ${b.snippet}`).join(' ');
@@ -448,6 +477,12 @@ function classify({ openPorts, banners, adb, vendor, registered, isSelf }) {
   }
 
   if (openPorts.length) reasons.push(`存活，开放端口 ${openPorts.join('/')}，特征不足以判定类型`);
+
+  if (pingOnly && !openPorts.length) {
+    reasons.push('仅 ICMP 可达，无任何开放端口（多为只开 USB 调试的安卓 / 防火墙全关的设备）');
+    return { kind: 'unknown', confidence: 20, reasons };
+  }
+
   return { kind: 'unknown', confidence: 30, reasons };
 }
 
@@ -489,11 +524,14 @@ export async function scanNetwork(spec = {}, options = {}) {
 
   /* ── 阶段一：快筛存活 ── */
   const aliveList = [];
+  const pingOnlyIps = new Set();
   await pool(ips, concurrency, async (ip) => {
     if (signal?.aborted) return null;
     for (const p of FAST_PORTS) {
-      if (await tcpProbe(ip, p, FAST_TIMEOUT)) { aliveList.push(ip); return ip; }
+      if (await tcpProbe(ip, p, FAST_TIMEOUT)) { aliveList.push(ip); return 'tcp'; }
     }
+    // 兜底：高频端口全关，但 ICMP 可达 → 仍判存活（标 pingOnly，避免误丢）
+    if (await icmpPing(ip, PING_TIMEOUT)) { aliveList.push(ip); pingOnlyIps.add(ip); return 'icmp'; }
     return null;
   }, (_r, done, total) => {
     if (done % 8 === 0 || done === total) {
@@ -521,6 +559,11 @@ export async function scanNetwork(spec = {}, options = {}) {
 
   const items = await pool(aliveList, Math.min(concurrency, 24), async (ip) => {
     if (signal?.aborted) return { ip, alive: true, openPorts: [], kind: 'unknown', method: 'manual' };
+
+    // ICMP 兜底进来的设备：已知无开放端口，跳过 23 端口深扫，直接标 unknown
+    if (pingOnlyIps.has(ip)) {
+      return { ip, openPorts: [], adb: null, banners: {}, registered: registeredIps.has(ip), pingOnly: true };
+    }
 
     const openPorts = (await Promise.all(
       ports.map(async p => (await tcpProbe(ip, p, DEEP_TIMEOUT)) ? p : null)
@@ -559,6 +602,7 @@ export async function scanNetwork(spec = {}, options = {}) {
       vendor,
       registered: raw.registered,
       isSelf: selfIps.has(raw.ip),
+      pingOnly: !!raw.pingOnly,
     });
     const meta = DEVICE_KINDS[kind];
     const primaryBanner = Object.values(raw.banners || {})[0] || null;
@@ -585,6 +629,7 @@ export async function scanNetwork(spec = {}, options = {}) {
         title: primaryBanner.title, server: primaryBanner.server, status: primaryBanner.status,
       } : null,
       registered: !!raw.registered,
+      pingOnly: !!raw.pingOnly,
       method: pickMethod(kind, raw.openPorts || [], raw.adb),
       seenAt: Date.now(),
     };

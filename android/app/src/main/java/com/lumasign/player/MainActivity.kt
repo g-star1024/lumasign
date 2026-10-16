@@ -552,6 +552,11 @@ class MainActivity : AppCompatActivity() {
     // LumaSign 也应在任何状态下让运维看到版本、终端、服务、网络状态。
     // ─────────────────────────────────────────────────────────────
 
+    // 右上角维护信息：正常连接态展示 5 秒后自动隐藏，避免常驻遮挡播放画面；
+    // 连接失败/未配置等异常态保持常驻，便于现场拍照诊断。状态变化时由 updateStatusOverlay 重新弹出计时。
+    private val statusHideHandler = Handler(Looper.getMainLooper())
+    private val statusHideRun = Runnable { if (::statusView.isInitialized) statusView.visibility = View.GONE }
+
     /** 初始化顶部状态条，点击打开运维菜单 */
     private fun setupStatusOverlay() {
         try {
@@ -599,8 +604,11 @@ class MainActivity : AppCompatActivity() {
                 else -> "已连接"
             }
             val statusSub = sub ?: "终端：${code.ifBlank { "未绑定" }} | 服务：${server.ifBlank { "-" }}"
-            statusView.text = "灵屏 LumaSign v$ver | $statusMain | 网络$net\n$statusSub\n点此打开运维菜单"
+            statusView.text = "灵屏 LumaSign v$ver | $statusMain | 网络$net\n$statusSub\n点此 / 右键 打开运维菜单"
             statusView.visibility = View.VISIBLE
+            // 正常连接态 5s 后自动隐藏；连接失败/未配置等异常态常驻，便于现场诊断拍照
+            statusHideHandler.removeCallbacks(statusHideRun)
+            if (!(loadFailed || server.isBlank())) statusHideHandler.postDelayed(statusHideRun, 5000)
         } catch (_: Exception) {}
     }
 
@@ -1103,9 +1111,9 @@ class MainActivity : AppCompatActivity() {
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
             MotionEvent.ACTION_DOWN -> {
-                // 鼠标右键（标准 BUTTON_SECONDARY 路径，rk312x 固件右键走 MENU 键见 onKeyDown）→ 直接弹确认
+                // 鼠标右键（标准 BUTTON_SECONDARY 路径，rk312x 固件右键走 MENU 键见 onKeyDown）→ 弹运维菜单
                 if ((ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0) {
-                    showExitConfirm()
+                    showOpsMenu()
                 } else {
                     exitDownX = ev.x; exitDownY = ev.y
                     exitHandler.removeCallbacks(exitLongPress)

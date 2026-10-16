@@ -264,8 +264,12 @@ export function registerTerminalApi(router, ctx) {
       const tpath = path.join(paths.media, m.transcodedRel);
       try { if (fs.existsSync(tpath)) { serveRel = m.transcodedRel; serveMime = 'video/mp4'; } } catch (_e) { /* 回退原文件 */ }
     }
+    // ⚠️ 缓存策略（v1.3.33）：原为 immutable + max-age=1年，旧端 WebView（Chromium 33 / Android 4.4）
+    //    会把早期一次瞬时错误响应按该 URL 缓存一年 → 之后一直命中缓存错误 → 图片恒显「图片缺失」
+    //    （视频同接口却正常，因各自 URL 不同）。改为短 max-age + must-revalidate：正常播放仍命中
+    //    缓存，一旦发生错误最多 5 分钟自愈，不再永久污染。配合 renderImage 的重试 cache-bust 双保险。
     sendFile(req, res, path.join(paths.media, serveRel), {
-      mime: serveMime, cache: 'public, max-age=31536000, immutable',
+      mime: serveMime, cache: 'public, max-age=300, must-revalidate',
       limiter: limiterFor(t.id),
     });
   });

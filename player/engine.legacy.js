@@ -943,7 +943,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _array_like_to_array(o, minLen);
 }
 (function() {
-    // player/widgets.js
+    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/widgets.js
     var esc = function esc(s) {
         return String(s !== null && s !== void 0 ? s : "").replace(/[&<>"]/g, function(c) {
             return ({
@@ -974,16 +974,28 @@ function _unsupported_iterable_to_array(o, minLen) {
     function renderImage(holder, item, resolver2) {
         var img = document.createElement("img");
         var url = item.mediaId ? resolver2(item.mediaId) : item.url || "";
-        img.src = url;
         img.className = "w-img " + (item.fit || "cover");
         img.alt = item.alt || "";
-        img.onerror = function() {
+        var attempts = 0;
+        var showMiss = function showMiss() {
             var miss = objAssign(document.createElement("div"), {
                 className: "w-img",
                 textContent: "\u56FE\u7247\u7F3A\u5931"
             });
             if (img.parentNode) img.parentNode.replaceChild(miss, img);
         };
+        img.onerror = function() {
+            attempts += 1;
+            if (attempts <= 3 && url) {
+                var sep = url.indexOf("?") >= 0 ? "&" : "?";
+                setTimeout(function() {
+                    img.src = url + sep + "_r=" + attempts + "&_t=" + Date.now();
+                }, 400 * attempts);
+            } else {
+                showMiss();
+            }
+        };
+        img.src = url;
         holder.appendChild(img);
         return function() {};
     }
@@ -2215,7 +2227,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         var fn = RENDERERS[item.widget] || renderText;
         return fn(holder, item, resolver2, onEnd) || function() {};
     }
-    // player/engine.js
+    // C:/Users/DMax/WorkBuddy/2026-08-03-18-09-29/lumasign/player/engine.js
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");
@@ -2241,7 +2253,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
-    var HTML_V = "1450";
+    var HTML_V = "1452";
     var pad22 = function pad22(n) {
         return n < 10 ? "0" + n : "" + n;
     };

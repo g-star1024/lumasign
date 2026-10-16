@@ -20,10 +20,26 @@ const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] !
 function renderImage(holder, item, resolver) {
   const img = document.createElement('img');
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
-  img.src = url;
   img.className = 'w-img ' + (item.fit || 'cover');
   img.alt = item.alt || '';
-  img.onerror = () => { const miss = objAssign(document.createElement('div'), { className: 'w-img', textContent: '图片缺失' }); if (img.parentNode) img.parentNode.replaceChild(miss, img); };
+  let attempts = 0;
+  const showMiss = () => { const miss = objAssign(document.createElement('div'), { className: 'w-img', textContent: '图片缺失' }); if (img.parentNode) img.parentNode.replaceChild(miss, img); };
+  // ★ 加载失败自动重试（v1.3.33）：现场事故——同一节目里视频正常播放、图片却显示「图片缺失」，
+  //   服务端取图接口 200、PNG 为基线可解码、CSP 放行，根因在旧端 WebView（Chromium 33 / Android 4.4）：
+  //   ① immutable 长期缓存污染（早期一次瞬时错误响应被缓存一年，之后一直命中缓存错误）；
+  //   ② 预热 new Image() 与 <img> 共用同一 URL，被 GC 取消导致竞态加载失败。
+  //   两者都让 <img>.onerror 触发却无重试 → 常驻「图片缺失」。重试附 cache-bust 查询参数
+  //   （服务端忽略 _r/_t），既穿透污染缓存也让瞬时失败自愈；仍失败才显示「图片缺失」。
+  img.onerror = () => {
+    attempts += 1;
+    if (attempts <= 3 && url) {
+      const sep = url.indexOf('?') >= 0 ? '&' : '?';
+      setTimeout(() => { img.src = url + sep + '_r=' + attempts + '&_t=' + Date.now(); }, 400 * attempts);
+    } else {
+      showMiss();
+    }
+  };
+  img.src = url;
   holder.appendChild(img);
   return () => {};
 }
