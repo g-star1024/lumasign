@@ -1600,6 +1600,7 @@ async function renderSchedules() {
           el('td', {}, lcBadge(s.lifecycleState, s.daysLeft, s.validFrom, s.validUntil)),
           el('td', {}, el('span', { class: 'badge ' + (s.enabled !== false ? 'ok' : 'off'), text: s.enabled !== false ? '已发布' : '草稿' })),
           el('td', {},
+            can('schedule:edit') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: () => openScheduleEditModal(s, reload) }, '编辑') : '',
             !s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm primary', onclick: () => openPublishModal(s, reload) }, '发布') : '',
             s.enabled && can('schedule:publish') ? el('button', { class: 'btn sm', style: { marginLeft: '4px' }, onclick: async () => {
               try { await api.put(`/api/schedules/${s.id}`, { enabled: false }); toast('已停用', 'ok'); reload(); } catch (e) { toast(e.message, 'err'); }
@@ -1655,42 +1656,80 @@ function deployModeBadge(mode) {
   return el('span', { class: `t-badge ${DEPLOY_MODE_TONE[mode] || 'off'}`, text: DEPLOY_MODE_LABEL[mode] || mode });
 }
 
-function openPublishModal(s, onRefresh) {
-  const all = el('input', { type: 'radio', name: 'pmode', value: 'full', checked: 'checked' });
-  const pilot = el('input', { type: 'radio', name: 'pmode', value: 'pilot' });
-  const selWrap = el('div', { style: { display: 'none', marginTop: '10px' } });
-  pilot.addEventListener('change', () => { selWrap.style.display = pilot.checked ? 'block' : 'none'; });
-  all.addEventListener('change', () => { selWrap.style.display = 'none'; });
+function openScheduleEditModal(s, onRefresh) {
+  const modeLabel = { default: '默认', cycle: '周期', insert: '插播', exclusive: '独占' };
+  const name = el('input', { class: 'input', value: s.name || '' });
+  const modeSel = el('select', { class: 'input' }, ...Object.entries(modeLabel).map(([k, v]) => el('option', { value: k, text: v, selected: s.mode === k ? 'selected' : undefined })));
+  const duration = el('input', { class: 'input', type: 'number', min: 5, value: s.duration || 15 });
   const box = el('div', {},
-    el('h2', { text: `发布排期 · ${s.name}` }),
-    el('label', { class: 't-check' }, all, el('span', { text: '全量发布（推送到全部目标终端）' })),
-    el('label', { class: 't-check', style: { marginTop: '8px' } }, pilot, el('span', { text: '灰度试点（先选 1–3 台确认，再推广全量）' })),
-    selWrap,
+    el('h2', { text: `编辑排期 · ${s.name}` }),
+    field('名称', name),
+    field('播放方式', modeSel),
+    field('单条时长（秒）', duration),
+    el('div', { class: 't-dnote', style: { marginTop: '8px' }, text: '说明：「默认/周期」多个排期命中同一段时会轮播；「插播」临时高优先级插入；「独占」命中时独占屏幕。' }),
     el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
       el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
       el('button', { class: 't-btn primary', onclick: async () => {
-        const isPilot = pilot.checked;
-        let pilotIds = [];
-        if (isPilot) {
-          pilotIds = [...selWrap.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value);
-          if (pilotIds.length < 1) { toast('请至少选择 1 台试点终端', 'err'); return; }
-        }
         try {
-          const d = await api.post(`/api/schedules/${s.id}/publish`, { pilotTerminalIds: pilotIds });
-          toast(isPilot ? `已灰度下发到 ${d.pushed} 台试点，确认无误后可在「版本记录」中推广全量` : `已全量下发到 ${d.pushed} 台终端`, 'ok');
+          await api.put(`/api/schedules/${s.id}`, { name: name.value, mode: modeSel.value, duration: parseInt(duration.value, 10) || 15 });
+          toast('排期已更新', 'ok');
+          document.querySelector('.modal-mask')?._close?.(); onRefresh?.();
+        } catch (e) { toast(e.message, 'err'); }
+      } }, '保存'),
+    ),
+  );
+  openModal(box);
+}
+
+function openPublishModal(s, onRefresh) {
+  const selAll = el('input', { type: 'checkbox', checked: 'checked' });
+  const termWrap = el('div', { class: 't-check-group', style: { maxHeight: '240px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '8px', marginTop: '8px' } });
+  const status = el('span', { class: 't-dnote', text: '加载终端中…' });
+  let terminals = [];
+
+  const renderTermList = () => {
+    termWrap.innerHTML = '';
+    if (!terminals.length) { status.textContent = '当前没有已准入终端，无法发布'; return; }
+    status.textContent = `已选 ${terminals.filter(t => t._checked).length}/${terminals.length} 台终端`;
+    terminals.forEach(t => {
+      const chk = el('input', { type: 'checkbox', checked: t._checked ? 'checked' : undefined });
+      chk.addEventListener('change', () => { t._checked = chk.checked; updateSelectAll(); });
+      termWrap.append(el('label', { class: 't-check', style: { display: 'block', marginBottom: '4px' } },
+        chk,
+        el('span', { text: `${t.name || t.code || t.id}${t.net?.ip ? ' · ' + t.net.ip : ''}` })
+      ));
+    });
+  };
+  const updateSelectAll = () => {
+    const all = terminals.length && terminals.every(t => t._checked);
+    selAll.checked = all;
+    status.textContent = `已选 ${terminals.filter(t => t._checked).length}/${terminals.length} 台终端`;
+  };
+  selAll.addEventListener('change', () => { terminals.forEach(t => t._checked = selAll.checked); renderTermList(); });
+
+  const box = el('div', {},
+    el('h2', { text: `发布排期 · ${s.name}` }),
+    el('div', { class: 't-dnote', style: { marginBottom: '8px' }, text: '选择本次实际下发的终端（默认全选）：' }),
+    el('label', { class: 't-check' }, selAll, el('span', { text: '全选/取消全选' })),
+    termWrap,
+    el('div', { style: { marginTop: '6px' } }, status),
+    el('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '18px', gap: '8px' } },
+      el('button', { class: 't-btn', onclick: () => document.querySelector('.modal-mask')?._close?.() }, '取消'),
+      el('button', { class: 't-btn primary', onclick: async () => {
+        const selectedIds = terminals.filter(t => t._checked).map(t => t.id);
+        if (!selectedIds.length) { toast('请至少选择 1 台终端', 'err'); return; }
+        try {
+          const d = await api.post(`/api/schedules/${s.id}/publish`, { selectedTerminalIds: selectedIds });
+          toast(`已下发到 ${d.pushed} 台终端`, 'ok');
           document.querySelector('.modal-mask')?._close?.(); onRefresh?.();
         } catch (e) { toast(e.message, 'err'); }
       } }, '发布'),
     ),
   );
   api.get('/api/terminals').then(r => {
-    const ts = (r.items || []).filter(t => t.approved);
-    if (!ts.length) { selWrap.append(el('div', { class: 't-dnote', text: '当前没有已准入的终端，无法灰度试点' })); return; }
-    selWrap.append(el('div', { class: 't-dnote', text: '选择试点终端（建议 1–3 台）：' }));
-    ts.forEach(t => selWrap.append(el('label', { class: 't-check' },
-      el('input', { type: 'checkbox', value: t.id }),
-      el('span', { text: `${t.name || t.code || t.id}${t.net?.ip ? ' · ' + t.net.ip : ''}` }))));
-  }).catch(() => {});
+    terminals = (r.items || []).filter(t => t.approved).map(t => ({ ...t, _checked: true }));
+    renderTermList();
+  }).catch(() => { status.textContent = '加载终端失败'; });
   openModal(box);
 }
 

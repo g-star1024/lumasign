@@ -27,7 +27,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 //   4.4 WebView 会把旧 index.html 永久钉死在缓存里（无验证器跳过重验），引擎文件却因
 //   mtime 变化总能更新 —— 引擎一旦比 HTML 新，用 sessionStorage 戳检测并强制换新 URL，
 //   穿透死缓存。URL 带 _v 参数则不再跳（双保险防循环）。
-const HTML_V = '1453';
+const HTML_V = '1454';
 
 // ★ Chromium 33（Android 4.4 WebView）兼容层 —— 以下方法在 33 上不存在，全项目禁用：
 //   padStart/padEnd(ES2017)、Array.includes(ES2016)、startsWith/endsWith/find/findIndex/
@@ -109,12 +109,15 @@ function hits(sch, when = new Date()) {
   return true;
 }
 
-function pickActiveSchedule(manifest, now = new Date()) {
+function pickActiveSchedules(manifest, now = new Date()) {
   const active = (manifest.schedules || []).filter(s => hits(s, now));
-  if (!active.length) return null;
+  if (!active.length) return [];
   active.sort((a, b) => (b.priority - a.priority) || ((a.order || 0) - (b.order || 0)));
-  return active[0];
+  return active;
 }
+
+/** 命中列表里是否存在独占排期（exclusive 优先，只播 exclusive） */
+function hasExclusive(active) { return active.some(s => s.mode === 'exclusive'); }
 
 /* ---------------- Player ---------------- */
 class Player {
@@ -139,6 +142,7 @@ class Player {
     this._serverState = {};    // ★ v1.3.31：心跳返回的服务端状态（poweroffAt/devices 等）
     this._breakpointCache = {}; // ★ v1.3.31：断点续播本地缓存 key -> {position, duration}
     this._bpTimer = null;
+    this.rotation = null;      // ★ v1.3.35：多排期轮播状态 {list, index, timer}
   }
 
   stop() {
@@ -149,10 +153,50 @@ class Player {
     if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
     if (this.es) { try { this.es.close(); } catch {} this.es = null; }
     if (this._dsTimer) { clearInterval(this._dsTimer); this._dsTimer = null; }
+    this.stopRotation();
     app.innerHTML = '';
     this.stage = null; this.regionCtls = []; this.hotspotsLayer = null;
     if (this.navBar && this.navBar.parentNode) this.navBar.remove();
     this.navBar = null; this.cancelNavTimer();
+  }
+
+  /* ---------------- 多排期轮播（v1.3.35） ---------------- */
+  stopRotation() {
+    if (this.rotation) { try { clearTimeout(this.rotation.timer); } catch {} this.rotation = null; }
+  }
+
+  /** 启动轮播：命中多个非独占排期时循环播放；存在独占排期时只播独占 */
+  startRotation(activeList) {
+    this.stopRotation();
+    if (!activeList.length) { this.showWelcome(); this.startPolling(); this.startCommands(); this.startHeartbeat(); return; }
+    const list = hasExclusive(activeList) ? activeList.filter(s => s.mode === 'exclusive') : activeList;
+    this.rotation = { list, index: 0, timer: null };
+    this.playRotationIndex(0);
+  }
+
+  async playRotationIndex(idx) {
+    const rot = this.rotation;
+    if (!rot || !rot.list.length) return;
+    rot.index = ((idx % rot.list.length) + rot.list.length) % rot.list.length;
+    const sch = rot.list[rot.index];
+    this.currentScheduleId = sch.scheduleId;
+    ping('rot-index=' + rot.index + '/' + rot.list.length + ' sid=' + sch.scheduleId + ' mode=' + (sch.mode || 'default'));
+    try {
+      this.hideWelcome();
+      await this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
+      const duration = Math.max(5, (sch.duration || 15)) * 1000; // 最低 5 秒，默认 15 秒
+      rot.timer = setTimeout(() => { if (this.rotation === rot) this.advanceRotation(); }, duration);
+    } catch (e) {
+      ping('rot-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
+      // 加载失败也继续轮播下一个，避免单个坏节目卡死整个 playlist
+      rot.timer = setTimeout(() => { if (this.rotation === rot) this.advanceRotation(); }, 5000);
+    }
+  }
+
+  advanceRotation() {
+    const rot = this.rotation;
+    if (!rot || rot.list.length <= 1) return;
+    this.playRotationIndex(rot.index + 1);
   }
 
   /* ---------------- 欢迎页（终端无展示任务时展示，对标竞品"液晶互动"空闲屏） ----------------
@@ -872,24 +916,11 @@ class Player {
     // 不管在线离线都重算一次 —— 有效期到点必须自己下线，不能等服务端推
     const man = this.lastManifest || this._loadCachedManifest();
     if (!man) return;
-    const sch = pickActiveSchedule(man);
-    ping('sched-n=' + ((man.schedules || []).length) + ' hit=' + (sch ? sch.scheduleId : 'null') + ' cur=' + this.currentScheduleId);
-    const id = sch ? sch.scheduleId : null;
-    if (id !== this.currentScheduleId) {
-      this.currentScheduleId = id;
-      if (sch) {
-        try {
-          this.hideWelcome();
-          await this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
-          ping('load-ok');
-        } catch (e) { ping('load-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90)); }
-      } else {
-        this.showWelcome();
-        // showWelcome() 内部 stop() 会清掉网络通道 —— 终端模式必须立即重启，
-        // 否则欢迎页 = 零心跳零轮询，管理端永远显示离线（死锁）
-        this.startPolling(); this.startCommands(); this.startHeartbeat();
-      }
-    }
+    const activeList = pickActiveSchedules(man);
+    const hitIds = activeList.map(s => s.scheduleId).join(',') || 'null';
+    ping('sched-n=' + ((man.schedules || []).length) + ' hits=[' + hitIds + '] cur=' + (this.currentScheduleId || 'null'));
+    // v1.3.35 起支持多排期轮播：把命中的排期列表交给 startRotation，由它决定播哪个/是否轮播
+    await this.startRotation(activeList);
     // 网络三件套自愈：注册成功而 SSE/心跳尚未建立时（延迟注册场景）在此补齐
     if (this.terminalId) {
       if (!this.es) this.startCommands();
@@ -1313,17 +1344,14 @@ async function bootstrap() {
       if (!man) { showFallback('终端清单获取失败，请检查终端ID/令牌'); return; }
       ping('m1-ok');
       player.lastManifest = man;
-      let sch = null;
-      try { sch = pickActiveSchedule(man); } catch (e) { ping('pick-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 80)); }
-      ping('sched=' + (sch ? sch.scheduleId : 'null'));
-      player.currentScheduleId = sch ? sch.scheduleId : null;
-      if (sch) {
-        try { player.hideWelcome(); } catch (e) { ping('hw-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 80)); }
-        try {
-          await player.load(sch.layout, { resolver: id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`, mode: 'term' });
-          ping('boot-load-ok');
-        } catch (e) {
-          ping('boot-load-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
+      // 统一设置 term 模式下的 media resolver（轮播复用）
+      player.resolver = id => `/api/t/media/${id}?terminalId=${encodeURIComponent(player.terminalId || '')}&token=${encodeURIComponent(player.token || '')}`;
+      const activeList = pickActiveSchedules(man);
+      ping('sched-hits=[' + (activeList.map(s => s.scheduleId).join(',') || 'null') + ']');
+      if (activeList.length) {
+        try { player.startRotation(activeList); ping('boot-rot-ok'); }
+        catch (e) {
+          ping('boot-rot-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
           showFallback('渲染异常：' + ((e && e.message) || e));
         }
       } else {

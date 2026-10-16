@@ -126,6 +126,7 @@ export function buildManifest(store, terminal) {
       validity: windowForManifest(s),
       layoutValidity: windowForManifest(raw),
       order: s.order || 0,
+      duration: s.duration || 15, // v1.3.35：轮播单条默认 15 秒
       layout,
     });
   }

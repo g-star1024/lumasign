@@ -2253,7 +2253,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
-    var HTML_V = "1453";
+    var HTML_V = "1454";
     var pad22 = function pad22(n) {
         return n < 10 ? "0" + n : "" + n;
     };
@@ -2371,16 +2371,21 @@ function _unsupported_iterable_to_array(o, minLen) {
         if (sch.mode === "insert" && sch.expireAt && Date.now() > sch.expireAt) return false;
         return true;
     }
-    function pickActiveSchedule(manifest) {
+    function pickActiveSchedules(manifest) {
         var now = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : /* @__PURE__ */ new Date();
         var active = (manifest.schedules || []).filter(function(s) {
             return hits(s, now);
         });
-        if (!active.length) return null;
+        if (!active.length) return [];
         active.sort(function(a, b) {
             return b.priority - a.priority || (a.order || 0) - (b.order || 0);
         });
-        return active[0];
+        return active;
+    }
+    function hasExclusive(active) {
+        return active.some(function(s) {
+            return s.mode === "exclusive";
+        });
     }
     var Player = /*#__PURE__*/ function() {
         "use strict";
@@ -2410,6 +2415,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             this._serverState = {};
             this._breakpointCache = {};
             this._bpTimer = null;
+            this.rotation = null;
         }
         _create_class(Player, [
             {
@@ -2436,6 +2442,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                         clearInterval(this._dsTimer);
                         this._dsTimer = null;
                     }
+                    this.stopRotation();
                     app.innerHTML = "";
                     this.stage = null;
                     this.regionCtls = [];
@@ -2443,6 +2450,109 @@ function _unsupported_iterable_to_array(o, minLen) {
                     if (this.navBar && this.navBar.parentNode) this.navBar.remove();
                     this.navBar = null;
                     this.cancelNavTimer();
+                }
+            },
+            {
+                /* ---------------- 多排期轮播（v1.3.35） ---------------- */ key: "stopRotation",
+                value: function stopRotation() {
+                    if (this.rotation) {
+                        try {
+                            clearTimeout(this.rotation.timer);
+                        } catch (unused) {}
+                        this.rotation = null;
+                    }
+                }
+            },
+            {
+                /** 启动轮播：命中多个非独占排期时循环播放；存在独占排期时只播独占 */ key: "startRotation",
+                value: function startRotation(activeList) {
+                    this.stopRotation();
+                    if (!activeList.length) {
+                        this.showWelcome();
+                        this.startPolling();
+                        this.startCommands();
+                        this.startHeartbeat();
+                        return;
+                    }
+                    var list = hasExclusive(activeList) ? activeList.filter(function(s) {
+                        return s.mode === "exclusive";
+                    }) : activeList;
+                    this.rotation = {
+                        list: list,
+                        index: 0,
+                        timer: null
+                    };
+                    this.playRotationIndex(0);
+                }
+            },
+            {
+                key: "playRotationIndex",
+                value: function playRotationIndex(idx) {
+                    return _async_to_generator(function() {
+                        var _this, rot, sch, duration, e;
+                        return _ts_generator(this, function(_state) {
+                            switch(_state.label){
+                                case 0:
+                                    _this = this;
+                                    rot = this.rotation;
+                                    if (!rot || !rot.list.length) return [
+                                        2
+                                    ];
+                                    rot.index = (idx % rot.list.length + rot.list.length) % rot.list.length;
+                                    sch = rot.list[rot.index];
+                                    this.currentScheduleId = sch.scheduleId;
+                                    ping("rot-index=" + rot.index + "/" + rot.list.length + " sid=" + sch.scheduleId + " mode=" + (sch.mode || "default"));
+                                    _state.label = 1;
+                                case 1:
+                                    _state.trys.push([
+                                        1,
+                                        3,
+                                        ,
+                                        4
+                                    ]);
+                                    this.hideWelcome();
+                                    return [
+                                        4,
+                                        this.load(sch.layout, {
+                                            resolver: this.resolver,
+                                            mode: "term"
+                                        })
+                                    ];
+                                case 2:
+                                    _state.sent();
+                                    duration = Math.max(5, sch.duration || 15) * 1e3;
+                                    rot.timer = setTimeout(function() {
+                                        if (_this.rotation === rot) _this.advanceRotation();
+                                    }, duration);
+                                    return [
+                                        3,
+                                        4
+                                    ];
+                                case 3:
+                                    e = _state.sent();
+                                    ping("rot-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                                    rot.timer = setTimeout(function() {
+                                        if (_this.rotation === rot) _this.advanceRotation();
+                                    }, 5e3);
+                                    return [
+                                        3,
+                                        4
+                                    ];
+                                case 4:
+                                    return [
+                                        2
+                                    ];
+                            }
+                        });
+                    }).call(this);
+                }
+            },
+            {
+                key: "advanceRotation",
+                value: function advanceRotation() {
+                    var rot = this.rotation;
+                    if (!rot || rot.list.length <= 1) return;
+                    this.playRotationIndex(rot.index + 1);
                 }
             },
             {
@@ -3684,7 +3794,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "refreshTerm",
                 value: function refreshTerm() {
                     return _async_to_generator(function() {
-                        var r, man2, e, man, sch, id, e1;
+                        var r, man2, e, man, activeList, hitIds;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -3743,60 +3853,17 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     if (!man) return [
                                         2
                                     ];
-                                    sch = pickActiveSchedule(man);
-                                    ping("sched-n=" + (man.schedules || []).length + " hit=" + (sch ? sch.scheduleId : "null") + " cur=" + this.currentScheduleId);
-                                    id = sch ? sch.scheduleId : null;
-                                    if (!(id !== this.currentScheduleId)) return [
-                                        3,
-                                        13
-                                    ];
-                                    this.currentScheduleId = id;
-                                    if (!sch) return [
-                                        3,
-                                        12
-                                    ];
-                                    _state.label = 8;
-                                case 8:
-                                    _state.trys.push([
-                                        8,
-                                        10,
-                                        ,
-                                        11
-                                    ]);
-                                    this.hideWelcome();
+                                    activeList = pickActiveSchedules(man);
+                                    hitIds = activeList.map(function(s) {
+                                        return s.scheduleId;
+                                    }).join(",") || "null";
+                                    ping("sched-n=" + (man.schedules || []).length + " hits=[" + hitIds + "] cur=" + (this.currentScheduleId || "null"));
                                     return [
                                         4,
-                                        this.load(sch.layout, {
-                                            resolver: this.resolver,
-                                            mode: "term"
-                                        })
+                                        this.startRotation(activeList)
                                     ];
-                                case 9:
+                                case 8:
                                     _state.sent();
-                                    ping("load-ok");
-                                    return [
-                                        3,
-                                        11
-                                    ];
-                                case 10:
-                                    e1 = _state.sent();
-                                    ping("load-err:" + encodeURIComponent(String(e1 && e1.message || e1)).slice(0, 90));
-                                    return [
-                                        3,
-                                        11
-                                    ];
-                                case 11:
-                                    return [
-                                        3,
-                                        13
-                                    ];
-                                case 12:
-                                    this.showWelcome();
-                                    this.startPolling();
-                                    this.startCommands();
-                                    this.startHeartbeat();
-                                    _state.label = 13;
-                                case 13:
                                     if (this.terminalId) {
                                         if (!this.es) this.startCommands();
                                         if (!this.hbTimer) this.startHeartbeat();
@@ -4815,7 +4882,7 @@ function _unsupported_iterable_to_array(o, minLen) {
     }
     function bootstrap() {
         return _async_to_generator(function() {
-            var q, mode, terminalId, token, layoutId, inline, player, layout, sv, man, r, unused, sch, e, e1, r1, data, layout1;
+            var q, mode, terminalId, token, layoutId, inline, player, layout, sv, man, r, unused, activeList, e, r1, data, layout1;
             return _ts_generator(this, function(_state) {
                 switch(_state.label){
                     case 0:
@@ -4899,16 +4966,16 @@ function _unsupported_iterable_to_array(o, minLen) {
                         }
                         if (!(mode === "term")) return [
                             3,
-                            19
+                            13
                         ];
                         ping("term-branch");
                         _state.label = 1;
                     case 1:
                         _state.trys.push([
                             1,
-                            17,
+                            11,
                             ,
-                            18
+                            12
                         ]);
                         if (!terminalId) return [
                             3,
@@ -5010,93 +5077,53 @@ function _unsupported_iterable_to_array(o, minLen) {
                         }
                         ping("m1-ok");
                         player.lastManifest = man;
-                        sch = null;
-                        try {
-                            sch = pickActiveSchedule(man);
-                        } catch (e) {
-                            ping("pick-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 80));
+                        player.resolver = function(id) {
+                            return "/api/t/media/".concat(id, "?terminalId=").concat(encodeURIComponent(player.terminalId || ""), "&token=").concat(encodeURIComponent(player.token || ""));
+                        };
+                        activeList = pickActiveSchedules(man);
+                        ping("sched-hits=[" + (activeList.map(function(s) {
+                            return s.scheduleId;
+                        }).join(",") || "null") + "]");
+                        if (activeList.length) {
+                            try {
+                                player.startRotation(activeList);
+                                ping("boot-rot-ok");
+                            } catch (e) {
+                                ping("boot-rot-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                                showFallback("\u6E32\u67D3\u5F02\u5E38\uFF1A" + (e && e.message || e));
+                            }
+                        } else {
+                            player.showWelcome();
+                            player.startPolling();
+                            player.startCommands();
+                            player.startHeartbeat();
                         }
-                        ping("sched=" + (sch ? sch.scheduleId : "null"));
-                        player.currentScheduleId = sch ? sch.scheduleId : null;
-                        if (!sch) return [
-                            3,
-                            15
-                        ];
-                        try {
-                            player.hideWelcome();
-                        } catch (e) {
-                            ping("hw-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 80));
-                        }
-                        _state.label = 11;
-                    case 11:
-                        _state.trys.push([
-                            11,
-                            13,
-                            ,
-                            14
-                        ]);
                         return [
-                            4,
-                            player.load(sch.layout, {
-                                resolver: function resolver1(id) {
-                                    return "/api/t/media/".concat(id, "?terminalId=").concat(encodeURIComponent(player.terminalId || ""), "&token=").concat(encodeURIComponent(player.token || ""));
-                                },
-                                mode: "term"
-                            })
+                            3,
+                            12
+                        ];
+                    case 11:
+                        e = _state.sent();
+                        ping("boot-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                        showFallback("\u542F\u52A8\u5F02\u5E38\uFF1A" + (e && e.message || e));
+                        return [
+                            3,
+                            12
                         ];
                     case 12:
-                        _state.sent();
-                        ping("boot-load-ok");
-                        return [
-                            3,
-                            14
-                        ];
-                    case 13:
-                        e = _state.sent();
-                        ping("boot-load-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
-                        showFallback("\u6E32\u67D3\u5F02\u5E38\uFF1A" + (e && e.message || e));
-                        return [
-                            3,
-                            14
-                        ];
-                    case 14:
-                        return [
-                            3,
-                            16
-                        ];
-                    case 15:
-                        player.showWelcome();
-                        player.startPolling();
-                        player.startCommands();
-                        player.startHeartbeat();
-                        _state.label = 16;
-                    case 16:
-                        return [
-                            3,
-                            18
-                        ];
-                    case 17:
-                        e1 = _state.sent();
-                        ping("boot-err:" + encodeURIComponent(String(e1 && e1.message || e1)).slice(0, 90));
-                        showFallback("\u542F\u52A8\u5F02\u5E38\uFF1A" + (e1 && e1.message || e1));
-                        return [
-                            3,
-                            18
-                        ];
-                    case 18:
                         return [
                             2
                         ];
-                    case 19:
+                    case 13:
                         if (!layoutId) return [
                             3,
-                            22
+                            16
                         ];
                         return [
                             4,
                             fetch("/api/layouts/".concat(encodeURIComponent(layoutId)))
                         ];
-                    case 20:
+                    case 14:
                         r1 = _state.sent();
                         if (!r1.ok) {
                             showFallback("\u8282\u76EE\u83B7\u53D6\u5931\u8D25");
@@ -5108,7 +5135,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                             4,
                             r1.json()
                         ];
-                    case 21:
+                    case 15:
                         data = _state.sent();
                         layout1 = data.item || data;
                         player.load(layout1, {
@@ -5120,7 +5147,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                         return [
                             2
                         ];
-                    case 22:
+                    case 16:
                         showFallback("\u672A\u6307\u5B9A\u64AD\u653E\u5185\u5BB9\uFF08\u9700 terminalId / layoutId / data \u53C2\u6570\uFF09");
                         return [
                             2

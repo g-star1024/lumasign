@@ -904,24 +904,28 @@ export function registerAdminApi(router, ctx) {
     }
 
     const b = await readJson(req).catch(() => ({}));
+    // v1.3.35：发布对话框支持显式选择终端（selectedTerminalIds）；保留 pilotTerminalIds 兼容旧灰度入口
+    const selectedIds = Array.isArray(b.selectedTerminalIds) ? b.selectedTerminalIds.filter(Boolean) : [];
     const pilotIds = Array.isArray(b.pilotTerminalIds) ? b.pilotTerminalIds.filter(Boolean) : [];
 
     S('schedules').update(id, { enabled: true, publishedAt: Date.now(), publishedBy: user.id });
     const sch = S('schedules').byId(id);
-    // 灰度试点：只推 pilot 子集；否则全量推目标集
-    const targets = pilotIds.length ? pilotIds : targetTerminalIds(sch);
+    // 优先级：显式选择 > 旧灰度试点 > 按 schedule.target 全量
+    let targets = selectedIds.length ? selectedIds : (pilotIds.length ? pilotIds : targetTerminalIds(sch));
     const n = pushToTargets(sch, targets);
 
     // 落一条不可变版本快照（一键回滚 / 灰度追溯都靠它）
-    const mode = pilotIds.length ? 'pilot' : 'full';
+    let deployMode = 'full';
+    if (pilotIds.length) deployMode = 'pilot';
+    else if (selectedIds.length && selectedIds.length < targetTerminalIds(sch).length) deployMode = 'selected';
     const version = ctx.deploy?.record({
       schedule: sch, layout: l, targets,
-      mode, by: user.username,
-      note: b.note || (mode === 'pilot' ? '灰度试点下发' : '全量下发'),
+      mode: deployMode, by: user.username,
+      note: b.note || (pilotIds.length ? '灰度试点下发' : (selectedIds.length ? '指定终端下发' : '全量下发')),
     });
 
-    logger.audit({ action: 'schedule_publish', userId: user.id, username: user.username, target: id, terminals: n, mode });
-    ok(res, { pushed: n, mode, targets, versionId: version?.id || null });
+    logger.audit({ action: 'schedule_publish', userId: user.id, username: user.username, target: id, terminals: n, mode: deployMode });
+    ok(res, { pushed: n, mode: deployMode, targets, versionId: version?.id || null });
   }));
 
   /* ================= 用户 / 角色 ================= */
