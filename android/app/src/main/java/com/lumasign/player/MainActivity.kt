@@ -1168,6 +1168,30 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    /**
+     * 鼠标右键的第二条投递路径（v1.3.37 修复真机右键无反应）。
+     *
+     * 模拟器 / 部分固件把右键作为「触摸事件」走 dispatchTouchEvent（buttonState/actionButton
+     * 命中 BUTTON_SECONDARY），上面已处理。但 Android 8+ 真机（尤其小米 / Android 12）常把
+     * 鼠标按键作为「通用运动事件」投递：右键 -> ACTION_BUTTON_PRESS + actionButton=BUTTON_SECONDARY，
+     * 它走 dispatchGenericMotionEvent 而非 dispatchTouchEvent，旧实现完全收不到 → 右键无反应。
+     * 这里补上该路径，与上面的触摸路径互补，保证各类设备右键都能弹出运维菜单。
+     */
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        try {
+            // ACTION_BUTTON_PRESS / getActionButton 均为 API 23+；低版本设备不投递该事件，
+            // 但为避免在 pre-M 上误调用 getActionButton 触发 NoSuchMethodError，加 SDK 守卫。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                ev.action == MotionEvent.ACTION_BUTTON_PRESS &&
+                (ev.actionButton and MotionEvent.BUTTON_SECONDARY) != 0) {
+                Log.i("LumaSign", "generic BTN_PRESS secondary -> showOpsMenu")
+                showOpsMenu()
+                return true
+            }
+        } catch (_: Exception) { }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
     private fun showExitConfirm() {
         exitHandler.removeCallbacks(exitLongPress)
         if (exitDialog?.isShowing == true) return

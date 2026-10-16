@@ -40,12 +40,18 @@ class CrashWatchdogService : Service() {
         )
         wakeLock?.acquire(Long.MAX_VALUE)
         Log.i(TAG, "Watchdog service started, wakeLock acquired")
+        // v1.3.37：前台化尽早完成（与 KioskGuardService 同理，满足 startForegroundService
+        // 后 5 秒内必须 startForeground 的硬性要求，规避 RemoteServiceException 杀进程）。
+        try {
+            createNotificationChannel()
+            startForeground(NOTIF_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.w(TAG, "foreground init failed (non-fatal): ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        createNotificationChannel()
-        val notification = buildNotification()
-        startForeground(NOTIF_ID, notification)
+        // 前台化已在 onCreate 完成，此处仅需返回粘性
         return START_STICKY  // 被系统杀后自动重启
     }
 

@@ -69,18 +69,32 @@ class KioskGuardService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // ★ v1.3.37 修复「退出再启动崩溃」：
+        // KioskGuardService 由 startForegroundService() 启动，Android 8+（尤其 12）硬性要求
+        // 启动后 5 秒内必须调用 startForeground()，否则系统抛
+        //   RemoteServiceException: Context.startForegroundService() did not then call Service.startForeground()
+        // 并杀进程。旧实现在「退出静默期」分支直接 stopSelf() 而从未前台化，正是该崩溃的根因
+        // （doExit 标记 30s 静默 → Alarm 到点重启 Activity → 启动本服务 → 仍处静默期 → 未前台化即停 → 崩）。
+        // 把 startForeground() 放到 onCreate 首段，无论 onStartCommand 走哪条分支都先满足 5s 约束，
+        // 彻底杜绝该崩溃；用 try-catch 包裹，避免 buildNotification 异常反致前台化失败。
+        try {
+            createNotificationChannel()
+            startForeground(NOTIF_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.w(TAG, "foreground init failed (non-fatal): ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 退出静默期内：不启动守护，主动停止自身并返回 START_NOT_STICKY，
-        // 系统不会因被杀而再次重启（避免 30s 静默期被 2s 轮询打断，导致退出后秒回）
+        // 已在 onCreate 完成前台化，5 秒硬约束已满足。
+        // 退出静默期内：先撤前台通知，再停自身并返回 START_NOT_STICKY，
+        // 系统不会因被杀而再次重启（避免 30s 静默期被 2s 轮询打断，导致退出后秒回）。
         if (KioskManager.inExitGrace(this)) {
             handler.removeCallbacks(pollRunnable)
+            try { stopForeground(true) } catch (_: Exception) {}
             stopSelf()
             return START_NOT_STICKY
         }
-        createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification())
         handler.removeCallbacks(pollRunnable)
         handler.post(pollRunnable)
         return START_STICKY
