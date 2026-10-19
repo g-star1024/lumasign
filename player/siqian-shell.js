@@ -27,7 +27,7 @@
   var lastVolume = -1;
   var insertTimer = null;
   var jsonpSeq = 0;
-  var SHELL_VERSION = '1.3.39';
+  var SHELL_VERSION = '1.3.40';
 
   function $(id) { return document.getElementById(id); }
   function log(m) { try { console.log('[siqian] ' + m); } catch (e) {} }
