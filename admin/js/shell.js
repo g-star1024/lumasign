@@ -19,6 +19,7 @@ const NAV = [
     { id: 'health', label: '健康看板', icon: '♥', perm: 'terminal:view', hash: '#/health' },
     { id: 'proof', label: '播放证明', icon: '▣', perm: 'log:view', hash: '#/proof' },
     { id: 'interactions', label: '交互统计', icon: '◎', perm: 'layout:view', hash: '#/interactions' },
+    { id: 'siqian', label: '56iq兼容', icon: '⇄', perm: 'terminal:view', hash: '#/siqian' },
   ] },
   { group: '系统', items: [
     { id: 'fleet', label: '设备开通', icon: '⚡', perm: 'terminal:view', hash: '#/fleet' },
@@ -185,6 +186,7 @@ function applyI18n() {
     layouts: 'nav.layouts', dataSources: 'nav.datasources', approvals: 'nav.approvals',
     schedules: 'nav.schedules', lifecycle: 'nav.lifecycle', monitor: 'nav.monitors',
     health: 'nav.health', proof: 'nav.proof', interactions: 'nav.interactions',
+    siqian: 'nav.siqian',
     fleet: 'nav.fleet', crashLogs: 'nav.crashLogs', users: 'nav.users',
     logs: 'nav.logs', security: 'nav.security', settings: 'nav.settings'
   };

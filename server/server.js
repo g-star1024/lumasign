@@ -51,7 +51,7 @@ import { registerInteractionApi } from './api/interaction.js';
 import { registerTranscodeApi } from './api/transcode.js';
 import { TranscodeQueue, setFFmpegInstallDir } from './lib/transcode.js';
 import {
-  SiqianRegistry, SiqianPlayerClient, SiqianCmsServer,
+  SiqianRegistry, SiqianPlayerClient, SiqianCmsServer, SiqianProgramMapper,
 } from './lib/siqian.js';
 import { registerSiqianApi } from './api/siqian.js';
 
@@ -142,16 +142,11 @@ async function init(opts = {}) {
   const siqianPort = sset.siqianPort || 8888;
   const siqianEnabled = sset.siqianEnabled !== false;
   const siqianRegistry = new SiqianRegistry(ctx.paths.data);
-  const resolveSiqianProgram = (ip) => {
-    try {
-      const t = store.col('terminals').all().find(x => x.ip === ip);
-      if (t) return { ProjectId: t.id, ProjectName: t.name || '灵屏终端', Scene: { ItemName: '默认场景' } };
-    } catch { /* ignore */ }
-    return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
-  };
+  const siqianMapper = new SiqianProgramMapper(ctx);
+  ctx.siqianMapper = siqianMapper;
   ctx.siqianRegistry = siqianRegistry;
   ctx.siqianClient = new SiqianPlayerClient({ port: siqianPort });
-  ctx.siqian = new SiqianCmsServer(ctx, { port: siqianPort, enabled: siqianEnabled, programResolver: resolveSiqianProgram });
+  ctx.siqian = new SiqianCmsServer(ctx, { port: siqianPort, enabled: siqianEnabled, programResolver: (ip) => siqianMapper.programFor(ip) });
   ctx.siqianPort = siqianPort;
 
   /* 设备台账与自动巡检（需在 seed 之后，依赖 settings 集合） */

@@ -17,7 +17,9 @@ import net from 'node:net';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { json, fail } from './http.js';
+import { json, fail, sendFile } from './http.js';
+import { buildManifest } from './schedule.js';
+import { recordPlayEvent } from './playlog.js';
 
 const GROUP_IP = '239.255.255.255';
 const DISCOVER_PORT = 51008;
@@ -78,6 +80,77 @@ export class SiqianPlayerClient {
   }
   setVolume(ip, v) { return this._get(ip, `/api/action/volume/${Math.max(0, Math.min(100, v | 0))}`); }
   insertMessage(ip, msg) { return this._get(ip, `/api/action/InsertMessage?msg=${encodeURIComponent(msg)}`); }
+}
+
+/* ---------------- 节目映射：灵屏排期/layout → 56iq program 描述 ---------------- */
+function pickPrimaryMedia(layout, store) {
+  const regions = (layout.regions || []).slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
+  for (const r of regions) {
+    for (const it of (r.items || [])) {
+      if (it.mediaId) {
+        const m = store.col('media').byId(it.mediaId);
+        if (m) return { hash: m.hash, mime: m.mime, name: m.name };
+      }
+    }
+  }
+  if (layout.background && layout.background.mediaId) {
+    const m = store.col('media').byId(layout.background.mediaId);
+    if (m) return { hash: m.hash, mime: m.mime, name: m.name };
+  }
+  return null;
+}
+
+export class SiqianProgramMapper {
+  constructor(ctx) { this.ctx = ctx; }
+
+  _terminalByIp(ip) {
+    try {
+      return this.ctx.store.col('terminals').all()
+        .find(t => t.ip === ip || (t.hardware && t.hardware.ip === ip)) || null;
+    } catch { return null; }
+  }
+
+  /** 由设备 IP 解析当前应播 56iq 节目（含可直接渲染的内容 URL，走 CMS 媒体代理） */
+  programFor(ip) {
+    const store = this.ctx.store;
+    const term = this._terminalByIp(ip);
+    if (!term) return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
+    let mf;
+    try { mf = buildManifest(store, term); } catch { mf = { schedules: [] }; }
+    const sch = (mf.schedules || [])[0];
+    if (!sch) return { ProjectId: 'no-program', ProjectName: '暂无排期', Scene: { ItemName: '—' }, TerminalName: term.name || null };
+    const layout = sch.layout || {};
+    const base = {
+      ProjectId: sch.scheduleId,
+      ProjectName: sch.name || layout.name || '节目',
+      Scene: { ItemName: layout.name || '主场景' },
+      LayoutId: layout.id || null,
+      TerminalName: term.name || null,
+    };
+    const primary = pickPrimaryMedia(layout, store);
+    if (primary) {
+      base.Url = `/api/siqian/media/${primary.hash}?ip=${encodeURIComponent(ip)}`;
+      base.TaskType = (primary.mime && primary.mime.startsWith('video')) ? '视频' : '图片';
+      base.MediaList = (mf.assets || []).map(a => ({
+        hash: a.hash, mime: a.mime, url: `/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`,
+      }));
+    }
+    return base;
+  }
+
+  /** 供媒体代理：按 hash 找媒体文件（优先转码产物） */
+  mediaFile(hash) {
+    const bare = hash.replace(/\.[^.]+$/, '');
+    const m = this.ctx.store.col('media').findOne(x => x.hash === hash || x.hash === bare || x.id === hash || x.id === bare);
+    if (!m) return null;
+    let rel = m.rel, mime = m.mime;
+    if (m.transcodedRel) {
+      try {
+        if (fs.existsSync(path.join(this.ctx.paths.media, m.transcodedRel))) { rel = m.transcodedRel; mime = 'video/mp4'; }
+      } catch { /* 回退原文件 */ }
+    }
+    return { filePath: path.join(this.ctx.paths.media, rel), mime };
+  }
 }
 
 /* ---------------- 灵屏兼当 56iq CMS（端口 8888） ---------------- */
@@ -143,7 +216,10 @@ export class SiqianCmsServer {
       // 2) 节目清单 / 当前播放
       if (p === '/api/program/programs/list') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
-        return this._json(res, u, this._currentProgram(ip));
+        const prog = this._currentProgram(ip);
+        const dev = this.registry.get(ip);
+        if (dev) { dev.lastProgram = { ProjectId: prog.ProjectId, LayoutId: prog.LayoutId || null, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
+        return this._json(res, u, prog);
       }
       if (p === '/api/program/programs/nowlist') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
@@ -190,6 +266,7 @@ export class SiqianCmsServer {
             at: Date.now(),
           };
           this.registry.upsert(dev.ip, dev);
+          this._recordPlaylog(ip, dev);
         }
         return this._json(res, u, { ok: true });
       }
@@ -213,6 +290,15 @@ export class SiqianCmsServer {
         res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
         return res.end(this._eAutoUpdateXml());
       }
+      // 4b) CMS 媒体代理：把灵屏内容以相对 URL 暴露给兼容 Shell（免终端令牌泄露）
+      if ((m = /^\/api\/siqian\/media\/([^/?]+)/.exec(p)) && req.method === 'GET') {
+        const ip = u.searchParams.get('ip');
+        if (ip && !this.registry.get(ip)) return fail(res, '设备未注册', 403);
+        const mapper = this.ctx.siqianMapper;
+        const mf = mapper ? mapper.mediaFile(decodeURIComponent(m[1])) : null;
+        if (!mf) return fail(res, '素材不存在', 404);
+        return sendFile(req, res, mf.filePath, { mime: mf.mime, cache: 'public, max-age=300, must-revalidate' });
+      }
       // 6) OpenAPI 文档（方便现场验证）
       if (p === '/api.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -222,6 +308,23 @@ export class SiqianCmsServer {
     } catch (e) {
       this._json(res, u, { ok: false, error: e.message }, 500);
     }
+  }
+
+  /** 把 56iq 兼容播放反馈写入灵屏 playlog（按设备 IP 关联终端） */
+  _recordPlaylog(ip, dev) {
+    try {
+      const mapper = this.ctx.siqianMapper;
+      const term = mapper ? mapper._terminalByIp(ip) : null;
+      if (!term) return;
+      recordPlayEvent(this.ctx.store, {
+        terminalId: term.id,
+        layoutId: (dev && dev.lastProgram && dev.lastProgram.LayoutId) || null,
+        itemId: (dev && dev.lastProgram && dev.lastProgram.ProjectId) || null,
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+        customer: '56iq-compat',
+      });
+    } catch { /* 播放证明失败不影响主流程 */ }
   }
 
   _eAutoUpdateXml() {

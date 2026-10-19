@@ -52,6 +52,10 @@ export const DEFAULT_SETTINGS = {
     crashWarn: 1, crashCrit: 5,         // 累计崩溃次数
   },
   weather: { city: '深圳', source: 'manual', manual: { temp: 28, text: '晴', humidity: 60 } },
+  // 56iq/触拓 兼容控制层
+  siqianEnabled: true,             // 是否启用 56iq CMS 兼容层（端口见 siqianPort）
+  siqianPort: 8888,                // 56iq CMS 兼容层监听端口
+  siqianCms: '',                   // 56iq CMS 基址；留空=同机 7788→8888 推导
 };
 
 const T = (name, w, h, regions) => ({
