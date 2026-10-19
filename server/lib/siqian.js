@@ -106,12 +106,15 @@ export class SiqianProgramMapper {
   _terminalByIp(ip) {
     try {
       return this.ctx.store.col('terminals').all()
-        .find(t => t.ip === ip || (t.hardware && t.hardware.ip === ip)) || null;
+        .find(t => t.ip === ip || (t.hardware && t.hardware.ip === ip) || (t.net && t.net.ip === ip)) || null;
     } catch { return null; }
   }
 
-  /** 由设备 IP 解析当前应播 56iq 节目（含可直接渲染的内容 URL，走 CMS 媒体代理） */
-  programFor(ip) {
+  /** 由设备 IP 解析当前应播 56iq 节目（含可直接渲染的内容 URL，走 CMS 媒体代理）
+   *  @param base 可选，CMS 对外基址（如 http://192.168.2.216:8888）——给了就把媒体
+   *  URL 补成绝对地址；播放端页面（:7788/player/siqian.html）与媒体代理（:8888）
+   *  不同源，相对路径会被解析到 7788 而 404，真机联调实测黑屏即此因。 */
+  programFor(ip, cmsBase) {
     const store = this.ctx.store;
     const term = this._terminalByIp(ip);
     if (!term) return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
@@ -128,11 +131,13 @@ export class SiqianProgramMapper {
       TerminalName: term.name || null,
     };
     const primary = pickPrimaryMedia(layout, store);
+    const mediaBase = cmsBase ? String(cmsBase).replace(/\/+$/, '') : '';
+    const abs = (p) => (mediaBase ? mediaBase + p : p);
     if (primary) {
-      base.Url = `/api/siqian/media/${primary.hash}?ip=${encodeURIComponent(ip)}`;
+      base.Url = abs(`/api/siqian/media/${primary.hash}?ip=${encodeURIComponent(ip)}`);
       base.TaskType = (primary.mime && primary.mime.startsWith('video')) ? '视频' : '图片';
       base.MediaList = (mf.assets || []).map(a => ({
-        hash: a.hash, mime: a.mime, url: `/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`,
+        hash: a.hash, mime: a.mime, url: abs(`/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`),
       }));
     }
     return base;
@@ -169,9 +174,9 @@ export class SiqianCmsServer {
     this.server = null;
   }
 
-  /** 把灵屏当前应播节目映射成 56iq programs/list 响应 */
-  _currentProgram(ip) {
-    try { return this.programResolver(ip) || { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目' }; }
+  /** 把灵屏当前应播节目映射成 56iq programs/list 响应（base=本 CMS 对外基址，用于补绝对媒体 URL） */
+  _currentProgram(ip, base) {
+    try { return this.programResolver(ip, base) || { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目' }; }
     catch { return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目' }; }
   }
 
@@ -214,9 +219,10 @@ export class SiqianCmsServer {
         return this._json(res, u, { ok: true, ip, name });
       }
       // 2) 节目清单 / 当前播放
+      const cmsBase = 'http://' + (req.headers.host || ('localhost:' + this.port));
       if (p === '/api/program/programs/list') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
-        const prog = this._currentProgram(ip);
+        const prog = this._currentProgram(ip, cmsBase);
         const dev = this.registry.get(ip);
         if (dev) { dev.lastProgram = { ProjectId: prog.ProjectId, LayoutId: prog.LayoutId || null, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
         return this._json(res, u, prog);
@@ -224,7 +230,7 @@ export class SiqianCmsServer {
       if (p === '/api/program/programs/nowlist') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const dev = this.registry.get(ip);
-        const prog = this._currentProgram(ip);
+        const prog = this._currentProgram(ip, cmsBase);
         // 把设备待执行指令折进 nowlist，供轮询式播放端（无 XMPP）观测到「推送」
         return this._json(res, u, {
           ...prog,

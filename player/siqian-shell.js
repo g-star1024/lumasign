@@ -141,6 +141,8 @@
     stage.innerHTML = '';
     var type = (prog && (prog.TaskType || prog.Type)) || '';
     var url = prog && (prog.Url || prog.Media || prog.Image || prog.Video || prog.Url2);
+    // 兼容层返回的媒体 URL 可能是相对路径（CMS 与播放页不同源）：按 CMS 基址补全
+    if (url && url.charAt(0) === '/') url = CMS.replace(/\/+$/, '') + url;
     if (url && (/\.html?$/i.test(url) || type === '网页' || type === 'web')) {
       var f = document.createElement('iframe');
       f.setAttribute('src', url);

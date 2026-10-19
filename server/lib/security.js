@@ -59,8 +59,37 @@ const CSP_PLAYER = [
   "base-uri 'self'",
 ].join('; ');
 
+/**
+ * 56iq/触拓 兼容 Shell 专用 CSP（仅 /player/siqian.html 使用）。
+ *
+ * 背景：该 Shell 跑在 Chromium 33（Android 4.4）上，无 fetch / 无 CORS 预检，
+ * 与 CMS（默认同机 :8888，也可能是局域网里真 56iq CMS）通信唯一可行的方式就是
+ * JSONP——动态注入 <script src="http://cms/api/...?callback=...">。
+ * 播放端默认 CSP 的 script-src 'self' 会连端口不同都拒（同机 7788→8888 即跨源），
+ * 故对此单页面放开 script-src/connect-src 到 http:/https: scheme-source。
+ *
+ * 安全权衡：CMS 地址来自管理端下发的深链（lumasync://config?cms=），Shell 只会向
+ * 该地址造 script 标签；本产品整体为局域网明文 HTTP 部署，JSONP 与既有
+ * img/media-src http: 放开的暴露面同级。其余指令（object-src none / base-uri
+ * self / frame-ancestors self）保持严格，继续挡 XSS 上屏与点击劫持。
+ */
+const CSP_SIQIAN = [
+  "default-src 'self'",
+  "script-src 'self' http: https:",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: http: https:",
+  "media-src 'self' data: blob: http: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' http: https:",
+  "frame-src http: https:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
+
 export function applySecurityHeaders(res, { kind = 'admin', https = false } = {}) {
-  res.setHeader('Content-Security-Policy', kind === 'player' ? CSP_PLAYER : CSP_ADMIN);
+  const csp = kind === 'player' ? CSP_PLAYER : kind === 'siqian' ? CSP_SIQIAN : CSP_ADMIN;
+  res.setHeader('Content-Security-Policy', csp);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'same-origin');

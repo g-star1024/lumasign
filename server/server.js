@@ -146,7 +146,7 @@ async function init(opts = {}) {
   ctx.siqianMapper = siqianMapper;
   ctx.siqianRegistry = siqianRegistry;
   ctx.siqianClient = new SiqianPlayerClient({ port: siqianPort });
-  ctx.siqian = new SiqianCmsServer(ctx, { port: siqianPort, enabled: siqianEnabled, programResolver: (ip) => siqianMapper.programFor(ip) });
+  ctx.siqian = new SiqianCmsServer(ctx, { port: siqianPort, enabled: siqianEnabled, programResolver: (ip, base) => siqianMapper.programFor(ip, base) });
   ctx.siqianPort = siqianPort;
 
   /* 设备台账与自动巡检（需在 seed 之后，依赖 settings 集合） */
@@ -256,9 +256,11 @@ async function init(opts = {}) {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = decodeURIComponent(url.pathname);
       const isPlayer = pathname.startsWith('/player');
+      // 56iq 兼容 Shell：JSONP 跨源调 CMS（同机 :8888 或局域网真 56iq CMS），需放开 script-src
+      const isSiqianShell = pathname.startsWith('/player/siqian');
 
       setCors(req, res);
-      applySecurityHeaders(res, { kind: isPlayer ? 'player' : 'admin', https: ctx.https });
+      applySecurityHeaders(res, { kind: isSiqianShell ? 'siqian' : isPlayer ? 'player' : 'admin', https: ctx.https });
       if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
 
       /* ── 安全闸门（顺序：网络面 → 黑白名单 → 限速 → CSRF） ── */
