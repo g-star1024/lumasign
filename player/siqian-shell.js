@@ -27,7 +27,7 @@
   var lastVolume = -1;
   var insertTimer = null;
   var jsonpSeq = 0;
-  var SHELL_VERSION = '1.3.43';
+  var SHELL_VERSION = '1.3.43-r3';   // r3：视频互切改等首帧（loadeddata/canplay）就绪再淡入
   // 本地轮播状态：CMS 下传 Playlist 时按各排期 durationMs 本地切换，
   // 切换节奏由本地定时器驱动，不被轮询间隔（拉模式推送）稀释
   var playlist = [];
@@ -186,7 +186,9 @@
       // 图片/就绪异常按服务端时长（排期 duration 或默认 15s）
       var t = (typeof actualMs === 'number' && actualMs > 300) ? actualMs : hold;
       plTimer = setTimeout(nextItem, t);
-    });
+      // 世代校验：慢加载素材（>5s 兜底已推进轮播）迟到就绪时不再淡入，
+      // 防止旧世代的视频/图片盖住当前内容（rk312x 弱网下的轮播错乱）
+    }, function () { return myGen === plGen; });
   }
 
   function nextItem() {
@@ -198,6 +200,9 @@
   /* ---------------- 渲染：双层交叉淡入 ---------------- */
   // 淡入即旧层退场时刻：新媒体开始可见的同一瞬间旧层才开始淡出，
   // 两层交叉过渡，任何时刻屏幕上都有内容（v1.3.43 除黑闪核心）。
+  // 淡入时机按媒体类型取「真正可画」事件：图片=load（已解码）、视频=loadeddata/canplay
+  // （首帧就绪）。r3 修复：loadedmetadata 只代表元数据就绪，rk312x 硬解首帧常滞后
+  // 数百 ms，彼时淡入黑底视频层正是视频互切黑闪的根因。
   function fadeInLayer(layer) {
     if (layer._retired) return;
     layer._retired = true;
@@ -205,8 +210,10 @@
     if (layer._retire) layer._retire();
   }
 
-  /** 把 prog 的媒体（或描述卡）装进 layer；媒体就绪后回调 onReady(actualMs) */
-  function buildMediaInto(layer, prog, onReady) {
+  /** 把 prog 的媒体（或描述卡）装进 layer；媒体就绪后回调 onReady(actualMs)。
+   *  isValid 可缺省：轮播世代校验，返回 false 表示本层已过期（迟到就绪也不再淡入） */
+  function buildMediaInto(layer, prog, onReady, isValid) {
+    function stillValid() { return !isValid || isValid(); }
     var type = (prog && (prog.TaskType || prog.Type)) || '';
     var url = prog && (prog.Url || prog.Media || prog.Image || prog.Video || prog.Url2);
     // 兼容层返回的媒体 URL 可能是相对路径（CMS 与播放页不同源）：按 CMS 基址补全
@@ -228,48 +235,61 @@
       var f = document.createElement('iframe');
       f.setAttribute('frameborder', '0');
       f.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:#000;';
-      if (f.addEventListener) f.addEventListener('load', function () { fadeInLayer(layer); settle(); });
-      else { fadeInLayer(layer); settle(); }
+      if (f.addEventListener) f.addEventListener('load', function () { if (!stillValid()) return; fadeInLayer(layer); settle(); });
+      else if (stillValid()) { fadeInLayer(layer); settle(); }
       f.setAttribute('src', url);
       layer.appendChild(f);
     } else if (url && (/\.(mp4|webm|ogg|m3u8)$/i.test(url) || type === '视频' || type === 'video')) {
       var v = document.createElement('video');
       v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
       v.setAttribute('playsinline', 'true');
+      v.setAttribute('preload', 'auto');    // 确保首帧数据被拉取（loadeddata 才会来）
+      v.autoplay = true;
+      v.loop = false;                       // 不循环：播完按实际时长切下一条
+      var vDur = 0;                         // loadedmetadata 拿到的真实时长（ms）
+      var vFrame = false;                   // 首帧是否已就绪
       if (v.addEventListener) {
-        // 实际播放时长：元数据到手即淡入并回传真实秒数，杜绝「低于时长黑屏/高于时长截断」
         v.addEventListener('loadedmetadata', function () {
-          var d = 0;
-          try { d = (v.duration || 0) * 1000; } catch (e) {}
-          fadeInLayer(layer);
-          settle(d > 300 ? d : null);
+          try { vDur = (v.duration || 0) * 1000; } catch (e) {}
+          // 元数据就绪 ≠ 首帧可画：rk312x 硬解出首帧常滞后数百 ms，
+          // 彼时淡入会让黑底视频层盖住旧内容 → 视频互切黑闪（联调实拍实锤）。
+          // 因此 loadedmetadata 只记录时长，淡入统一交给 onFirstFrame。
+          if (vFrame) fadeInLayer(layer);   // 极端情况首帧先行到位：补淡入
         });
+        // 首帧可画（loadeddata）或足以起播（canplay）才淡入：旧层顶到最后一刻，
+        // 黑屏间隙为零；时长回传 loadedmetadata 实时值，<=300ms 视为无效
+        function onFirstFrame() {
+          if (vFrame) return;
+          vFrame = true;
+          fadeInLayer(layer);
+          try { v.play(); } catch (e) {}    // 与 autoplay 双保险：声音与画面同步进场
+          settle(vDur > 300 ? vDur : null);
+        }
+        v.addEventListener('loadeddata', onFirstFrame);
+        v.addEventListener('canplay', onFirstFrame);
         // 加载失败不淡入空层：保留旧内容顶住，等下一轮/网络恢复
         v.addEventListener('error', function () { settle(); });
       } else { fadeInLayer(layer); settle(); }
       v.setAttribute('src', url);
-      v.autoplay = true;
-      v.loop = false;                       // 不循环：播完按实际时长切下一条
       layer.appendChild(v);
     } else if (url && (/\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(url) || type === '图片' || type === 'image')) {
       var im = document.createElement('img');
       im.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
       if (im.addEventListener) {
         // 先挂监听再设 src：大图在 rk312x 上解码慢，就绪后才淡入，旧层顶住不闪黑
-        im.addEventListener('load', function () { fadeInLayer(layer); settle(); });
+        im.addEventListener('load', function () { if (!stillValid()) return; fadeInLayer(layer); settle(); });
         // 加载失败不淡入空层：保留旧内容顶住，等下一轮/网络恢复
-        im.addEventListener('error', function () { settle(); });
+        im.addEventListener('error', function () { if (!stillValid()) return; settle(); });
       } else { fadeInLayer(layer); settle(); }
       im.setAttribute('src', url);
       layer.appendChild(im);
     } else {
-      layer.appendChild(descriptorCard(prog));
-      fadeInLayer(layer);
+      if (stillValid()) { layer.appendChild(descriptorCard(prog)); fadeInLayer(layer); }
       settle();
     }
   }
 
-  function renderProgram(prog, onReady) {
+  function renderProgram(prog, onReady, isValid) {
     setHud('program', (prog && prog.ProjectName) || '—');
     setHud('scene', (prog && prog.Scene && prog.Scene.ItemName) || '—');
     var stage = $('stage');
@@ -291,6 +311,13 @@
     layer._retire = function () {
       for (var j = 0; j < stale.length; j++) {
         (function (elm) {
+          // 交叉淡入期间停掉旧层视频：双视频同播会声音重叠，并争抢 rk312x 紧缺的解码器
+          try {
+            if (elm.getElementsByTagName) {
+              var ov = elm.getElementsByTagName('video');
+              for (var q = 0; q < ov.length; q++) { try { ov[q].pause(); } catch (e2) {} }
+            }
+          } catch (e) {}
           if (elm.style) elm.style.opacity = '0';
           setTimeout(function () { if (elm.parentNode) elm.parentNode.removeChild(elm); }, FADE_MS + 150);
         })(stale[j]);
@@ -301,7 +328,7 @@
       // 有素材 → HUD 让位给内容；无素材（描述卡）→ HUD 可见
       setHudVisible(!!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
       if (onReady) onReady(actualMs);
-    });
+    }, isValid);
     feedback('play', (prog && prog.ProjectId) || '');
   }
 
