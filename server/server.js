@@ -50,6 +50,10 @@ import { registerDataSourceApi } from './api/datasource.js';
 import { registerInteractionApi } from './api/interaction.js';
 import { registerTranscodeApi } from './api/transcode.js';
 import { TranscodeQueue, setFFmpegInstallDir } from './lib/transcode.js';
+import {
+  SiqianRegistry, SiqianPlayerClient, SiqianCmsServer,
+} from './lib/siqian.js';
+import { registerSiqianApi } from './api/siqian.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -133,6 +137,23 @@ async function init(opts = {}) {
   /* 首次运行初始化默认数据 */
   seed(store, logger);
 
+  /* 触拓(56iq) 兼容控制层：让灵屏服务端能控 56iq/触拓 设备 */
+  const sset = (store.col('settings').byId('settings') || {});
+  const siqianPort = sset.siqianPort || 8888;
+  const siqianEnabled = sset.siqianEnabled !== false;
+  const siqianRegistry = new SiqianRegistry(ctx.paths.data);
+  const resolveSiqianProgram = (ip) => {
+    try {
+      const t = store.col('terminals').all().find(x => x.ip === ip);
+      if (t) return { ProjectId: t.id, ProjectName: t.name || '灵屏终端', Scene: { ItemName: '默认场景' } };
+    } catch { /* ignore */ }
+    return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
+  };
+  ctx.siqianRegistry = siqianRegistry;
+  ctx.siqianClient = new SiqianPlayerClient({ port: siqianPort });
+  ctx.siqian = new SiqianCmsServer(ctx, { port: siqianPort, enabled: siqianEnabled, programResolver: resolveSiqianProgram });
+  ctx.siqianPort = siqianPort;
+
   /* 设备台账与自动巡检（需在 seed 之后，依赖 settings 集合） */
   const inventory = new Inventory(ctx);
   ctx.inventory = inventory;
@@ -171,6 +192,10 @@ async function init(opts = {}) {
   registerDataSourceApi(router, ctx);
   registerInteractionApi(router, ctx);
   registerTranscodeApi(router, ctx);
+  registerSiqianApi(router, ctx);
+
+  /* 启动 56iq CMS 兼容层（端口见 siqianPort，默认 8888）；端口占用则自动跳过 */
+  ctx.siqian.start().catch(e => logger.warn?.('[siqian] 启动失败：' + e.message));
 
   /* ---------------- 全局限速随设置刷新 ---------------- */
   const refreshTimer = setInterval(() => {
@@ -384,6 +409,7 @@ async function init(opts = {}) {
   function shutdown() {
     try { server.close(() => {}); } catch { /* ignore */ }
     try { disc.close(); } catch { /* ignore */ }
+    try { ctx.siqian?.stop(); } catch { /* ignore */ }
     try { clearInterval(refreshTimer); } catch { /* ignore */ }
     try { inventory.stop(); } catch { /* ignore */ }
     try { lifecycle.stop(); } catch { /* ignore */ }
