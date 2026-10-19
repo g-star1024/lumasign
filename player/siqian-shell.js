@@ -27,6 +27,7 @@
   var lastVolume = -1;
   var insertTimer = null;
   var jsonpSeq = 0;
+  var SHELL_VERSION = '1.3.39';
 
   function $(id) { return document.getElementById(id); }
   function log(m) { try { console.log('[siqian] ' + m); } catch (e) {} }
@@ -174,6 +175,7 @@
 
   /* ---------------- 启动 ---------------- */
   function init() {
+    setHud('shell', SHELL_VERSION);
     if (!CMS) { setHud('cms', '未配置'); var st = $('stage'); if (st) st.appendChild(descriptorCard(null)); return; }
     setHud('cms', CMS);
     setHud('name', NAME);
