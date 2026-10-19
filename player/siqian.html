@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>灵屏 · 56iq 兼容播放</title>
+  <style type="text/css">
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; color: #fff; overflow: hidden; }
+    #stage { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000; }
+    #insert {
+      display: none; position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+      align-items: center; justify-content: center; background: rgba(0,0,0,.82); z-index: 50;
+    }
+    #insert span {
+      max-width: 80%; padding: 24px 32px; font-size: 44px; line-height: 1.4; font-weight: bold;
+      color: #fff; text-align: center; border-left: 8px solid #e33; word-break: break-all;
+    }
+    #hud {
+      position: absolute; left: 8px; top: 8px; z-index: 60; max-width: 92%;
+      padding: 4px 8px; font-size: 12px; line-height: 1.5; color: #cfe;
+      background: rgba(0,0,0,.35); border-radius: 4px; opacity: .75;
+      font-family: Consolas, monospace; pointer-events: none;
+    }
+    #hud b { color: #fff; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="insert"><span></span></div>
+  <div id="hud">
+    CMS <b id="hud-cms">…</b> · IP <b id="hud-ip">…</b> · 名称 <b id="hud-name">…</b><br />
+    节目 <b id="hud-program">…</b> · 场景 <b id="hud-scene">…</b> · 注册 <b id="hud-registered">…</b> · 音量 <b id="hud-volume">…</b>
+  </div>
+  <script src="siqian-shell.js"></script>
+</body>
+</html>

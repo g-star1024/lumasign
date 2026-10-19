@@ -113,6 +113,21 @@ export class SiqianCmsServer {
   }
   stop() { try { this.server?.close(); } catch {} }
 
+  /** JSONP 感知响应：带 callback 参数时包裹成 JS（Chromium 33 / 跨端口 4.4 WebView 必需） */
+  _json(res, u, data, code = 200) {
+    const cb = u.searchParams.get('callback');
+    if (cb) {
+      const body = `${cb}(${JSON.stringify(data)});`;
+      res.writeHead(code, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+      });
+      return res.end(body);
+    }
+    return json(res, data, code);
+  }
+
   async _handle(req, res) {
     const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const p = u.pathname;
@@ -123,16 +138,24 @@ export class SiqianCmsServer {
         const name = u.searchParams.get('name') || ip;
         const dev = this.registry.upsert(ip, { name, source: 'cms-register' });
         this.ctx.bus?.emit?.('siqian:register', dev);
-        return json(res, { ok: true, ip, name });
+        return this._json(res, u, { ok: true, ip, name });
       }
       // 2) 节目清单 / 当前播放
       if (p === '/api/program/programs/list') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
-        return json(res, this._currentProgram(ip));
+        return this._json(res, u, this._currentProgram(ip));
       }
       if (p === '/api/program/programs/nowlist') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
-        return json(res, this._currentProgram(ip));
+        const dev = this.registry.get(ip);
+        const prog = this._currentProgram(ip);
+        // 把设备待执行指令折进 nowlist，供轮询式播放端（无 XMPP）观测到「推送」
+        return this._json(res, u, {
+          ...prog,
+          volume: (dev && typeof dev.volume === 'number') ? dev.volume : null,
+          insert: dev && dev.lastInsert ? { msg: dev.lastInsert.msg, at: dev.lastInsert.at } : null,
+          command: dev ? dev.lastCommand || null : null,
+        });
       }
       // 3) 播放 / 音量 / 插播（CMS 对外 OpenAPI）
       let m;
@@ -141,31 +164,49 @@ export class SiqianCmsServer {
         const scene = m[2] ? decodeURIComponent(m[2]) : null;
         const dev = this.registry.get(ip);
         if (dev) { dev.lastCommand = { type: 'play', programId: decodeURIComponent(m[1]), scene, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
-        return json(res, { ok: true, action: 'play', programId: decodeURIComponent(m[1]), scene });
+        return this._json(res, u, { ok: true, action: 'play', programId: decodeURIComponent(m[1]), scene });
       }
       if ((m = /^\/api\/action\/volume\/(\d+)$/.exec(p)) && req.method === 'GET') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const dev = this.registry.get(ip);
         if (dev) { dev.volume = Number(m[1]); this.registry.upsert(dev.ip, dev); }
-        return json(res, { ok: true, action: 'volume', value: Number(m[1]) });
+        return this._json(res, u, { ok: true, action: 'volume', value: Number(m[1]) });
       }
       if (p === '/api/action/InsertMessage' && req.method === 'GET') {
         const msg = u.searchParams.get('msg') || '';
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const dev = this.registry.get(ip);
         if (dev) { dev.lastInsert = { msg, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
-        return json(res, { ok: true, action: 'InsertMessage', msg });
+        return this._json(res, u, { ok: true, action: 'InsertMessage', msg });
       }
-      // 4) 播放反馈（播放端 → CMS）
-      if (p === '/TransferFeedback.aspx' && req.method === 'POST') {
-        const chunks = []; req.on('data', c => chunks.push(c));
-        req.on('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
-          const dev = this.registry.get(clientIpFromReq(req));
-          if (dev) { dev.lastFeedback = body.slice(0, 4000); this.registry.upsert(dev.ip, dev); }
-          json(res, { ok: true });
-        });
-        return;
+      // 3b) 播放反馈信标（GET，兼容 4.4 WebView 无法跨域 POST）
+      if (p === '/api/feedback' && req.method === 'GET') {
+        const ip = u.searchParams.get('ip') || clientIpFromReq(req);
+        const dev = this.registry.get(ip);
+        if (dev) {
+          dev.lastFeedback = {
+            event: u.searchParams.get('event') || 'play',
+            item: u.searchParams.get('item') || '',
+            at: Date.now(),
+          };
+          this.registry.upsert(dev.ip, dev);
+        }
+        return this._json(res, u, { ok: true });
+      }
+      // 4) 播放反馈（播放端 → CMS，POST 表单；也接受 GET 信标）
+      if (p === '/TransferFeedback.aspx') {
+        const ip = u.searchParams.get('ip') || clientIpFromReq(req);
+        const dev = this.registry.get(ip);
+        const record = (body) => {
+          if (dev) { dev.lastFeedback = (body || JSON.stringify({ event: u.searchParams.get('feedbackType') || 'play' })).slice(0, 4000); this.registry.upsert(dev.ip, dev); }
+          this._json(res, u, { ok: true });
+        };
+        if (req.method === 'POST') {
+          const chunks = []; req.on('data', c => chunks.push(c));
+          req.on('end', () => record(Buffer.concat(chunks).toString('utf8')));
+          return;
+        }
+        return record('');
       }
       // 5) OTA 升级清单
       if (p === '/UpdatePlayer/EAutoUpdate.xml' && req.method === 'GET') {
@@ -177,9 +218,9 @@ export class SiqianCmsServer {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(SIQIAN_API_DOC);
       }
-      json(res, { ok: false, error: 'not found' }, 404);
+      this._json(res, u, { ok: false, error: 'not found' }, 404);
     } catch (e) {
-      json(res, { ok: false, error: e.message }, 500);
+      this._json(res, u, { ok: false, error: e.message }, 500);
     }
   }
 
