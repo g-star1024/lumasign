@@ -27,7 +27,7 @@
   var lastVolume = -1;
   var insertTimer = null;
   var jsonpSeq = 0;
-  var SHELL_VERSION = '1.3.41';
+  var SHELL_VERSION = '1.3.43';
   // 本地轮播状态：CMS 下传 Playlist 时按各排期 durationMs 本地切换，
   // 切换节奏由本地定时器驱动，不被轮询间隔（拉模式推送）稀释
   var playlist = [];
@@ -89,7 +89,8 @@
   function feedback(event, item) {
     if (!selfIp) return;
     jsonp(CMS + '/api/feedback?ip=' + encodeURIComponent(selfIp) +
-      '&event=' + encodeURIComponent(event) + '&item=' + encodeURIComponent(item || ''), function () {});
+      '&event=' + encodeURIComponent(event) + '&item=' + encodeURIComponent(item || '') +
+      '&av=' + encodeURIComponent(SHELL_VERSION), function () {});
   }
 
   function pollList() {
@@ -146,6 +147,9 @@
   }
 
   /* ---------------- 本地轮播（CMS 下传完整 Playlist 时） ---------------- */
+  var FADE_MS = 500;     // 交叉淡入时长：杜绝素材切换黑屏（Chromium 33 支持 CSS transition）
+  var plGen = 0;         // 轮播世代号：列表变化作废在途渲染回调，防计时器竞争
+
   function plSignature(list) {
     var sig = '';
     for (var i = 0; i < list.length; i++) sig += (list[i].ProjectId || '') + '@' + (list[i].durationMs || 0) + '|';
@@ -156,6 +160,7 @@
     var sig = plSignature(list);
     if (sig === plSig) return;              // 列表没变：不打断当前轮播
     plSig = sig; playlist = list; plIdx = 0;
+    plGen++;                                // 作废在途渲染/计时
     if (plTimer) { clearTimeout(plTimer); plTimer = null; }
     log('playlist ' + list.length + ' 项，开始轮播');
     showCurrent();
@@ -163,50 +168,125 @@
 
   function showCurrent() {
     if (!playlist.length) return;
+    var myGen = ++plGen;
     var item = playlist[plIdx];
     lastProgId = item.ProjectId || null;
-    renderProgram(item);
-    var dur = Math.max(1000, item.durationMs || 5000);
-    plTimer = setTimeout(function () {
-      plIdx = (plIdx + 1) % playlist.length;
-      showCurrent();
-    }, dur);
+    var hold = Math.max(1000, item.durationMs || 15000);
+    var armed = false;
+    // 媒体 5s 未就绪：按服务端时长兜底推进，避免旧层永驻、轮播卡死
+    var safety = setTimeout(function () {
+      if (armed || myGen !== plGen) return;
+      armed = true;
+      plTimer = setTimeout(nextItem, hold);
+    }, 5000);
+    renderProgram(item, function (actualMs) {
+      if (armed || myGen !== plGen) return;
+      armed = true; clearTimeout(safety);
+      // 视频按 loadedmetadata 实际时长（服务端 media.duration 的实时校正）；
+      // 图片/就绪异常按服务端时长（排期 duration 或默认 15s）
+      var t = (typeof actualMs === 'number' && actualMs > 300) ? actualMs : hold;
+      plTimer = setTimeout(nextItem, t);
+    });
   }
 
-  function renderProgram(prog) {
-    setHud('program', (prog && prog.ProjectName) || '—');
-    setHud('scene', (prog && prog.Scene && prog.Scene.ItemName) || '—');
-    var stage = $('stage');
-    if (!stage) return;
-    stage.innerHTML = '';
+  function nextItem() {
+    if (!playlist.length) return;
+    plIdx = (plIdx + 1) % playlist.length;
+    showCurrent();
+  }
+
+  /* ---------------- 渲染：双层交叉淡入 ---------------- */
+  function fadeInLayer(layer) {
+    setTimeout(function () { layer.style.opacity = '1'; }, 30);
+  }
+
+  /** 把 prog 的媒体（或描述卡）装进 layer；媒体就绪后回调 onReady(actualMs) */
+  function buildMediaInto(layer, prog, onReady) {
     var type = (prog && (prog.TaskType || prog.Type)) || '';
     var url = prog && (prog.Url || prog.Media || prog.Image || prog.Video || prog.Url2);
     // 兼容层返回的媒体 URL 可能是相对路径（CMS 与播放页不同源）：按 CMS 基址补全
     if (url && url.charAt(0) === '/') url = CMS.replace(/\/+$/, '') + url;
+    var fired = false;
+    function ready(actualMs) {
+      if (fired) return; fired = true;
+      if (onReady) onReady(actualMs);
+    }
+    // 就绪/超时保护：5s 未就绪也淡入并推进，避免旧层永驻、轮播卡死
+    var guard = setTimeout(function () { fadeInLayer(layer); ready(); }, 5000);
+    function settle(actualMs) { clearTimeout(guard); ready(actualMs); }
+
     if (url && (/\.html?$/i.test(url) || type === '网页' || type === 'web')) {
       var f = document.createElement('iframe');
-      f.setAttribute('src', url);
       f.setAttribute('frameborder', '0');
       f.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:#000;';
-      stage.appendChild(f);
-      setHudVisible(false);
+      if (f.addEventListener) f.addEventListener('load', function () { settle(); });
+      else settle();
+      f.setAttribute('src', url);
+      layer.appendChild(f);
+      fadeInLayer(layer);
     } else if (url && (/\.(mp4|webm|ogg|m3u8)$/i.test(url) || type === '视频' || type === 'video')) {
       var v = document.createElement('video');
-      v.setAttribute('src', url); v.autoplay = true; v.loop = true;
       v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
-      stage.appendChild(v);
-      setHudVisible(false);   // 有素材：底层信息让位给内容
+      v.setAttribute('playsinline', 'true');
+      if (v.addEventListener) {
+        // 实际播放时长：元数据到手即淡入并回传真实秒数，杜绝「低于时长黑屏/高于时长截断」
+        v.addEventListener('loadedmetadata', function () {
+          var d = 0;
+          try { d = (v.duration || 0) * 1000; } catch (e) {}
+          fadeInLayer(layer);
+          settle(d > 300 ? d : null);
+        });
+        v.addEventListener('error', function () { fadeInLayer(layer); settle(); });
+      } else { fadeInLayer(layer); settle(); }
+      v.setAttribute('src', url);
+      v.autoplay = true;
+      v.loop = false;                       // 不循环：播完按实际时长切下一条
+      layer.appendChild(v);
     } else if (url && (/\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(url) || type === '图片' || type === 'image')) {
       var im = document.createElement('img');
-      im.setAttribute('src', url);
-      // cover：铺满屏幕（含 9:16 竖屏）不留黑边；横图会裁左右边缘，主体居中不受影响
       im.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
-      stage.appendChild(im);
-      setHudVisible(false);
+      if (im.addEventListener) {
+        // 先挂监听再设 src：大图在 rk312x 上解码慢，就绪后才淡入，旧层顶住不闪黑
+        im.addEventListener('load', function () { fadeInLayer(layer); settle(); });
+        im.addEventListener('error', function () { fadeInLayer(layer); settle(); });
+      } else { fadeInLayer(layer); settle(); }
+      im.setAttribute('src', url);
+      layer.appendChild(im);
     } else {
-      stage.appendChild(descriptorCard(prog));
-      setHudVisible(true);    // 无素材：才显示底层诊断信息
+      layer.appendChild(descriptorCard(prog));
+      fadeInLayer(layer);
+      settle();
     }
+  }
+
+  function renderProgram(prog, onReady) {
+    setHud('program', (prog && prog.ProjectName) || '—');
+    setHud('scene', (prog && prog.Scene && prog.Scene.ItemName) || '—');
+    var stage = $('stage');
+    if (!stage) { if (onReady) onReady(); return; }
+    // 快照现有层（通常 1 层；异常连渲染时多层一并清理，防累积）
+    var stale = [];
+    for (var i = 0; i < stage.children.length; i++) stale.push(stage.children[i]);
+    var layer = document.createElement('div');
+    layer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;' +
+      'transition:opacity ' + FADE_MS + 'ms ease;background:#000;';
+    stage.appendChild(layer);
+    buildMediaInto(layer, prog, function (actualMs) {
+      // 有素材 → HUD 让位给内容；无素材（描述卡）→ HUD 可见
+      setHudVisible(!!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
+      // v1.3.43 联调修复（切换黑闪）：旧层必须等新媒体就绪、开始淡入后才退场。
+      // 原实现「30ms 淡出旧层 + 固定 650ms 删除」在 rk312x 上媒体经 HTTP 代理
+      // 加载 >650ms 时旧层已删、新层仍 opacity:0 → 整屏黑闪（真机 screencap
+      // 在切换时刻抓到亮度 0.2 的纯黑帧实锤）。现在两层同时交叉淡入，
+      // FADE_MS 后旧层才移除，全程有内容顶住，无黑屏间隙。
+      for (var j = 0; j < stale.length; j++) {
+        (function (elm) {
+          if (elm.style) elm.style.opacity = '0';
+          setTimeout(function () { if (elm.parentNode) elm.parentNode.removeChild(elm); }, FADE_MS + 150);
+        })(stale[j]);
+      }
+      if (onReady) onReady(actualMs);
+    });
     feedback('play', (prog && prog.ProjectId) || '');
   }
 

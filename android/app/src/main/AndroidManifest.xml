@@ -54,12 +54,15 @@
             </intent-filter>
         </activity>
 
+        <!-- 播放主界面锁定竖屏：标牌面板 1080x1872 物理竖装。
+             fullSensor 会跟随传感器横竖翻转（联调实测：手持/桌面平放即横屏，
+            恢复上墙才回竖），kiosk 场景应锁定，杜绝内容横置。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="fullSensor"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.LumaSign.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

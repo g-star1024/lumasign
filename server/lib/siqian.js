@@ -83,21 +83,21 @@ export class SiqianPlayerClient {
 }
 
 /* ---------------- 节目映射：灵屏排期/layout → 56iq program 描述 ---------------- */
-function pickPrimaryMedia(layout, store) {
+/** 收集一个 layout 里的全部媒体素材（区域按面积降序，区域项按序；同 hash 去重） */
+function collectMediaItems(layout, store) {
+  const out = [];
+  const seen = new Set();
   const regions = (layout.regions || []).slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
-  for (const r of regions) {
-    for (const it of (r.items || [])) {
-      if (it.mediaId) {
-        const m = store.col('media').byId(it.mediaId);
-        if (m) return { hash: m.hash, mime: m.mime, name: m.name };
-      }
-    }
-  }
-  if (layout.background && layout.background.mediaId) {
-    const m = store.col('media').byId(layout.background.mediaId);
-    if (m) return { hash: m.hash, mime: m.mime, name: m.name };
-  }
-  return null;
+  const push = (mediaId) => {
+    if (!mediaId || seen.has(mediaId)) return;
+    const m = store.col('media').byId(mediaId);
+    if (!m) return;
+    seen.add(mediaId);
+    out.push({ hash: m.hash, mime: m.mime, name: m.name, duration: m.duration || null });
+  };
+  for (const r of regions) for (const it of (r.items || [])) push(it.mediaId);
+  if (layout.background && layout.background.mediaId) push(layout.background.mediaId);
+  return out;
 }
 
 export class SiqianProgramMapper {
@@ -115,10 +115,12 @@ export class SiqianProgramMapper {
    *  URL 补成绝对地址；播放端页面（:7788/player/siqian.html）与媒体代理（:8888）
    *  不同源，相对路径会被解析到 7788 而 404，真机联调实测黑屏即此因。
    *
-   *  v1.3.41：除「当前节目」主字段外，附加 Playlist 数组（全部应播排期 + 各自
-   *  durationMs），兼容 Shell 据此本地轮播——多排期不轮播是真机联调暴露的核心
-   *  体验缺陷（后台 3 个已发布排期只播第 1 个）。真 56iq CMS 无此字段，Shell
-   *  自动回退单节目渲染。 */
+   *  v1.3.43：Playlist 改为**素材级**（此前是排期级，一个排期只播主媒体，
+   *  且视频被按排期时长截断/黑屏——真机联调用户反馈）：
+   *   - 图片项停留 = 该排期 duration（后台设置优先，未设默认 15s）；
+   *   - 视频项停留 = 视频实际时长（media.duration，上传时探测，秒→ms）；
+   *     Shell 端再以 loadedmetadata 实际值校正（转码产物可能与源不同）。
+   *  主字段仍为首个素材项，真 56iq CMS（无 Playlist）回退单节目渲染不受影响。 */
   programFor(ip, cmsBase) {
     const store = this.ctx.store;
     const term = this._terminalByIp(ip);
@@ -128,41 +130,34 @@ export class SiqianProgramMapper {
     const schedules = mf.schedules || [];
     const sch = schedules[0];
     if (!sch) return { ProjectId: 'no-program', ProjectName: '暂无排期', Scene: { ItemName: '—' }, TerminalName: term.name || null };
-    const layout = sch.layout || {};
-    const base = {
-      ProjectId: sch.scheduleId,
-      ProjectName: sch.name || layout.name || '节目',
-      Scene: { ItemName: layout.name || '主场景' },
-      LayoutId: layout.id || null,
-      TerminalName: term.name || null,
-    };
     const mediaBase = cmsBase ? String(cmsBase).replace(/\/+$/, '') : '';
     const abs = (p) => (mediaBase ? mediaBase + p : p);
-    const primary = pickPrimaryMedia(layout, store);
-    if (primary) {
-      base.Url = abs(`/api/siqian/media/${primary.hash}?ip=${encodeURIComponent(ip)}`);
-      base.TaskType = (primary.mime && primary.mime.startsWith('video')) ? '视频' : '图片';
-      base.MediaList = (mf.assets || []).map(a => ({
-        hash: a.hash, mime: a.mime, url: abs(`/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`),
-      }));
-    }
-    // 完整轮播清单：与主字段同一媒体代理体系，Shell 按 durationMs 本地切换
-    base.Playlist = schedules.map(s => {
+    // 素材级播放列表：展平 排期 → regions → 媒体项
+    const playlist = [];
+    for (const s of schedules) {
       const lay = s.layout || {};
-      const item = {
-        ProjectId: s.scheduleId,
-        ProjectName: s.name || lay.name || '节目',
-        Scene: { ItemName: lay.name || '主场景' },
-        LayoutId: lay.id || null,
-        durationMs: Math.max(1, s.duration || 15) * 1000,
-      };
-      const p = pickPrimaryMedia(lay, store);
-      if (p) {
-        item.Url = abs(`/api/siqian/media/${p.hash}?ip=${encodeURIComponent(ip)}`);
-        item.TaskType = (p.mime && p.mime.startsWith('video')) ? '视频' : '图片';
+      const imgHoldMs = Math.max(1, s.duration || 15) * 1000;   // 图片：后台时长优先，默认 15s
+      for (const mi of collectMediaItems(lay, store)) {
+        const isVideo = mi.mime && mi.mime.startsWith('video');
+        const dur = (isVideo && mi.duration) ? Math.round(mi.duration * 1000) : imgHoldMs;
+        playlist.push({
+          ProjectId: s.scheduleId,                              // 播放证明归属排期
+          ProjectName: s.name || lay.name || '节目',
+          Scene: { ItemName: mi.name || lay.name || '主场景' },
+          LayoutId: lay.id || null,
+          Url: abs(`/api/siqian/media/${mi.hash}?ip=${encodeURIComponent(ip)}`),
+          TaskType: isVideo ? '视频' : '图片',
+          durationMs: dur,
+          durationSource: isVideo ? 'media' : 'schedule',
+        });
       }
-      return item;
-    });
+    }
+    if (!playlist.length) return { ProjectId: 'no-program', ProjectName: '暂无排期', Scene: { ItemName: '—' }, TerminalName: term.name || null };
+    const base = { ...playlist[0], TerminalName: term.name || null };
+    base.MediaList = (mf.assets || []).map(a => ({
+      hash: a.hash, mime: a.mime, url: abs(`/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`),
+    }));
+    base.Playlist = playlist;
     return base;
   }
 
@@ -247,7 +242,7 @@ export class SiqianCmsServer {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const prog = this._currentProgram(ip, cmsBase);
         const dev = this.registry.get(ip);
-        if (dev) { dev.lastProgram = { ProjectId: prog.ProjectId, LayoutId: prog.LayoutId || null, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
+        if (dev) { dev.lastProgram = { ProjectId: prog.ProjectId, ProjectName: prog.ProjectName || null, LayoutId: prog.LayoutId || null, at: Date.now() }; this.registry.upsert(dev.ip, dev); }
         return this._json(res, u, prog);
       }
       if (p === '/api/program/programs/nowlist') {
@@ -298,6 +293,7 @@ export class SiqianCmsServer {
             item: u.searchParams.get('item') || '',
             at: Date.now(),
           };
+          if (u.searchParams.get('av')) dev.appVersion = u.searchParams.get('av');
           this.registry.upsert(dev.ip, dev);
           this._recordPlaylog(ip, dev);
         }
@@ -349,6 +345,22 @@ export class SiqianCmsServer {
       const mapper = this.ctx.siqianMapper;
       const term = mapper ? mapper._terminalByIp(ip) : null;
       if (!term) return;
+      // 兼容模式不走 /api/t/heartbeat（Shell 只与 CMS 通信，终端台账心跳自此断流，
+      // 管理端「终端管理/健康看板」误判离线——设为 launcher 后尤其明显）。
+      // CMS 信标（30s 一次）在此代刷台账，computeHealth 的 5 分钟失联阈值内保持在线。
+      const now = Date.now();
+      try {
+        const gap = term.lastHeartbeat ? Math.min(300, Math.floor((now - term.lastHeartbeat) / 1000)) : 0;
+        this.ctx.store.col('terminals').touch(term.id, {
+          lastHeartbeat: now,
+          onlineSeconds: (term.onlineSeconds || 0) + gap,
+          net: { ...(term.net || {}), ip },
+          playing: (dev && dev.lastProgram && dev.lastProgram.ProjectName) || null,
+          appVersion: (dev && dev.appVersion) || '56iq-compat',
+          updatedAt: now,
+        });
+        this.ctx.health?.record(this.ctx.store.col('terminals').byId(term.id), now);
+      } catch { /* 台账刷新失败不影响播放证明 */ }
       recordPlayEvent(this.ctx.store, {
         terminalId: term.id,
         layoutId: (dev && dev.lastProgram && dev.lastProgram.LayoutId) || null,
