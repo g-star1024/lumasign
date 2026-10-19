@@ -196,8 +196,13 @@
   }
 
   /* ---------------- 渲染：双层交叉淡入 ---------------- */
+  // 淡入即旧层退场时刻：新媒体开始可见的同一瞬间旧层才开始淡出，
+  // 两层交叉过渡，任何时刻屏幕上都有内容（v1.3.43 除黑闪核心）。
   function fadeInLayer(layer) {
+    if (layer._retired) return;
+    layer._retired = true;
     setTimeout(function () { layer.style.opacity = '1'; }, 30);
+    if (layer._retire) layer._retire();
   }
 
   /** 把 prog 的媒体（或描述卡）装进 layer；媒体就绪后回调 onReady(actualMs) */
@@ -211,19 +216,22 @@
       if (fired) return; fired = true;
       if (onReady) onReady(actualMs);
     }
-    // 就绪/超时保护：5s 未就绪也淡入并推进，避免旧层永驻、轮播卡死
-    var guard = setTimeout(function () { fadeInLayer(layer); ready(); }, 5000);
+    // 就绪/超时保护：5s 未就绪只推进轮播计时，不强行淡入未加载的媒体层。
+    // rk312x 上媒体经 HTTP 代理加载常 >5s（缓存过期重拉更慢）：强行淡入
+    // 黑底空层会盖掉旧内容 → 整屏黑闪（真机 15:46 视频槽抓到纯黑帧实锤）。
+    // 正确做法：旧层一直顶住，媒体真正就绪才淡入；网络中断时保留最后
+    // 一张图也远好于黑屏，且轮播计时继续推进不会卡死。
+    var guard = setTimeout(function () { ready(); }, 5000);
     function settle(actualMs) { clearTimeout(guard); ready(actualMs); }
 
     if (url && (/\.html?$/i.test(url) || type === '网页' || type === 'web')) {
       var f = document.createElement('iframe');
       f.setAttribute('frameborder', '0');
       f.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:#000;';
-      if (f.addEventListener) f.addEventListener('load', function () { settle(); });
-      else settle();
+      if (f.addEventListener) f.addEventListener('load', function () { fadeInLayer(layer); settle(); });
+      else { fadeInLayer(layer); settle(); }
       f.setAttribute('src', url);
       layer.appendChild(f);
-      fadeInLayer(layer);
     } else if (url && (/\.(mp4|webm|ogg|m3u8)$/i.test(url) || type === '视频' || type === 'video')) {
       var v = document.createElement('video');
       v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
@@ -236,7 +244,8 @@
           fadeInLayer(layer);
           settle(d > 300 ? d : null);
         });
-        v.addEventListener('error', function () { fadeInLayer(layer); settle(); });
+        // 加载失败不淡入空层：保留旧内容顶住，等下一轮/网络恢复
+        v.addEventListener('error', function () { settle(); });
       } else { fadeInLayer(layer); settle(); }
       v.setAttribute('src', url);
       v.autoplay = true;
@@ -248,7 +257,8 @@
       if (im.addEventListener) {
         // 先挂监听再设 src：大图在 rk312x 上解码慢，就绪后才淡入，旧层顶住不闪黑
         im.addEventListener('load', function () { fadeInLayer(layer); settle(); });
-        im.addEventListener('error', function () { fadeInLayer(layer); settle(); });
+        // 加载失败不淡入空层：保留旧内容顶住，等下一轮/网络恢复
+        im.addEventListener('error', function () { settle(); });
       } else { fadeInLayer(layer); settle(); }
       im.setAttribute('src', url);
       layer.appendChild(im);
@@ -264,27 +274,32 @@
     setHud('scene', (prog && prog.Scene && prog.Scene.ItemName) || '—');
     var stage = $('stage');
     if (!stage) { if (onReady) onReady(); return; }
-    // 快照现有层（通常 1 层；异常连渲染时多层一并清理，防累积）
+    // 可见层留给交叉淡入；不可见层（之前未就绪的残留）立即清理，防 DOM 累积
     var stale = [];
-    for (var i = 0; i < stage.children.length; i++) stale.push(stage.children[i]);
+    var kids = stage.children;
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      var op = 1;
+      try { op = parseFloat(window.getComputedStyle(k).opacity); if (isNaN(op)) op = 1; } catch (e) { op = 1; }
+      if (op > 0.02) stale.push(k);
+      else if (k.parentNode) k.parentNode.removeChild(k);
+    }
     var layer = document.createElement('div');
     layer.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;' +
       'transition:opacity ' + FADE_MS + 'ms ease;background:#000;';
-    stage.appendChild(layer);
-    buildMediaInto(layer, prog, function (actualMs) {
-      // 有素材 → HUD 让位给内容；无素材（描述卡）→ HUD 可见
-      setHudVisible(!!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
-      // v1.3.43 联调修复（切换黑闪）：旧层必须等新媒体就绪、开始淡入后才退场。
-      // 原实现「30ms 淡出旧层 + 固定 650ms 删除」在 rk312x 上媒体经 HTTP 代理
-      // 加载 >650ms 时旧层已删、新层仍 opacity:0 → 整屏黑闪（真机 screencap
-      // 在切换时刻抓到亮度 0.2 的纯黑帧实锤）。现在两层同时交叉淡入，
-      // FADE_MS 后旧层才移除，全程有内容顶住，无黑屏间隙。
+    // 旧层退场绑定在本层淡入时刻（fadeInLayer 触发），与新媒体同步交叉过渡
+    layer._retire = function () {
       for (var j = 0; j < stale.length; j++) {
         (function (elm) {
           if (elm.style) elm.style.opacity = '0';
           setTimeout(function () { if (elm.parentNode) elm.parentNode.removeChild(elm); }, FADE_MS + 150);
         })(stale[j]);
       }
+    };
+    stage.appendChild(layer);
+    buildMediaInto(layer, prog, function (actualMs) {
+      // 有素材 → HUD 让位给内容；无素材（描述卡）→ HUD 可见
+      setHudVisible(!!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
       if (onReady) onReady(actualMs);
     });
     feedback('play', (prog && prog.ProjectId) || '');
