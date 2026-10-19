@@ -118,6 +118,12 @@ class MainActivity : AppCompatActivity() {
         const val PREFS = "luma_config"
         const val KEY_SERVER = "server_url"
         const val KEY_CODE = "terminal_code"
+        /** 56iq/触拓 兼容模式：开启后加载 player/siqian.html（JS 轮询 CMS OpenAPI）而非灵屏引擎 */
+        const val KEY_SIQIAN_MODE = "siqian_mode"
+        /** 56iq CMS 基址（如 http://192.168.1.41:8888）；留空则由灵屏服务端同机推导（7788→8888） */
+        const val KEY_SIQIAN_CMS = "siqian_cms"
+        /** 终端显示名（56iq 注册 name / authorized_device_id 兜底） */
+        const val KEY_NAME = "terminal_name"
         const val DEFAULT_PORT = 7788
         /** 连续加载失败达到该次数 → 判定"地址存错了"，清空并重新零配置发现（约 4×15s ≈ 60s） */
         const val FAIL_STREAK_LIMIT = 4
@@ -415,6 +421,8 @@ class MainActivity : AppCompatActivity() {
         MediaCache.init(this)
         bridge = LumaBridge(this, webView)
         webView.addJavascriptInterface(bridge, "LumaBridge")
+        // 56iq 兼容：触拓原生网页模板走 window.Android.getDeviceInfo()，复用同一桥
+        webView.addJavascriptInterface(bridge, "Android")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean = false
@@ -672,6 +680,20 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    /** 由灵屏服务端基址推导同机 56iq CMS（端口 7788 → 8888） */
+    private fun siqianCmsFromLumaBase(base: String): String {
+        return try {
+            val u = java.net.URI(base)
+            val port = if (u.port > 0) u.port else DEFAULT_PORT
+            java.net.URI(u.scheme, null, u.host, if (port == DEFAULT_PORT) 8888 else port, "", null, null).toString()
+        } catch (_: Exception) { base }
+    }
+
+    /** 当前终端码（LumaBridge.getDeviceInfo / 56iq 注册共用） */
+    fun currentTerminalCode(): String = prefs.getString(KEY_CODE, "") ?: ""
+    /** 当前终端显示名 */
+    fun currentTerminalName(): String = prefs.getString(KEY_NAME, "") ?: ""
+
     private fun loadPlayer(server: String) {
         val base = normalizeServerUrl(server)
         if (base == null) {
@@ -682,6 +704,24 @@ class MainActivity : AppCompatActivity() {
         // 顺手把规范化结果回写，后续重试/上报都用干净地址
         prefs.edit().putString(KEY_SERVER, base).apply()
         val code = prefs.getString(KEY_CODE, "") ?: ""
+
+        // 56iq/触拓 兼容模式：改载兼容 Shell 页（JS 侧经 JSONP 轮询 CMS OpenAPI，无需 XMPP）
+        if (prefs.getBoolean(KEY_SIQIAN_MODE, false)) {
+            val cmsRaw = prefs.getString(KEY_SIQIAN_CMS, "") ?: ""
+            val cmsBase = normalizeServerUrl(if (cmsRaw.isBlank()) siqianCmsFromLumaBase(base) else cmsRaw) ?: base
+            val name = prefs.getString(KEY_NAME, "") ?: ""
+            val siqianUrl = buildString {
+                append(base)
+                append("/player/siqian.html?mode=siqian&cms=")
+                append(java.net.URLEncoder.encode(cmsBase, "UTF-8"))
+                append("&code=").append(code)
+                if (name.isNotBlank()) append("&name=").append(java.net.URLEncoder.encode(name, "UTF-8"))
+            }
+            webView.loadUrl(siqianUrl)
+            updateStatusOverlay("56iq 兼容模式：正在加载…")
+            return
+        }
+
         val url = buildString {
             append(base)
             append("/player/?mode=term")
@@ -797,16 +837,44 @@ class MainActivity : AppCompatActivity() {
         try { unregisterReceiver(shutdownReceiver) } catch (_: Exception) {}
     }
 
-    /** 深链配置：lumasync://config?server=http://192.168.1.10:7788&code=LS-0001 */
+    /** 由 56iq CMS 基址反推同机灵屏服务端（端口 8888 → 7788），用于托管 Shell 页 */
+    private fun siqianServerFromCms(cms: String): String {
+        return try {
+            val u = java.net.URI(cms)
+            val port = if (u.port > 0) u.port else 8888
+            java.net.URI(u.scheme, null, u.host, if (port == 8888) DEFAULT_PORT else port, "", null, null).toString()
+        } catch (_: Exception) { cms }
+    }
+
+    /** 深链配置：lumasync://config?server=http://192.168.1.10:7788&code=LS-0001
+     *  56iq 兼容：lumasync://config?mode=siqian&cms=http://192.168.1.41:8888&name=触拓A */
     private fun handleIntent(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "lumasync" && data.host == "config") {
             // v1.3.15：深链同样走规范化，`lumasync://config?server=192.168.2.97:7788` 也能生效
-            val server = normalizeServerUrl(data.getQueryParameter("server"))
+            val mode = data.getQueryParameter("mode")
+            val cmsParam = data.getQueryParameter("cms")
+            var server = normalizeServerUrl(data.getQueryParameter("server"))
+            // 56iq 兼容模式只给了 CMS（没给灵屏 server）时，反推同机灵屏服务端托管 Shell 页
+            if (server == null && mode == "siqian" && !cmsParam.isNullOrBlank()) {
+                server = normalizeServerUrl(siqianServerFromCms(cmsParam))
+            }
             val code = data.getQueryParameter("code")
+            val name = data.getQueryParameter("name")
             if (server != null) {
                 prefs.edit().putString(KEY_SERVER, server).apply()
                 if (!code.isNullOrBlank()) prefs.edit().putString(KEY_CODE, code).apply()
+                if (!name.isNullOrBlank()) prefs.edit().putString(KEY_NAME, name).apply()
+                when (mode) {
+                    "siqian" -> {
+                        prefs.edit().putBoolean(KEY_SIQIAN_MODE, true).apply()
+                        if (!cmsParam.isNullOrBlank()) {
+                            val cmsNorm = normalizeServerUrl(cmsParam)
+                            if (cmsNorm != null) prefs.edit().putString(KEY_SIQIAN_CMS, cmsNorm).apply()
+                        }
+                    }
+                    "lumasign" -> prefs.edit().putBoolean(KEY_SIQIAN_MODE, false).apply()
+                }
                 failStreak = 0
                 loadPlayer(server)
             }

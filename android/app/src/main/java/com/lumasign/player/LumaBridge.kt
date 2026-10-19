@@ -73,6 +73,23 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         }
     }
 
+    /** 56iq 兼容：返回授权设备 ID（对齐触拓 default.html 的 Android.getDeviceInfo() 约定） */
+    @JavascriptInterface
+    fun getDeviceInfo(): String {
+        return try {
+            val code = activity.currentTerminalCode()
+            val authorized = if (code.isNotBlank()) code else activity.readMac()
+            JSONObject().apply {
+                put("authorized_device_id", authorized)
+                put("playerId", authorized)
+                put("name", activity.currentTerminalName().ifBlank { Build.MODEL })
+                put("model", Build.MODEL)
+            }.toString()
+        } catch (e: Exception) {
+            JSONObject().put("error", e.message ?: "unknown").toString()
+        }
+    }
+
     private val statusLock = Any()
     private var cachedStatusJson: String? = null
     private var cachedStatusAt = 0L
