@@ -18,7 +18,7 @@
   var qs = parseQuery();
   var CMS = qs.cms || '';
   var NAME = qs.name || ('LumaSign-' + (qs.code || ''));
-  var POLL_MS = parseInt(qs.poll || '10000', 10) || 10000;
+  var POLL_MS = parseInt(qs.poll || '3000', 10) || 3000;
 
   var selfIp = '';
   var lastProgId = null;
@@ -27,7 +27,13 @@
   var lastVolume = -1;
   var insertTimer = null;
   var jsonpSeq = 0;
-  var SHELL_VERSION = '1.3.40';
+  var SHELL_VERSION = '1.3.41';
+  // 本地轮播状态：CMS 下传 Playlist 时按各排期 durationMs 本地切换，
+  // 切换节奏由本地定时器驱动，不被轮询间隔（拉模式推送）稀释
+  var playlist = [];
+  var plIdx = 0;
+  var plTimer = null;
+  var plSig = '';
 
   function $(id) { return document.getElementById(id); }
   function log(m) { try { console.log('[siqian] ' + m); } catch (e) {} }
@@ -45,6 +51,8 @@
   }
 
   function setHud(k, v) { var el = $('hud-' + k); if (el) el.textContent = v; }
+  // HUD 是底层诊断信息：有素材渲染时被内容盖住，仅无节目（等待/描述卡）时可见
+  function setHudVisible(v) { var h = $('hud'); if (h) h.style.display = v ? 'block' : 'none'; }
 
   function bridge() { return window.LumaBridge || window.Android || null; }
 
@@ -87,6 +95,9 @@
   function pollList() {
     jsonp(CMS + '/api/program/programs/list?ip=' + encodeURIComponent(selfIp), function (err, data) {
       if (err) { log('list ' + err.message); return; }
+      // v1.3.41：灵屏 CMS 下传完整 Playlist → 本地按 durationMs 轮播（多排期不播是联调核心缺陷）
+      if (data && data.Playlist && data.Playlist.length) { applyPlaylist(data.Playlist); return; }
+      // 单节目模式（真 56iq CMS 无 Playlist 字段）：按节目 ID 变化重渲染
       var pid = data && (data.ProjectId || '');
       if (pid !== lastProgId) { lastProgId = pid; renderProgram(data); }
     });
@@ -104,9 +115,10 @@
       }
       if (data.command && data.command.at > lastCmdAt) {
         lastCmdAt = data.command.at;
-        if (data.command.type === 'play') { lastProgId = null; pollList(); }
+        if (data.command.type === 'play') { lastProgId = null; plSig = ''; pollList(); }
       }
-      if (data.ProjectId && data.ProjectId !== lastProgId) { lastProgId = data.ProjectId; renderProgram(data); }
+      // 轮播模式下 nowlist 的单节目字段不再驱动渲染（否则会打断本地轮播节奏）
+      if (data.ProjectId && data.ProjectId !== lastProgId && !playlist.length) { lastProgId = data.ProjectId; renderProgram(data); }
     });
   }
 
@@ -133,6 +145,34 @@
     });
   }
 
+  /* ---------------- 本地轮播（CMS 下传完整 Playlist 时） ---------------- */
+  function plSignature(list) {
+    var sig = '';
+    for (var i = 0; i < list.length; i++) sig += (list[i].ProjectId || '') + '@' + (list[i].durationMs || 0) + '|';
+    return sig;
+  }
+
+  function applyPlaylist(list) {
+    var sig = plSignature(list);
+    if (sig === plSig) return;              // 列表没变：不打断当前轮播
+    plSig = sig; playlist = list; plIdx = 0;
+    if (plTimer) { clearTimeout(plTimer); plTimer = null; }
+    log('playlist ' + list.length + ' 项，开始轮播');
+    showCurrent();
+  }
+
+  function showCurrent() {
+    if (!playlist.length) return;
+    var item = playlist[plIdx];
+    lastProgId = item.ProjectId || null;
+    renderProgram(item);
+    var dur = Math.max(1000, item.durationMs || 5000);
+    plTimer = setTimeout(function () {
+      plIdx = (plIdx + 1) % playlist.length;
+      showCurrent();
+    }, dur);
+  }
+
   function renderProgram(prog) {
     setHud('program', (prog && prog.ProjectName) || '—');
     setHud('scene', (prog && prog.Scene && prog.Scene.ItemName) || '—');
@@ -149,18 +189,23 @@
       f.setAttribute('frameborder', '0');
       f.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:#000;';
       stage.appendChild(f);
+      setHudVisible(false);
     } else if (url && (/\.(mp4|webm|ogg|m3u8)$/i.test(url) || type === '视频' || type === 'video')) {
       var v = document.createElement('video');
       v.setAttribute('src', url); v.autoplay = true; v.loop = true;
-      v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;';
+      v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
       stage.appendChild(v);
+      setHudVisible(false);   // 有素材：底层信息让位给内容
     } else if (url && (/\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(url) || type === '图片' || type === 'image')) {
       var im = document.createElement('img');
       im.setAttribute('src', url);
-      im.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;';
+      // cover：铺满屏幕（含 9:16 竖屏）不留黑边；横图会裁左右边缘，主体居中不受影响
+      im.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;background:#000;';
       stage.appendChild(im);
+      setHudVisible(false);
     } else {
       stage.appendChild(descriptorCard(prog));
+      setHudVisible(true);    // 无素材：才显示底层诊断信息
     }
     feedback('play', (prog && prog.ProjectId) || '');
   }
@@ -171,6 +216,7 @@
     if (!msg) { el.style.display = 'none'; el.innerHTML = ''; return; }
     el.innerHTML = '<span>' + esc(msg) + '</span>';
     el.style.display = 'flex';
+    setHudVisible(false);   // 插播期间同样盖住底层信息
     if (insertTimer) clearTimeout(insertTimer);
     insertTimer = setTimeout(function () { el.style.display = 'none'; el.innerHTML = ''; }, (secs || 8) * 1000);
   }

@@ -111,16 +111,22 @@ export class SiqianProgramMapper {
   }
 
   /** 由设备 IP 解析当前应播 56iq 节目（含可直接渲染的内容 URL，走 CMS 媒体代理）
-   *  @param base 可选，CMS 对外基址（如 http://192.168.2.216:8888）——给了就把媒体
+   *  @param cmsBase 可选，CMS 对外基址（如 http://192.168.2.216:8888）——给了就把媒体
    *  URL 补成绝对地址；播放端页面（:7788/player/siqian.html）与媒体代理（:8888）
-   *  不同源，相对路径会被解析到 7788 而 404，真机联调实测黑屏即此因。 */
+   *  不同源，相对路径会被解析到 7788 而 404，真机联调实测黑屏即此因。
+   *
+   *  v1.3.41：除「当前节目」主字段外，附加 Playlist 数组（全部应播排期 + 各自
+   *  durationMs），兼容 Shell 据此本地轮播——多排期不轮播是真机联调暴露的核心
+   *  体验缺陷（后台 3 个已发布排期只播第 1 个）。真 56iq CMS 无此字段，Shell
+   *  自动回退单节目渲染。 */
   programFor(ip, cmsBase) {
     const store = this.ctx.store;
     const term = this._terminalByIp(ip);
     if (!term) return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
     let mf;
     try { mf = buildManifest(store, term); } catch { mf = { schedules: [] }; }
-    const sch = (mf.schedules || [])[0];
+    const schedules = mf.schedules || [];
+    const sch = schedules[0];
     if (!sch) return { ProjectId: 'no-program', ProjectName: '暂无排期', Scene: { ItemName: '—' }, TerminalName: term.name || null };
     const layout = sch.layout || {};
     const base = {
@@ -130,9 +136,9 @@ export class SiqianProgramMapper {
       LayoutId: layout.id || null,
       TerminalName: term.name || null,
     };
-    const primary = pickPrimaryMedia(layout, store);
     const mediaBase = cmsBase ? String(cmsBase).replace(/\/+$/, '') : '';
     const abs = (p) => (mediaBase ? mediaBase + p : p);
+    const primary = pickPrimaryMedia(layout, store);
     if (primary) {
       base.Url = abs(`/api/siqian/media/${primary.hash}?ip=${encodeURIComponent(ip)}`);
       base.TaskType = (primary.mime && primary.mime.startsWith('video')) ? '视频' : '图片';
@@ -140,6 +146,23 @@ export class SiqianProgramMapper {
         hash: a.hash, mime: a.mime, url: abs(`/api/siqian/media/${a.hash}?ip=${encodeURIComponent(ip)}`),
       }));
     }
+    // 完整轮播清单：与主字段同一媒体代理体系，Shell 按 durationMs 本地切换
+    base.Playlist = schedules.map(s => {
+      const lay = s.layout || {};
+      const item = {
+        ProjectId: s.scheduleId,
+        ProjectName: s.name || lay.name || '节目',
+        Scene: { ItemName: lay.name || '主场景' },
+        LayoutId: lay.id || null,
+        durationMs: Math.max(1, s.duration || 15) * 1000,
+      };
+      const p = pickPrimaryMedia(lay, store);
+      if (p) {
+        item.Url = abs(`/api/siqian/media/${p.hash}?ip=${encodeURIComponent(ip)}`);
+        item.TaskType = (p.mime && p.mime.startsWith('video')) ? '视频' : '图片';
+      }
+      return item;
+    });
     return base;
   }
 
@@ -231,12 +254,16 @@ export class SiqianCmsServer {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const dev = this.registry.get(ip);
         const prog = this._currentProgram(ip, cmsBase);
+        // 插播/指令带时效过期：拉模式下 CMS 不知道设备何时消费，若不设 TTL，
+        // 设备重载页面（lastInsertAt 归零）会把历史插播重播一遍（真机联调实测）
+        const now = Date.now();
+        const fresh = (o, ttl) => (o && (now - o.at) < ttl) ? o : null;
         // 把设备待执行指令折进 nowlist，供轮询式播放端（无 XMPP）观测到「推送」
         return this._json(res, u, {
           ...prog,
           volume: (dev && typeof dev.volume === 'number') ? dev.volume : null,
-          insert: dev && dev.lastInsert ? { msg: dev.lastInsert.msg, at: dev.lastInsert.at } : null,
-          command: dev ? dev.lastCommand || null : null,
+          insert: dev ? fresh(dev.lastInsert, 60_000) : null,
+          command: dev ? fresh(dev.lastCommand, 30_000) : null,
         });
       }
       // 3) 播放 / 音量 / 插播（CMS 对外 OpenAPI）
