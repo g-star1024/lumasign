@@ -89,6 +89,8 @@ class WatchdogReceiver : BroadcastReceiver() {
         } else {
             Log.w(TAG, "app process gone -> relaunching MainActivity")
             try {
+                // v1.3.44：静默期刚结束但 30s Alarm 丢失时兜底——先恢复 HOME 组件再拉起
+                KioskManager.ensureHomeEnabled(context)
                 val i = Intent(context, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }

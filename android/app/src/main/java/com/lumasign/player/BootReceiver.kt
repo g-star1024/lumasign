@@ -19,6 +19,9 @@ class BootReceiver : BroadcastReceiver() {
             || action == "android.intent.action.QUICKBOOT_POWERON"
             || action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
+            // v1.3.44：开机/换包重启后 HOME 组件必须可用（doExit 静默期内可能禁用它，
+            // 若期间断电重启，禁用的组件会让下面的 startActivity 失败 → 黑屏无人值守）
+            KioskManager.ensureHomeEnabled(context)
             val i = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

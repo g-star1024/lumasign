@@ -117,6 +117,8 @@ class KioskGuardService : Service() {
     /** 拉回 MainActivity 到前台（singleTask + CLEAR_TOP 复用现有实例，不重建） */
     private fun bringSelfToFront() {
         try {
+            // v1.3.44：静默期结束后兜底路径（30s Alarm 丢失时）——先确保 HOME 组件可用
+            KioskManager.ensureHomeEnabled(this)
             val i = Intent(this, MainActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or

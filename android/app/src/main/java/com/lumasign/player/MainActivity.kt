@@ -1146,12 +1146,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * 键事件统一入口（v1.3.44）。
+     *
+     * rk312x/Android 4.4 实测（2026-10-19）：该 ROM 输入栈把鼠标 BTN_RIGHT **硬编码**改写为
+     * KEYCODE_BACK（evdev→InputReader 层，keylayout 干预无效——Vendor 专属 .kl 实测不加载，
+     * dumpsys input 实证 sendevent BTN_RIGHT 产生 deviceId=1/source=0x2002 的 keyCode=4），
+     * 且不产生 buttonState=BUTTON_SECONDARY 的触摸事件，app 原有的三条右键路径全部收不到。
+     * 因此「鼠标来源的 BACK」= 用户按了鼠标右键（或侧键 BTN_BACK）→ 弹运维菜单；
+     * 键盘/遥控器的 BACK 的 source 是 SOURCE_KEYBOARD，不受影响，仍走 onBackPressed。
+     *
+     * 放在 dispatchKeyEvent 而非仅 onKeyDown：焦点在 WebView 内时按键先经 WebView，
+     * 从这里拦截可保证任何焦点状态下都能触发（onKeyDown 保留作兜底）。
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BACK -> {
+                    if ((event.source and android.view.InputDevice.SOURCE_MOUSE) != 0) {
+                        Log.i(TAG, "mouse BACK (rk312x maps right button to BACK) -> showOpsMenu")
+                        showOpsMenu()
+                        return true
+                    }
+                }
+                KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS -> {
+                    // USB 键盘 MENU / 红外遥控 MENU：直接弹运维菜单（先于 WebView，必达）
+                    showOpsMenu()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /**
      * 硬按键救援入口（v1.3.15）。
      *
      * 背景：v1.3.11 的 MainActivity 完全没有按键/触摸处理，配置框一旦被关掉（地址已落盘）
      * 就再也打不开 → 嵌墙设备彻底锁死。这里补一条"纯键盘也能进配置"的通路：
      * MENU / SETTINGS 键（多数 USB 键盘、红外遥控都有）直接弹配置框。
      * 鼠标/触屏路径见 setupOverlay() 的救援按钮与 dispatchTouchEvent() 的右键。
+     *
+     * 注：v1.3.44 起 MENU/SETTINGS 与"鼠标右键（ROM 映射为 BACK）"已在 dispatchKeyEvent
+     * 统一拦截，本方法主要作兜底（dialog 等非常规焦点路径）。
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
@@ -1286,18 +1322,24 @@ class MainActivity : AppCompatActivity() {
         // 等 30s Alarm 到点才由系统重新拉起（修复「退出后 2s 即被拉回、30s 静默失效」）
         KioskManager.markExitGrace(this, EXIT_GRACE_MS)
         try { stopService(Intent(this, KioskGuardService::class.java)) } catch (_: Exception) { }
-        // 30s 静默期：给运维留出退出后的操作时间（装包/改设置），到点由系统 Alarm 重新拉起
-        // 电子屏。Alarm 挂在系统侧，进程被杀不影响触发；若期间用户手动打开应用，Alarm 到点
-        // 只是复用现有任务置前，无副作用。onCreate → startKioskGuard 会顺带恢复前台守护。
+        // ★ v1.3.44 修复「退出到桌面被秒回」：本应用是默认 HOME（always=true）时，
+        // finish/killProcess 后 system_server 立即以 MAIN cat=[HOME] intent 重启本 Activity
+        // （logcat 实证 "START u0 {act=MAIN cat=[HOME]} from pid 0"），30s 静默期完全失效。
+        // 先禁用自身 HOME 组件：系统解析 HOME intent 跳过禁用组件 → 落到 launcher3，
+        // 退出真正生效；30s 后 ExitRelaunchReceiver 恢复组件并显式拉起。
+        KioskManager.setHomeComponentEnabled(this, false)
+        // 30s 静默期：给运维留出退出后的操作时间（装包/改设置），到点由 Alarm 触发
+        // ExitRelaunchReceiver（恢复组件 + 显式拉起）。用广播而非 getActivity：
+        // 组件禁用期间显式 intent 无法启动 Activity，必须先经 Receiver 恢复组件。
         try {
             val am = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-            val relaunch = Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val relaunch = Intent(this, ExitRelaunchReceiver::class.java)
+                .setAction(ExitRelaunchReceiver.ACTION_RELAUNCH)
             val imm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) android.app.PendingIntent.FLAG_IMMUTABLE else 0
-            val pi = android.app.PendingIntent.getActivity(this, 2001, relaunch,
+            val pi = android.app.PendingIntent.getBroadcast(this, 2001, relaunch,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or imm)
             am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + EXIT_GRACE_MS, pi)
-            android.util.Log.i("LumaSign", "exit: relaunch alarm scheduled in ${EXIT_GRACE_MS / 1000}s")
+            android.util.Log.i("LumaSign", "exit: home component disabled, relaunch alarm in ${EXIT_GRACE_MS / 1000}s")
         } catch (e: Exception) {
             android.util.Log.w("LumaSign", "exit alarm failed (non-fatal): ${e.message}")
         }

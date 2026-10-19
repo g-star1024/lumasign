@@ -133,4 +133,43 @@ object KioskManager {
                 .getLong(KEY_EXIT_GRACE_UNTIL, 0L) > System.currentTimeMillis()
         } catch (_: Exception) { false }
     }
+
+    // ── HOME 组件开关（v1.3.44 修复「退出到桌面被秒回」）──
+    // 现场实证（2026-10-19，rk312x）：用户把灵屏设为了默认 HOME（package-restrictions.xml
+    // 里 com.lumasign.player/.MainActivity always="true"）。doExit 一 finish/killProcess，
+    // system_server 立即以 MAIN cat=[HOME] intent 重启本 Activity（logcat: "START u0
+    // {act=android.intent.action.MAIN cat=[android.intent.category.HOME] ...} from pid 0"），
+    // 30s 静默期、KioskGuardService、WatchdogReceiver 全部形同虚设——它们只防"自己人"拉回，
+    // 防不住系统 home 重启。
+    // 对策：退出前禁用自身 HOME 组件（PackageManager 解析 HOME intent 时跳过禁用组件，
+    // 落到 preferred set 里的次选 launcher3，不弹选择框）；拉起前再恢复。
+    // 组件禁用期间显式 intent 无法启动禁用的组件，故每条"拉起 MainActivity"的路径
+    // （Alarm/看门狗/开机/定时开关机/守护）都必须先 ensureHomeEnabled 再 startActivity。
+
+    /** 禁用/启用自身 MAIN+LAUNCHER+HOME 组件（同一个 MainActivity 组件） */
+    fun setHomeComponentEnabled(ctx: Context, enabled: Boolean) {
+        try {
+            val cn = ComponentName(ctx, MainActivity::class.java)
+            ctx.packageManager.setComponentEnabledSetting(
+                cn,
+                if (enabled) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP
+            )
+            Log.i(TAG, "home component ${if (enabled) "enabled" else "disabled"}")
+        } catch (e: Exception) {
+            Log.w(TAG, "setHomeComponentEnabled failed: ${e.message}")
+        }
+    }
+
+    /** 拉起 MainActivity 前调用：确保组件未被 doExit 禁用（幂等） */
+    fun ensureHomeEnabled(ctx: Context) {
+        try {
+            val cn = ComponentName(ctx, MainActivity::class.java)
+            val state = ctx.packageManager.getComponentEnabledSetting(cn)
+            if (state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                setHomeComponentEnabled(ctx, true)
+            }
+        } catch (_: Exception) { }
+    }
 }

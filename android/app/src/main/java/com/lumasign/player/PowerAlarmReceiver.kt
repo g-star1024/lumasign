@@ -25,6 +25,8 @@ class PowerAlarmReceiver : BroadcastReceiver() {
             )
             try { wl.acquire(5000) } catch (_: Exception) {}
 
+            // v1.3.44：定时开机到点前确保 HOME 组件可用（防静默期组件未恢复）
+            KioskManager.ensureHomeEnabled(context)
             val i = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 putExtra("screen", "on")
@@ -33,6 +35,7 @@ class PowerAlarmReceiver : BroadcastReceiver() {
         } else {
             // 优先真熄屏；失败才降级为亮度置 0（仍需拉起 Activity 改 window 亮度）
             if (!ScreenPower.tryTrueOff(context)) {
+                KioskManager.ensureHomeEnabled(context)
                 val i = Intent(context, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     putExtra("screen", "off")

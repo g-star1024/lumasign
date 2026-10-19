@@ -257,14 +257,16 @@
           if (vFrame) fadeInLayer(layer);   // 极端情况首帧先行到位：补淡入
         });
         // 首帧可画（loadeddata）或足以起播（canplay）才淡入：旧层顶到最后一刻，
-        // 黑屏间隙为零；时长回传 loadedmetadata 实时值，<=300ms 视为无效
-        function onFirstFrame() {
+        // 黑屏间隙为零；时长回传 loadedmetadata 实时值，<=300ms 视为无效。
+        // 必须用函数表达式：Chromium 33 严格模式下块级 function 声明是 SyntaxError，
+        // 整个脚本静默死亡（CDP 不报异常、HUD 全留 '…'）——r3 首个版本的坑。
+        var onFirstFrame = function () {
           if (vFrame) return;
           vFrame = true;
           fadeInLayer(layer);
           try { v.play(); } catch (e) {}    // 与 autoplay 双保险：声音与画面同步进场
           settle(vDur > 300 ? vDur : null);
-        }
+        };
         v.addEventListener('loadeddata', onFirstFrame);
         v.addEventListener('canplay', onFirstFrame);
         // 加载失败不淡入空层：保留旧内容顶住，等下一轮/网络恢复
@@ -325,8 +327,8 @@
     };
     stage.appendChild(layer);
     buildMediaInto(layer, prog, function (actualMs) {
-      // 有素材 → HUD 让位给内容；无素材（描述卡）→ HUD 可见
-      setHudVisible(!!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
+      // 有素材 → HUD 让位给内容（隐藏）；无素材（描述卡）→ HUD 可见
+      setHudVisible(!(prog && (prog.Url || prog.Media || prog.Image || prog.Video)));
       if (onReady) onReady(actualMs);
     }, isValid);
     feedback('play', (prog && prog.ProjectId) || '');

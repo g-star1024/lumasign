@@ -135,6 +135,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- 退出静默期到点：恢复 HOME 组件（doExit 禁用它防系统秒回）并显式拉起播放端 -->
+        <receiver
+            android:name=".ExitRelaunchReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.lumasign.player.action.EXIT_RELAUNCH" />
+            </intent-filter>
+        </receiver>
+
         <!-- 自升级 APK 安装 -->
         <provider
             android:name="androidx.core.content.FileProvider"

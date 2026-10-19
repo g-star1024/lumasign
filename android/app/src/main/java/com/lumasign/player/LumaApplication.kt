@@ -49,6 +49,10 @@ class LumaApplication : Application() {
         // 否则 Dalvik 加载 dex 时会因方法数超 65K 而 NoClassDefFoundError
         MultiDex.install(base)
         super.attachBaseContext(base)
+        // v1.3.44：任何原因拉起本进程（Alarm 广播/服务启动/Activity）都先确保 HOME 组件可用。
+        // doExit 会禁用它 30s 防系统秒回；若 30s Alarm 丢失，其他拉起路径（Watchdog/Boot）
+        // 经此恢复组件，避免"组件仍禁用 → 显式 intent 启动失败 → 黑屏无人值守"。
+        KioskManager.ensureHomeEnabled(base)
         // 心跳：进程启动时立即写入，标记"这次启动了"
         writeHeartbeat(base)
         // 注册崩溃处理器（必须早于 onCreate）
