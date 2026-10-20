@@ -16,6 +16,16 @@ const { pathToFileURL } = require('node:url');
 
 const isWin = process.platform === 'win32';
 const isPackaged = app.isPackaged;
+
+// 渲染稳定性（2026-10-20）：桌面端实测「点任意页面即窗口全黑/卡死」，CDP 侧可见
+// crashpad "not connected" —— 渲染进程崩溃。硬件加速（GPU 进程/合成器）是 Electron
+// 在此类环境下崩溃的首要嫌疑，先禁用；同时见下方 render-process-gone 自动恢复。
+try { app.disableHardwareAcceleration(); } catch {}
+// CalculateNativeWinOcclusion / GPU 合成是 Electron 在部分 Windows 环境下渲染进程崩溃与
+// 窗口黑屏的已知诱因；禁用软件光栅化则避免在禁用硬件加速后走不稳定的 CPU 合成路径。
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 const ROOT = isPackaged ? path.dirname(__dirname) : path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env.LUMASIGN_PORT || '7788', 10);
@@ -71,6 +81,21 @@ function createWindow() {
 
   // 先展示 loading（file://），服务端 ready 后再切到管理端
   win.loadFile(path.join(__dirname, 'loading.html'));
+
+  // 记住当前视图（SPA 用 hash 路由），以便渲染进程崩溃后原地恢复而不是跳回仪表盘
+  let lastHash = '';
+  const remember = (u) => { try { const url = new URL(u || ''); if (url.hash) lastHash = url.hash; } catch { /* ignore */ } };
+  win.webContents.on('did-navigate', (e, url) => remember(url));
+  win.webContents.on('did-navigate-in-page', (e, url) => remember(url));
+
+  // 渲染进程崩溃（用户感知＝窗口全黑/点不动）时自动重载，避免必须手动重启客户端
+  win.webContents.on('render-process-gone', (event, details) => {
+    if (details.reason === 'clean-exit') return;
+    try { console.warn('[desktop] renderer gone:', details.reason, '- reloading admin', lastHash); } catch {}
+    setTimeout(() => {
+      try { win.loadURL(`http://127.0.0.1:${PORT}/${lastHash || ''}`); } catch { /* 忽略 */ }
+    }, 500);
+  });
 
   win.once('ready-to-show', () => win.show());
   win.on('close', (e) => {
