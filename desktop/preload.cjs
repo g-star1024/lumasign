@@ -6,7 +6,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('lumaDesktop', {
   platform: process.platform,
-  isPackaged: require('electron').app.isPackaged,
+  // 注意：preload 运行在渲染进程，require('electron') 只有 ipcRenderer/contextBridge 等，
+  // 没有 app 对象——此前在这里读 app.isPackaged 会让整个 preload 加载失败，
+  // 导致 lumaDesktop（HEVC 检测/开机自启）全部不可用。
   openExternal: (u) => ipcRenderer.send('open-external', u),
   revealData: () => ipcRenderer.send('reveal-data'),
   installHevc: () => ipcRenderer.invoke('install-hevc'),
