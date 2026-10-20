@@ -7,6 +7,38 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <!--
+    UA fallback（v1.3.44a，2026-10-20）：桌面端 Electron 25 渲染进程实测 UA 默认样式表失效
+    （head/style/script 不再 display:none、div/p/body 回退初始值 inline），导致 head 内
+    title/style 文本被当作正文渲染、全部布局错乱；Edge/手机浏览器同一页面完全正常。
+    此段按 Chromium html.css 显式恢复默认 display——在 theme.css 之前加载，可被其
+    `* { margin:0; padding:0 }` reset 正常覆盖；对 UA 正常的浏览器是纯无操作。
+    根因修复待升级 Electron 壳后移除。
+  -->
+  <style id="ua-fallback">
+    html { display: block; }
+    body { display: block; margin: 8px; }
+    head, title, style, script, link, meta, noscript, template, base, datalist, param { display: none; }
+    div, p, section, article, header, footer, nav, main, aside, figure, figcaption,
+    blockquote, address, fieldset, form, hr, pre, dialog, details, summary,
+    h1, h2, h3, h4, h5, h6, ul, ol, dl, menu, dir, dt, dd { display: block; }
+    li { display: list-item; }
+    table { display: table; }
+    caption { display: table-caption; }
+    colgroup { display: table-column-group; }
+    col { display: table-column; }
+    thead { display: table-header-group; }
+    tbody { display: table-row-group; }
+    tfoot { display: table-footer-group; }
+    tr { display: table-row; }
+    td, th { display: table-cell; }
+    input, select, option, optgroup, button, textarea, keygen { display: inline-block; }
+    img, video, canvas, svg, audio, iframe, embed, object, picture { display: inline-block; }
+    b, strong { font-weight: bolder; }
+    i, em, cite, var { font-style: italic; }
+    u, ins { text-decoration: underline; }
+    center { display: block; text-align: -webkit-center; }
+  </style>
   <link rel="stylesheet" href="theme.css?v=1.1.0" />
   <style>
     #err-overlay { display:none; position:fixed; inset:0; background:#0e0f13; color:#e54d4d; padding:24px; font:14px/1.6 monospace; z-index:99999; overflow:auto; white-space:pre-wrap; word-break:break-all; }
