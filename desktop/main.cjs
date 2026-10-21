@@ -17,17 +17,15 @@ const { pathToFileURL } = require('node:url');
 const isWin = process.platform === 'win32';
 const isPackaged = app.isPackaged;
 
-// 渲染稳定性（2026-10-21 定位）：「点任意页面即窗口全黑」的真实根因是渲染进程原生崩溃——
-// 软件合成路径（disable-gpu-compositing + disableHardwareAcceleration）下，原生表单控件
-// （<input type=file> 已实测，date/color/time 等同理）一进入 DOM 就触发 Chromium 原生崩溃。
-// 2026-10-20 加的这组禁 GPU 开关不仅没治好（当日崩溃日志仍在），反而是原生控件崩溃的诱因。
-// 故全部撤掉，恢复 Electron 默认 GPU 合成；前端已配套 pickFiles 桥（admin/js/core.js）双保险。
-// try { app.disableHardwareAcceleration(); } catch {}
-// CalculateNativeWinOcclusion / GPU 合成是 Electron 在部分 Windows 环境下渲染进程崩溃与
-// 窗口黑屏的已知诱因；禁用软件光栅化则避免在禁用硬件加速后走不稳定的 CPU 合成路径。
-// app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-// app.commandLine.appendSwitch('disable-gpu-compositing');
-// app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+// 呈现层修复（2026-10-21）：本机显卡驱动下，Electron 自带 Chromium 的硬件加速合成无法把
+// 画面送显——GPU 开启时渲染进程存活、DOM 有内容、浏览器同源同页正常，但物理窗口全黑
+// （GPU 进程出帧失败）。本机显卡本身能正常呈现（系统 Chrome 正常），故问题在 GPU 进程/沙箱，
+// 而非驱动。
+// 临时基线（诊断中）：移除 in-process-gpu（该开关会让 lifecycle/settings/proof 三页在软件
+// 回退下渲染器崩溃）。保持默认 GPU 开启（三页稳定），改用 CLI 传入的呈现层开关测试，
+// 最终命中可同时「出画面 + 三页不崩」的配置后再固化到此文件。
+// 候选：--disable-gpu-sandbox / --use-angle=gl / --disable-features=VizDisplayCompositor
+// app.commandLine.appendSwitch('in-process-gpu');
 const ROOT = isPackaged ? path.dirname(__dirname) : path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env.LUMASIGN_PORT || '7788', 10);

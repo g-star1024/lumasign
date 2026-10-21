@@ -2841,7 +2841,6 @@ function dateInput(value, placeholder) {
 
 async function renderLifecycle() {
   const root = el('div', { class: 'page-lifecycle' });
-
   const typeSel = el('select', { class: 't-select', onchange: reload },
     el('option', { value: '', text: '全部类型' }),
     el('option', { value: 'media', text: '素材' }),

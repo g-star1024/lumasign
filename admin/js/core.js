@@ -38,6 +38,15 @@ export const state = {
 
 /* ---------------- UI 辅助 ---------------- */
 export function el(tag, props = {}, ...children) {
+  // 2026-10-21 呈现层修复：本机 Electron 打包 Chromium 的原生输入控件会静默杀死渲染进程
+  // （Inspector.targetCrashed，无 JS 异常）。崩溃矩阵探针实测（默认 GPU 路径）：
+  //   崩溃：number / date / time / datetime-local / month / week / file
+  //   安全：text / checkbox / password / select / textarea / range / search / tel / url / contenteditable
+  // 其中 color 在 GPU 路径安全、但在软件渲染路径（--in-process-gpu 等）崩溃，一并兜底。
+  // 仅桌面端生效（window.lumaDesktop 由 preload 注入）；浏览器 / 安卓 WebView 保留原生控件。
+  if (typeof window !== 'undefined' && window.lumaDesktop && tag === 'input' && props && CRASHY_INPUT_TYPES.has(props.type)) {
+    return safeInput(props);
+  }
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
@@ -57,6 +66,57 @@ export function el(tag, props = {}, ...children) {
 }
 
 export const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------------- 安全输入（规避 Electron 原生控件崩溃） ----------------
+ * 崩溃类型全集见 el() 处注释。统一替换为文本输入，保持 .value 取值语义不变，
+ * 调用方（oninput 里 parseFloat/parseInt/+value 等）无需任何改动。 */
+const CRASHY_INPUT_TYPES = new Set(['color', 'date', 'time', 'number', 'datetime-local', 'month', 'week', 'file']);
+function safeInput(props) {
+  const type = props.type;
+  if (type === 'color') {
+    const wrap = document.createElement('span');
+    wrap.className = 'ed-color-wrap';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;vertical-align:middle;';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = props.class || 'ed-input';
+    inp.value = props.value || '#ffffff';
+    inp.placeholder = '#rrggbb';
+    if (props.style && typeof props.style === 'object') Object.assign(inp.style, props.style);
+    if (props.oninput && typeof props.oninput === 'function') {
+      inp.addEventListener('input', (e) => {
+        sw.style.background = e.target.value || '#ffffff';
+        props.oninput(e);
+      });
+    }
+    const sw = document.createElement('span');
+    sw.style.cssText = 'display:inline-block;width:22px;height:22px;border-radius:4px;border:1px solid #555;background:' + (props.value || '#ffffff') + ';';
+    wrap.appendChild(inp);
+    wrap.appendChild(sw);
+    return wrap;
+  }
+  // date / time / number / datetime-local / month / week / file → 文本输入，保留 .value 取值语义
+  const n = document.createElement('input');
+  n.type = 'text';
+  n.className = props.class || '';
+  if (props.value != null) n.value = props.value;
+  if (type === 'date') n.placeholder = props.placeholder || 'YYYY-MM-DD';
+  else if (type === 'time') n.placeholder = props.placeholder || 'HH:MM';
+  else if (type === 'number') { if (props.placeholder) n.placeholder = props.placeholder; n.setAttribute('inputmode', 'decimal'); }
+  else if (type === 'datetime-local') n.placeholder = props.placeholder || 'YYYY-MM-DD HH:MM';
+  else if (type === 'month') n.placeholder = props.placeholder || 'YYYY-MM';
+  else if (type === 'week') n.placeholder = props.placeholder || 'YYYY-Www';
+  else if (type === 'file') { n.placeholder = props.placeholder || ''; n.setAttribute('readonly', ''); n.setAttribute('aria-label', '文件选择（请使用上传按钮）'); }
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class' || k === 'type' || k === 'value' || k === 'placeholder') continue; // 已处理
+    if (k === 'style' && typeof v === 'object') Object.assign(n.style, v);
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'dataset' && typeof v === 'object') Object.assign(n.dataset, v);
+    else n.setAttribute(k, v);
+  }
+  return n;
+}
 
 export function fmtBytes(b) {
   if (!b) return '0 B';

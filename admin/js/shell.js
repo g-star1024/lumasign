@@ -3,6 +3,11 @@
  */
 import { el, state, can, toast } from './core.js';
 
+// Electron 桌面端：给 <html> 打 in-desktop 标记。theme.css 据此关闭 backdrop-filter 等特效——
+// 本机 Chromium(打包版) + 显卡驱动组合下，backdrop-filter 会静默杀死渲染进程，导致
+// lifecycle/settings/proof 等页渲染即崩溃（窗口黑屏）。仅作用于桌面端，浏览器端保留毛玻璃。
+if (window.lumaDesktop) document.documentElement.classList.add('in-desktop');
+
 const NAV = [
   { group: '总览', items: [
     { id: 'dashboard', label: '仪表盘', icon: '◧', perm: 'dashboard:view', hash: '#/dashboard' },
