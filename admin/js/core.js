@@ -126,3 +126,35 @@ export function openModal(content) {
 export function can(perm) {
   return state.perms.has('*') || state.perms.has(perm);
 }
+
+/* ---------------- 文件选择（避开 Electron 渲染进程崩溃） ----------------
+ * 已知问题：本机 Electron（特定 Chromium + --disable-gpu-compositing）下，只要 DOM 中
+ * 出现 <input type="file">（无论可见、display:none、还是 append 后立刻 remove），渲染进程
+ * 都会原生崩溃（Inspector.targetCrashed，无 JS 异常）。布局编辑器 / 素材库 / APK 上传页
+ * 均曾因此一点就黑屏。
+ * 修复：桌面端一律走原生文件对话框（通过 lumaDesktop.pickFiles 桥，主进程 dialog 选文件后
+ * 回传二进制），只在浏览器 / 安卓 WebView（file 控件安全）走普通 file input 兜底。 */
+export async function pickFiles(opts = {}) {
+  const accept = opts.accept || '';
+  const multiple = !!opts.multiple;
+  if (window.lumaDesktop && typeof window.lumaDesktop.pickFiles === 'function') {
+    let files;
+    try { files = await window.lumaDesktop.pickFiles({ accept, multiple }); }
+    catch (e) { console.error('[pickFiles] bridge error', e); return []; }
+    if (!files || !files.length) return [];
+    return files.map(f => new File([f.data], f.name, { type: f.type || 'application/octet-stream' }));
+  }
+  // 兜底：浏览器 / 安卓 WebView（file input 在这些环境安全）
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    if (accept) inp.accept = accept;
+    if (multiple) inp.multiple = multiple;
+    inp.style.display = 'none';
+    const done = (files) => { resolve(Array.from(files || [])); setTimeout(() => inp.remove(), 1000); };
+    inp.addEventListener('change', () => done(inp.files), { once: true });
+    inp.addEventListener('cancel', () => done([]), { once: true });
+    document.body.appendChild(inp);
+    inp.click();
+  });
+}

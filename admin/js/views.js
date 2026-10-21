@@ -2,7 +2,7 @@
  * 灵屏 LumaSign 管理端视图
  * 每个视图为 async (params) => HTMLElement，渲染进 #view 容器。
  */
-import { api, el, esc, fmtBytes, fmtTime, fmtAgo, toast, confirmModal, openModal, can } from './core.js';
+import { api, el, esc, fmtBytes, fmtTime, fmtAgo, toast, confirmModal, openModal, can, pickFiles } from './core.js';
 
 const spinner = () => el('div', { class: 'empty' }, el('span', { class: 'spin' }), ' 加载中...');
 const empty = t => el('div', { class: 'empty', text: t });
@@ -461,14 +461,18 @@ async function renderMedia() {
     el('div', { class: 'hint', text: hint || '' }),
   );
 
-  const fileInput = el('input', { type: 'file', multiple: true, style: { display: 'none' }, onchange: async (e) => {
-    const files = [...e.target.files];
+  // 上传素材：桌面端走原生文件对话框桥（避免 <input type=file> 触发渲染进程崩溃），浏览器/安卓走兜底
+  async function uploadMediaFiles() {
+    const files = await pickFiles({ multiple: true });
+    if (!files.length) return;
+    let okCount = 0;
     for (const f of files) {
       const fd = new FormData(); fd.append('file', f);
-      try { await api.upload('/api/media/upload', fd); } catch (err) { toast(err.message, 'err'); }
+      try { await api.upload('/api/media/upload', fd); okCount++; } catch (err) { toast(err.message, 'err'); }
     }
-    toast('上传完成', 'ok'); load();
-  } });
+    toast(okCount ? `已上传 ${okCount} 个素材` : '上传完成', 'ok');
+    load();
+  }
 
   const typeSel = el('select', { class: 't-select', onchange: () => paint() },
     el('option', { value: '', text: '全部类型' }),
@@ -605,9 +609,8 @@ async function renderMedia() {
   root.append(
     el('div', { class: 't-head' },
       el('div', { class: 't-title', text: '素材库' }),
-      can('media:upload') ? el('button', { class: 't-btn primary', onclick: () => fileInput.click() }, '⬆ 上传素材') : '',
+      can('media:upload') ? el('button', { class: 't-btn primary', onclick: () => uploadMediaFiles() }, '⬆ 上传素材') : '',
     ),
-    fileInput,
     el('div', { class: 't-toolbar' }, search, typeSel),
     statsEl,
     el('div', { class: 't-card', style: { padding: '16px' } }, grid),
@@ -1454,19 +1457,17 @@ function renderEditor(params) {
 
     /* ── 上传素材到条目 ── */
     async function uploadMediaForItem(targetItem) {
-      const inp = el('input', { type: 'file', accept: targetItem.widget === 'video' ? 'video/*' : 'image/*', style: { display: 'none' }, onchange: async (e) => {
-        const f = e.target.files[0]; if (!f) return;
-        const fd = new FormData(); fd.append('file', f);
-        try {
-          const res = await api.upload('/api/media/upload', fd);
-          const uploaded = (res.items && res.items[0]) || res;
-          targetItem.mediaId = uploaded.id;
-          targetItem.src = '/api/media/' + targetItem.mediaId + '/raw';
-          saveHistory(); refreshAll(); pushPreview();
-          toast('已上传并绑定：' + (f.name));
-        } catch (err) { toast(err.message, 'err'); }
-      }});
-      document.body.appendChild(inp); inp.click(); setTimeout(() => inp.remove(), 5000);
+      const files = await pickFiles({ accept: targetItem.widget === 'video' ? 'video/*' : 'image/*' });
+      const f = files[0]; if (!f) return;
+      const fd = new FormData(); fd.append('file', f);
+      try {
+        const res = await api.upload('/api/media/upload', fd);
+        const uploaded = (res.items && res.items[0]) || res;
+        targetItem.mediaId = uploaded.id;
+        targetItem.src = '/api/media/' + targetItem.mediaId + '/raw';
+        saveHistory(); refreshAll(); pushPreview();
+        toast('已上传并绑定：' + (f.name));
+      } catch (err) { toast(err.message, 'err'); }
     }
 
     /* ── 底部状态栏 ── */
@@ -2220,21 +2221,23 @@ async function renderFleet() {
 
     /* APK 升级包管理：上传 / 列表 / 删除（fleet 推送与终端自升级都从这里取） */
     const apkListEl = el('div', {});
-    const apkFile = el('input', { type: 'file', accept: '.apk,application/vnd.android.package-archive', style: { maxWidth: '240px' } });
     const apkVer = el('input', { class: 'input', placeholder: '版本名 如 1.0.0', style: { width: '120px' } });
     const apkCode = el('input', { class: 'input', placeholder: '版本号', style: { width: '90px' } });
     const apkNote = el('input', { class: 'input', placeholder: '备注（可选）', style: { flex: '1 1 160px' } });
+    const apkFileLabel = el('span', { class: 'sub', text: '未选择文件' });
     const apkUp = el('button', { class: 'btn primary', onclick: async () => {
-      const f = apkFile.files[0];
-      if (!f) return toast('请先选择 APK 文件', 'err');
+      const files = await pickFiles({ accept: '.apk' });
+      const f = files[0];
+      if (!f) return;
+      apkFileLabel.textContent = f.name;
       const fd = new FormData();
       fd.append('file', f); fd.append('versionName', apkVer.value);
       fd.append('versionCode', apkCode.value); fd.append('note', apkNote.value);
       apkUp.disabled = true;
-      try { await api.upload('/api/apks', fd); toast('APK 已上传', 'ok'); loadApks(); apkFile.value = ''; apkVer.value = ''; apkCode.value = ''; apkNote.value = ''; }
+      try { await api.upload('/api/apks', fd); toast('APK 已上传', 'ok'); loadApks(); apkVer.value = ''; apkCode.value = ''; apkNote.value = ''; apkFileLabel.textContent = '未选择文件'; }
       catch (e) { toast(e.message, 'err'); }
       finally { apkUp.disabled = false; }
-    } }, '上传 APK');
+    } }, '选择并上传 APK');
 
     const apkSel = el('select', { class: 'input', style: { minWidth: '220px' } });
     function refreshApkSel() {
@@ -2395,7 +2398,7 @@ async function renderFleet() {
         el('h3', { text: '播放端 APK 升级包' }),
         el('p', { class: 'sub', style: { marginBottom: '10px' }, text: '远程开通与终端自升级都从这里取 APK。上传后在下方的「播放端 APK」下拉中选择即可推送。' }),
         el('div', { class: 'row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-          apkFile, apkVer, apkCode, apkNote, apkUp),
+          apkUp, apkFileLabel, apkVer, apkCode, apkNote),
         apkListEl,
       ),
       el('div', { class: 'card', style: { marginBottom: '14px' } },

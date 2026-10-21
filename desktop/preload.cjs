@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('lumaDesktop', {
   revealData: () => ipcRenderer.send('reveal-data'),
   installHevc: () => ipcRenderer.invoke('install-hevc'),
   detectHevc: () => ipcRenderer.invoke('detect-hevc'),
+  // 原生文件对话框：避开 Electron 渲染进程在 DOM 中出现 <input type=file> 时崩溃的已知问题
+  pickFiles: (opts) => ipcRenderer.invoke('pick-files', opts),
   openStoreHevc: () => ipcRenderer.send('open-store-hevc'),
   getStartupEnabled: () => ipcRenderer.invoke('get-startup-enabled'),
   setStartupEnabled: (b) => ipcRenderer.invoke('set-startup-enabled', b),

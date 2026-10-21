@@ -17,15 +17,17 @@ const { pathToFileURL } = require('node:url');
 const isWin = process.platform === 'win32';
 const isPackaged = app.isPackaged;
 
-// 渲染稳定性（2026-10-20）：桌面端实测「点任意页面即窗口全黑/卡死」，CDP 侧可见
-// crashpad "not connected" —— 渲染进程崩溃。硬件加速（GPU 进程/合成器）是 Electron
-// 在此类环境下崩溃的首要嫌疑，先禁用；同时见下方 render-process-gone 自动恢复。
-try { app.disableHardwareAcceleration(); } catch {}
+// 渲染稳定性（2026-10-21 定位）：「点任意页面即窗口全黑」的真实根因是渲染进程原生崩溃——
+// 软件合成路径（disable-gpu-compositing + disableHardwareAcceleration）下，原生表单控件
+// （<input type=file> 已实测，date/color/time 等同理）一进入 DOM 就触发 Chromium 原生崩溃。
+// 2026-10-20 加的这组禁 GPU 开关不仅没治好（当日崩溃日志仍在），反而是原生控件崩溃的诱因。
+// 故全部撤掉，恢复 Electron 默认 GPU 合成；前端已配套 pickFiles 桥（admin/js/core.js）双保险。
+// try { app.disableHardwareAcceleration(); } catch {}
 // CalculateNativeWinOcclusion / GPU 合成是 Electron 在部分 Windows 环境下渲染进程崩溃与
 // 窗口黑屏的已知诱因；禁用软件光栅化则避免在禁用硬件加速后走不稳定的 CPU 合成路径。
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-app.commandLine.appendSwitch('disable-gpu-compositing');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+// app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// app.commandLine.appendSwitch('disable-gpu-compositing');
+// app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 const ROOT = isPackaged ? path.dirname(__dirname) : path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env.LUMASIGN_PORT || '7788', 10);
@@ -246,6 +248,49 @@ function installHevcExtension() {
 ipcMain.handle('detect-hevc', () => detectHevcWindows());
 ipcMain.handle('install-hevc', () => installHevcExtension());
 ipcMain.on('open-store-hevc', () => { try { shell.openExternal(HEVC_STORE_URL); } catch {} });
+
+/* ---------------- 原生文件对话框：替代 <input type=file> ----------------
+ * Electron 管理端在特定 Chromium + --disable-gpu-compositing 下，只要渲染进程 DOM 中
+ * 出现 file input 就会原生崩溃。改为主进程弹出系统文件对话框选文件，回传二进制给渲染进程，
+ * 渲染进程再走现有 multipart 上传接口。 */
+const MIME_MAP = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  bmp: 'image/bmp', svg: 'image/svg+xml', heic: 'image/heic', heif: 'image/heif',
+  mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', flac: 'audio/flac',
+  apk: 'application/vnd.android.package-archive', pdf: 'application/pdf',
+  txt: 'text/plain', json: 'application/json', xml: 'application/xml', csv: 'text/csv', log: 'text/plain',
+};
+function guessMime(name) {
+  const ext = String(name || '').toLowerCase().split('.').pop();
+  return MIME_MAP[ext] || 'application/octet-stream';
+}
+ipcMain.handle('pick-files', async (e, opts) => {
+  const { accept = '', multiple = false, title = '选择文件' } = opts || {};
+  const filters = [];
+  if (accept) {
+    const exts = accept.split(',').map(s => s.trim()).filter(Boolean).map(s => {
+      if (s.startsWith('.')) return s.slice(1);
+      if (s.endsWith('/*')) return '*';   // image/* video/* 等 → 不限扩展名
+      return s;
+    });
+    if (exts.length) filters.push({ name: '文件', extensions: exts });
+  }
+  const properties = ['openFile'];
+  if (multiple) properties.push('multiSelections');
+  let res;
+  try { res = await dialog.showOpenDialog(mainWin || undefined, { title, filters, properties }); }
+  catch (err) { console.error('[pick-files] dialog error', err); return []; }
+  if (!res || res.canceled || !res.filePaths || !res.filePaths.length) return [];
+  const out = [];
+  for (const fp of res.filePaths) {
+    try {
+      const buf = fs.readFileSync(fp);
+      out.push({ name: path.basename(fp), type: guessMime(fp), size: buf.length, data: buf });
+    } catch (err) { console.error('[pick-files] read error', fp, err); }
+  }
+  return out;
+});
 
 ipcMain.handle('get-startup-enabled', () => {
   try {
