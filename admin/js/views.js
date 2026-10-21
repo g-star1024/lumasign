@@ -2234,7 +2234,7 @@ async function renderFleet() {
       fd.append('file', f); fd.append('versionName', apkVer.value);
       fd.append('versionCode', apkCode.value); fd.append('note', apkNote.value);
       apkUp.disabled = true;
-      try { await api.upload('/api/apks', fd); toast('APK 已上传', 'ok'); loadApks(); apkVer.value = ''; apkCode.value = ''; apkNote.value = ''; apkFileLabel.textContent = '未选择文件'; }
+      try { const j = await api.upload('/api/apks', fd); toast('APK 已上传', 'ok'); loadApks(); if (j.item && j.item.id) apkSel.value = j.item.id; apkVer.value = ''; apkCode.value = ''; apkNote.value = ''; apkFileLabel.textContent = '未选择文件'; }
       catch (e) { toast(e.message, 'err'); }
       finally { apkUp.disabled = false; }
     } }, '选择并上传 APK');
@@ -2243,6 +2243,9 @@ async function renderFleet() {
     function refreshApkSel() {
       apkSel.replaceChildren(el('option', { value: '' }, apks.length ? '选择播放端 APK' : '（请先上传 APK 升级包）'),
         ...apks.map(a => el('option', { value: a.id }, a.name + ' | v' + (a.versionName || '?'))));
+      // 只有 1 个包时自动选中：本机 Electron 下原生 select 弹出层可能不显示，用户点不开下拉；
+      // 自动选中后推送流程不再依赖下拉交互。多包时仍用下拉（选中值保持不变）。
+      if (apks.length === 1 && !apkSel.value) apkSel.value = apks[0].id;
     }
     function renderApkList() {
       if (!apks.length) { apkListEl.replaceChildren(el('div', { class: 'empty', text: '尚未上传任何播放端 APK' })); return; }
@@ -2426,7 +2429,10 @@ async function renderFleet() {
 }
 
 /* ================= 局域网扫描与设备台账 ================= */
-async function renderScanSection() {
+/* 注意：不能加 async——本函数的返回值被 el() 当 DOM 子节点使用，async 会返回
+ * Promise，被 appendChild 强转成文本 "[object Promise]"（2026-10-21 修复）。
+ * 异步取数全部在内部 IIFE 里完成，root 同步返回。 */
+function renderScanSection() {
   const root = el('div', { class: 'card', style: { marginTop: '14px' } }, spinner());
   (async () => {
     let nets = [], cfg = {};
