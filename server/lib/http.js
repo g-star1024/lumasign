@@ -70,6 +70,7 @@ export function parseMultipart(req, tmpDir) {
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const fields = {}, files = [];
+    const finishWaits = [];      // 每个文件写流的 flush 完成信号（finish 事件）
     let buf = Buffer.alloc(0);
     let state = 'boundary';      // boundary -> headers -> body
     let cur = null;              // 当前 part 描述
@@ -110,6 +111,9 @@ export function parseMultipart(req, tmpDir) {
           if (cur.filename) {
             cur.tmpPath = path.join(tmpDir, `up_${Date.now()}_${Math.random().toString(36).slice(2)}`);
             ws = fs.createWriteStream(cur.tmpPath);
+            // 2026-10-21 修复：finishPart 的 ws.end() 只是发起异步落盘，若不等 finish 就 resolve，
+            // 调用方立刻 readFileSync 会读到空文件（md5 变成空串 MD5、所有上传互相覆盖同一文件名）。
+            finishWaits.push(new Promise(r => ws.on('finish', r)));
           }
           state = 'body';
         }
@@ -140,7 +144,11 @@ export function parseMultipart(req, tmpDir) {
     };
 
     req.on('data', c => { buf = Buffer.concat([buf, c]); try { pump(); } catch (e) { reject(e); req.destroy(); } });
-    req.on('end', () => { try { pump(); finishPart(); } catch {} resolve({ fields, files }); });
+    req.on('end', () => {
+      try { pump(); finishPart(); } catch (e) { return reject(e); }
+      // 等全部文件写流真正落盘后再 resolve（见 finishWaits 注释）
+      Promise.all(finishWaits).then(() => resolve({ fields, files })).catch(reject);
+    });
     req.on('error', reject);
   });
 }

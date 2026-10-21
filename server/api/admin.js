@@ -1073,14 +1073,21 @@ export function registerAdminApi(router, ctx) {
     const f = parsed.files[0];
     if (!f) return fail(res, '请选择 APK 文件');
     const buf = fs.readFileSync(f.tmpPath);
+    if (!buf.length) return fail(res, '上传内容为空，请重试');
     const md5 = crypto.createHash('md5').update(buf).digest('hex');
     const dest = path.join(paths.apk, `${md5}.apk`);
     fs.mkdirSync(paths.apk, { recursive: true });
     fs.renameSync(f.tmpPath, dest);
+    // 版本名缺省时从文件名推导（如 LumaSign-android-v1.3.44-armeabi-v7a-release.apk → 1.3.44）
+    let versionName = (parsed.fields.versionName || '').trim();
+    if (!versionName) {
+      const vm = /-v?(\d+(?:\.\d+)+)[^/\\]*\.apk$/i.exec(f.filename || '');
+      if (vm) versionName = vm[1];
+    }
     const row = S('apks').insert({
       id: uid('apk_'), name: f.filename,
-      versionName: parsed.fields.versionName || '', versionCode: parseInt(parsed.fields.versionCode || '0', 10),
-      note: parsed.fields.note || '', md5, size: f.size,
+      versionName, versionCode: parseInt(parsed.fields.versionCode || '0', 10) || 0,
+      note: parsed.fields.note || '', md5, size: buf.length,
       url: `/api/t/apk/${md5}.apk`, uploadedBy: user.id,
     });
     logger.audit({ action: 'apk_upload', userId: user.id, target: row.id, version: row.versionName });
