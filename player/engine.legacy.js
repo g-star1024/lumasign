@@ -2416,6 +2416,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             this._breakpointCache = {};
             this._bpTimer = null;
             this.rotation = null;
+            this._inRotationLoad = false;
         }
         _create_class(Player, [
             {
@@ -2455,6 +2456,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             {
                 /* ---------------- 多排期轮播（v1.3.35） ---------------- */ key: "stopRotation",
                 value: function stopRotation() {
+                    if (this._inRotationLoad) return;
                     if (this.rotation) {
                         try {
                             clearTimeout(this.rotation.timer);
@@ -2466,7 +2468,12 @@ function _unsupported_iterable_to_array(o, minLen) {
             {
                 /** 启动轮播：命中多个非独占排期时循环播放；存在独占排期时只播独占 */ key: "startRotation",
                 value: function startRotation(activeList) {
-                    this.stopRotation();
+                    if (this.rotation) {
+                        try {
+                            clearTimeout(this.rotation.timer);
+                        } catch (unused) {}
+                        this.rotation = null;
+                    }
                     if (!activeList.length) {
                         this.showWelcome();
                         this.startPolling();
@@ -2498,47 +2505,76 @@ function _unsupported_iterable_to_array(o, minLen) {
                                     if (!rot || !rot.list.length) return [
                                         2
                                     ];
+                                    if (rot.timer) {
+                                        try {
+                                            clearTimeout(rot.timer);
+                                        } catch (unused) {}
+                                        rot.timer = null;
+                                    }
                                     rot.index = (idx % rot.list.length + rot.list.length) % rot.list.length;
                                     sch = rot.list[rot.index];
                                     this.currentScheduleId = sch.scheduleId;
                                     ping("rot-index=" + rot.index + "/" + rot.list.length + " sid=" + sch.scheduleId + " mode=" + (sch.mode || "default"));
+                                    duration = Math.max(5, sch.duration || 15) * 1e3;
                                     _state.label = 1;
                                 case 1:
                                     _state.trys.push([
                                         1,
-                                        3,
+                                        6,
                                         ,
-                                        4
+                                        7
                                     ]);
                                     this.hideWelcome();
+                                    this._inRotationLoad = true;
+                                    _state.label = 2;
+                                case 2:
+                                    _state.trys.push([
+                                        2,
+                                        ,
+                                        4,
+                                        5
+                                    ]);
                                     return [
                                         4,
-                                        this.load(sch.layout, {
-                                            resolver: this.resolver,
-                                            mode: "term"
-                                        })
-                                    ];
-                                case 2:
-                                    _state.sent();
-                                    duration = Math.max(5, sch.duration || 15) * 1e3;
-                                    rot.timer = setTimeout(function() {
-                                        if (_this.rotation === rot) _this.advanceRotation();
-                                    }, duration);
-                                    return [
-                                        3,
-                                        4
+                                        Promise.race([
+                                            this.load(sch.layout, {
+                                                resolver: this.resolver,
+                                                mode: "term"
+                                            }),
+                                            new Promise(function(r) {
+                                                return setTimeout(r, 1e4);
+                                            })
+                                        ])
                                     ];
                                 case 3:
-                                    e = _state.sent();
-                                    ping("rot-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
-                                    rot.timer = setTimeout(function() {
-                                        if (_this.rotation === rot) _this.advanceRotation();
-                                    }, 5e3);
+                                    _state.sent();
                                     return [
                                         3,
-                                        4
+                                        5
                                     ];
                                 case 4:
+                                    this._inRotationLoad = false;
+                                    return [
+                                        7
+                                    ];
+                                case 5:
+                                    return [
+                                        3,
+                                        7
+                                    ];
+                                case 6:
+                                    e = _state.sent();
+                                    ping("rot-err:" + encodeURIComponent(String(e && e.message || e)).slice(0, 90));
+                                    return [
+                                        3,
+                                        7
+                                    ];
+                                case 7:
+                                    if (this.rotation === rot && !rot.timer) {
+                                        rot.timer = setTimeout(function() {
+                                            if (_this.rotation === rot) _this.advanceRotation();
+                                        }, duration);
+                                    }
                                     return [
                                         2
                                     ];
@@ -3794,7 +3830,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "refreshTerm",
                 value: function refreshTerm() {
                     return _async_to_generator(function() {
-                        var r, man2, e, man, activeList, hitIds;
+                        var r, man2, e, man, activeList, hitIds, curIds;
                         return _ts_generator(this, function(_state) {
                             switch(_state.label){
                                 case 0:
@@ -3858,12 +3894,21 @@ function _unsupported_iterable_to_array(o, minLen) {
                                         return s.scheduleId;
                                     }).join(",") || "null";
                                     ping("sched-n=" + (man.schedules || []).length + " hits=[" + hitIds + "] cur=" + (this.currentScheduleId || "null"));
+                                    curIds = (this.rotation && this.rotation.list ? this.rotation.list : []).map(function(s) {
+                                        return s.scheduleId;
+                                    }).join(",") || "null";
+                                    if (!(hitIds !== curIds)) return [
+                                        3,
+                                        9
+                                    ];
                                     return [
                                         4,
                                         this.startRotation(activeList)
                                     ];
                                 case 8:
                                     _state.sent();
+                                    _state.label = 9;
+                                case 9:
                                     if (this.terminalId) {
                                         if (!this.es) this.startCommands();
                                         if (!this.hbTimer) this.startHeartbeat();

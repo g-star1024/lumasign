@@ -143,6 +143,7 @@ class Player {
     this._breakpointCache = {}; // ★ v1.3.31：断点续播本地缓存 key -> {position, duration}
     this._bpTimer = null;
     this.rotation = null;      // ★ v1.3.35：多排期轮播状态 {list, index, timer}
+    this._inRotationLoad = false; // ★ v1.3.45：轮播自身 load() 期间豁免 stopRotation（防清掉轮播状态）
   }
 
   stop() {
@@ -162,12 +163,16 @@ class Player {
 
   /* ---------------- 多排期轮播（v1.3.35） ---------------- */
   stopRotation() {
+    // v1.3.45：轮播自身触发 load()→stop() 的窗口内豁免——否则 this.rotation 被清空、
+    // 推进定时器被 clearTimeout，advanceRotation 永远等不到状态（轮播恒停首个排期）。
+    if (this._inRotationLoad) return;
     if (this.rotation) { try { clearTimeout(this.rotation.timer); } catch {} this.rotation = null; }
   }
 
   /** 启动轮播：命中多个非独占排期时循环播放；存在独占排期时只播独占 */
   startRotation(activeList) {
-    this.stopRotation();
+    // 直清（不走 stopRotation，避开 _inRotationLoad 守卫），确保旧 timer 一定被清
+    if (this.rotation) { try { clearTimeout(this.rotation.timer); } catch {} this.rotation = null; }
     if (!activeList.length) { this.showWelcome(); this.startPolling(); this.startCommands(); this.startHeartbeat(); return; }
     const list = hasExclusive(activeList) ? activeList.filter(s => s.mode === 'exclusive') : activeList;
     this.rotation = { list, index: 0, timer: null };
@@ -177,19 +182,34 @@ class Player {
   async playRotationIndex(idx) {
     const rot = this.rotation;
     if (!rot || !rot.list.length) return;
+    // v1.3.45 二修：setTimeout 触发后 rot.timer 仍留着旧 ID（不会自动变 null），
+    // 不清掉则末尾补臂条件 !rot.timer 恒为假——第二次起永远不再补臂，轮播卡在第二个排期
+    // （RK312x 实测：0/3→1/3 后彻底静止，无 rot-err、无 30s 重置，极难肉眼定位）。
+    if (rot.timer) { try { clearTimeout(rot.timer); } catch {} rot.timer = null; }
     rot.index = ((idx % rot.list.length) + rot.list.length) % rot.list.length;
     const sch = rot.list[rot.index];
     this.currentScheduleId = sch.scheduleId;
     ping('rot-index=' + rot.index + '/' + rot.list.length + ' sid=' + sch.scheduleId + ' mode=' + (sch.mode || 'default'));
+    const duration = Math.max(5, (sch.duration || 15)) * 1000; // 最低 5 秒，默认 15 秒
     try {
       this.hideWelcome();
-      await this.load(sch.layout, { resolver: this.resolver, mode: 'term' });
-      const duration = Math.max(5, (sch.duration || 15)) * 1000; // 最低 5 秒，默认 15 秒
-      rot.timer = setTimeout(() => { if (this.rotation === rot) this.advanceRotation(); }, duration);
+      // v1.3.45 修复（RK312x 实测轮播恒停第一个排期）：load() 第一行的 this.stop() 会调用
+      // stopRotation() 清掉轮播状态与推进定时器——v1.3.35 引入轮播以来此链从未生效过。
+      // 轮播自身的加载期间豁免 stopRotation；另外 4.4（Chromium33）await 可能永不恢复
+      // （见 raceBridge），给 load 加 10s 兜底超时，超时也按相同时长推进。
+      this._inRotationLoad = true;
+      try {
+        await Promise.race([
+          this.load(sch.layout, { resolver: this.resolver, mode: 'term' }),
+          new Promise(r => setTimeout(r, 10000)),
+        ]);
+      } finally { this._inRotationLoad = false; }
     } catch (e) {
       ping('rot-err:' + encodeURIComponent(String((e && e.message) || e)).slice(0, 90));
-      // 加载失败也继续轮播下一个，避免单个坏节目卡死整个 playlist
-      rot.timer = setTimeout(() => { if (this.rotation === rot) this.advanceRotation(); }, 5000);
+    }
+    // 加载结束（成功/失败/超时）都补臂推进定时器；若轮播已被新清单替换（this.rotation !== rot）则不管
+    if (this.rotation === rot && !rot.timer) {
+      rot.timer = setTimeout(() => { if (this.rotation === rot) this.advanceRotation(); }, duration);
     }
   }
 
@@ -919,8 +939,12 @@ class Player {
     const activeList = pickActiveSchedules(man);
     const hitIds = activeList.map(s => s.scheduleId).join(',') || 'null';
     ping('sched-n=' + ((man.schedules || []).length) + ' hits=[' + hitIds + '] cur=' + (this.currentScheduleId || 'null'));
-    // v1.3.35 起支持多排期轮播：把命中的排期列表交给 startRotation，由它决定播哪个/是否轮播
-    await this.startRotation(activeList);
+    // v1.3.35 起支持多排期轮播：把命中的排期列表交给 startRotation，由它决定播哪个/是否轮播。
+    // v1.3.45 修复（RK312x 实测轮播失效）：活跃列表没变时绝不重启轮播。startRotation 会
+    // stopRotation() 清掉推进定时器并把索引重置为 0，而 30s 轮询远超 15s 排期时长——
+    // 每轮询一次就重置，轮播将永远停在第一个排期。只有命中集合变化才重启。
+    const curIds = (this.rotation && this.rotation.list ? this.rotation.list : []).map(s => s.scheduleId).join(',') || 'null';
+    if (hitIds !== curIds) await this.startRotation(activeList);
     // 网络三件套自愈：注册成功而 SSE/心跳尚未建立时（延迟注册场景）在此补齐
     if (this.terminalId) {
       if (!this.es) this.startCommands();
