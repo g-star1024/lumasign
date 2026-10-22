@@ -3617,8 +3617,35 @@ async function renderSiqian() {
       list.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', padding: '8px 0', borderBottom: '1px solid var(--border)' } },
         meta,
         btn('当前', async () => { try { const r = await api.get(`/api/admin/siqian/${dev.ip}/now`); toast('当前：' + JSON.stringify(r.now).slice(0, 140)); } catch (e) { toast('失败：' + e.message, 'err'); } }),
-        btn('插播', async () => { const m = window.prompt('插播内容：'); if (m == null) return; try { await api.post(`/api/admin/siqian/${dev.ip}/message`, { msg: m }); toast('已插播', 'ok'); } catch (e) { toast('失败：' + e.message, 'err'); } }),
-        btn('音量', async () => { const v = window.prompt('音量 0-100：', '50'); if (v == null) return; try { await api.post(`/api/admin/siqian/${dev.ip}/volume`, { volume: Number(v) }); toast('已设置', 'ok'); loadDevices(); } catch (e) { toast('失败：' + e.message, 'err'); } }),
+        btn('插播', () => {
+          // v1.3.45：Electron 不支持 window.prompt()（抛 "prompt() is and will not be
+          // supported." 且因 async 回调变成 Promise Rejection），改用 openModal 输入框
+          const inp = el('input', { type: 'text', placeholder: '插播内容', style: { width: '100%' } });
+          const close = openModal(el('div', {},
+            el('h2', { text: '插播 · ' + (dev.name || dev.ip) }),
+            el('div', { style: { margin: '14px 0' } }, inp),
+            el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+              el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
+              el('button', { class: 't-btn primary', text: '发送', onclick: async () => {
+                if (!inp.value.trim()) { toast('请输入内容', 'err'); return; }
+                try { await api.post(`/api/admin/siqian/${dev.ip}/message`, { msg: inp.value.trim() }); toast('已插播', 'ok'); close(); }
+                catch (e) { toast('失败：' + e.message, 'err'); }
+              } }))));
+        }),
+        btn('音量', () => {
+          const inp = el('input', { type: 'number', min: '0', max: '100', value: String(dev.volume != null ? dev.volume : 50), style: { width: '100%' } });
+          const close = openModal(el('div', {},
+            el('h2', { text: '音量 · ' + (dev.name || dev.ip) }),
+            el('div', { style: { margin: '14px 0' } }, inp),
+            el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+              el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
+              el('button', { class: 't-btn primary', text: '设置', onclick: async () => {
+                const v = Number(inp.value);
+                if (!(v >= 0 && v <= 100)) { toast('请输入 0-100', 'err'); return; }
+                try { await api.post(`/api/admin/siqian/${dev.ip}/volume`, { volume: v }); toast('已设置', 'ok'); close(); loadDevices(); }
+                catch (e) { toast('失败：' + e.message, 'err'); }
+              } }))));
+        }),
         btn('推模式', async () => { try { const r = await api.post(`/api/admin/siqian/${dev.ip}/push-mode`, { mode: 'siqian' }); toast(r.ok ? '已推送兼容模式深链' : ('失败：' + (r.error || '') + ' 手动：' + r.manual), r.ok ? 'ok' : 'err'); } catch (e) { toast('失败：' + e.message, 'err'); } }),
         btn('删', async () => { const ok = await confirmModal({ title: '删除登记', body: `确定删除 ${dev.ip}？`, danger: true, confirmText: '删除' }); if (ok) { try { await api.del(`/api/admin/siqian/${dev.ip}`); toast('已删除', 'ok'); loadDevices(); } catch (e) { toast('失败：' + e.message, 'err'); } } })));
     }

@@ -253,8 +253,15 @@ async function init(opts = {}) {
   const server = http.createServer(async (req, res) => {
     const t0 = Date.now();
     try {
-      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-      const pathname = decodeURIComponent(url.pathname);
+      // v1.3.45：畸形请求行/畸形 % 序列（外部扫描器）会让 new URL / decodeURIComponent
+      // 抛 TypeError/URIError → 落到下面 catch 记成 500 request_error。按语义应回 400。
+      let url, pathname;
+      try {
+        url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        pathname = decodeURIComponent(url.pathname);
+      } catch {
+        return fail(res, 'Bad Request', 400);
+      }
       const isPlayer = pathname.startsWith('/player');
       // 56iq 兼容 Shell：JSONP 跨源调 CMS（同机 :8888 或局域网真 56iq CMS），需放开 script-src
       const isSiqianShell = pathname.startsWith('/player/siqian');

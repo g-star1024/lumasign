@@ -449,7 +449,9 @@ export function registerTerminalApi(router, ctx) {
   });
 
   // ★ v1.3.31: 断点续播 + 关机计划下发（对齐竞品 BreakPointDBAdapter / PowerOffRem）
-  registerBreakpointRoutes(router, store, ctx);
+  // v1.3.45 修复：authTerminal 是本函数内部定义的，必须显式传入——否则断点两个端点
+  // 一律 ReferenceError → 500（真机日志 system-2026-10-22 共 266 次 request_error）。
+  registerBreakpointRoutes(router, store, ctx, authTerminal);
 }
 
 /* ================= 工具 ================= */
@@ -495,7 +497,7 @@ export function raiseAlertThrottled(store, bus, key, a, ms = 3600000) {
 // ============ v1.3.31: 断点续播（对齐竞品 BreakPointDBAdapter） ============
 // collection: breakpoints  [{ id, terminalId, key, position, duration, updatedAt }]
 // key 由客户端生成：itemId|mediaId，用于定位到具体素材
-export function registerBreakpointRoutes(router, store, ctx) {
+export function registerBreakpointRoutes(router, store, ctx, authTerminal) {
   const S = n => store.col(n);
 
   // 客户端上报播放进度（节流：只在关键时点调用）
