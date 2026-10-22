@@ -83,12 +83,24 @@ export function registerSiqianApi(router, ctx) {
     json(res, { ok: true, device: dev });
   }));
 
-  /** 当前播放（直连播放端 OpenAPI） */
+  /** 当前播放：已登记设备读 CMS 注册表（播放端只与 CMS 轮询，无本地 8888）；未登记真 56iq 盒才直连 */
   router.get('/api/admin/siqian/:id/now', guard('terminal:view', async (req, res, { id }) => {
     const dev = registry.get(id);
-    if (!dev) return fail(res, '设备不存在', 404);
-    try { json(res, { ok: true, ip: id, now: await client.nowPlaying(id) }); }
-    catch (e) { fail(res, `连接播放端失败：${e.message}`, 502); }
+    if (!dev) {
+      try { json(res, { ok: true, ip: id, now: (await client.nowPlaying(id)).data }); }
+      catch (e) { fail(res, `连接播放端失败：${e.message}`, 502); }
+      return;
+    }
+    json(res, { ok: true, ip: id, now: {
+      ProjectId: dev.lastProgram?.ProjectId || null,
+      ProjectName: dev.lastProgram?.ProjectName || null,
+      LayoutId: dev.lastProgram?.LayoutId || null,
+      feedback: dev.lastFeedback || null,
+      volume: dev.volume ?? null,
+      insert: dev.lastInsert || null,
+      appVersion: dev.appVersion || null,
+      terminalId: dev.terminalId || null,
+    } });
   }));
 
   /** 播放指定节目（直连） */
@@ -103,29 +115,50 @@ export function registerSiqianApi(router, ctx) {
     } catch (e) { fail(res, `下发失败：${e.message}`, 502); }
   }));
 
-  /** 设置音量（直连） */
+  /** 设置音量：已登记设备写 CMS 注册表（Shell 轮询 nowlist 即应用）；未登记真 56iq 盒才直连其 8888 */
   router.post('/api/admin/siqian/:id/volume', guard('terminal:upgrade', async (req, res, { id }) => {
     const dev = registry.get(id);
-    if (!dev) return fail(res, '设备不存在', 404);
     const b = await readJson(req).catch(() => ({}));
     const v = Number(b.volume ?? b.value ?? b.v);
     if (!Number.isFinite(v) || v < 0 || v > 100) return fail(res, '音量需为 0-100', 400);
-    try {
-      const r = await client.setVolume(id, v);
-      json(res, { ok: true, device: id, result: r });
-    } catch (e) { fail(res, `下发失败：${e.message}`, 502); }
+    if (!dev) {
+      try { const r = await client.setVolume(id, v); json(res, { ok: true, device: id, source: 'device', result: r.data }); }
+      catch (e) { fail(res, `下发失败：${e.message}`, 502); }
+      return;
+    }
+    dev.volume = v; registry.upsert(dev.ip, dev);
+    json(res, { ok: true, device: id, source: 'cms-registry', result: { action: 'volume', value: v } });
   }));
 
-  /** 插播消息（直连） */
+  /** 插播消息：同上，写注册表 lastInsert（Shell 轮询 60s TTL 内弹出） */
   router.post('/api/admin/siqian/:id/message', guard('schedule:publish', async (req, res, { id }) => {
+    const dev = registry.get(id);
+    const b = await readJson(req).catch(() => ({}));
+    if (typeof b.msg !== 'string') return fail(res, '缺少 msg', 400);
+    if (!dev) {
+      try { const r = await client.insertMessage(id, b.msg); json(res, { ok: true, device: id, source: 'device', result: r.data }); }
+      catch (e) { fail(res, `下发失败：${e.message}`, 502); }
+      return;
+    }
+    dev.lastInsert = { msg: b.msg, at: Date.now() }; registry.upsert(dev.ip, dev);
+    json(res, { ok: true, device: id, source: 'cms-registry', result: { action: 'InsertMessage', msg: b.msg } });
+  }));
+
+  /** 绑定设备到灵屏终端：兼容模式设备即播该终端排期（根治默认节目黑屏） */
+  router.post('/api/admin/siqian/:id/bind', guard('terminal:manage', async (req, res, { id }) => {
     const dev = registry.get(id);
     if (!dev) return fail(res, '设备不存在', 404);
     const b = await readJson(req).catch(() => ({}));
-    if (typeof b.msg !== 'string') return fail(res, '缺少 msg', 400);
-    try {
-      const r = await client.insertMessage(id, b.msg);
-      json(res, { ok: true, device: id, result: r });
-    } catch (e) { fail(res, `下发失败：${e.message}`, 502); }
+    const tid = b.terminalId || null;
+    if (tid) {
+      const t = S('terminals').byId(tid);
+      if (!t) return fail(res, '灵屏终端不存在', 400);
+      dev.terminalId = tid;
+    } else {
+      dev.terminalId = null;
+    }
+    registry.upsert(dev.ip, dev);
+    json(res, { ok: true, device: dev });
   }));
 
   /** 推送「56iq 兼容模式」到设备：经 adb 触发 lumasync 深链，设备即切模式 */
@@ -134,7 +167,7 @@ export function registerSiqianApi(router, ctx) {
     if (!dev) return fail(res, '设备不存在', 404);
     const b = await readJson(req).catch(() => ({}));
     const mode = b.mode || 'siqian';
-    const term = mapper ? mapper._terminalByIp(id) : null;
+    const term = mapper ? mapper._resolveTerminal(id) : null;
     const { link } = buildDeeplink(req, term || { name: dev.name }, mode);
     const adb = ctx.adbPath || 'adb';
     const addr = id.indexOf(':') >= 0 ? id : (id + ':5555');

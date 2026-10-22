@@ -3594,6 +3594,10 @@ async function renderSiqian() {
     let d = { devices: [] };
     try { d = await api.get('/api/admin/siqian/devices'); }
     catch (e) { devCard.appendChild(el('div', { class: 'empty', text: '加载失败：' + e.message })); return; }
+    let terms = [];
+    try { terms = (await api.get('/api/terminals')).items || []; } catch { /* 终端列表取不到不影响设备卡 */ }
+    const termById = {};
+    for (const t of terms) termById[t.id] = t;
     devCard.appendChild(el('div', { style: { padding: '4px 0 10px' } },
       el('button', { class: 't-btn', text: '+ 登记设备', onclick: () => {
         const ip = el('input', { type: 'text', placeholder: '设备 IP，如 192.168.2.153', style: { width: '100%' } });
@@ -3610,44 +3614,55 @@ async function renderSiqian() {
     const list = el('div', {});
     if (!d.devices.length) list.appendChild(el('div', { class: 'empty', text: '暂无设备。点「局域网发现」或「+ 登记设备」。' }));
     for (const dev of d.devices) {
+      const bound = dev.terminalId ? termById[dev.terminalId] : null;
       const meta = el('div', { style: { minWidth: '170px' } },
         el('div', { style: { fontWeight: '600' }, text: dev.name || dev.ip }),
-        el('div', { style: { color: 'var(--text-2)', fontSize: '12px' }, text: dev.ip + (dev.volume != null ? ' · 音量' + dev.volume : '') }));
+        el('div', { style: { color: 'var(--text-2)', fontSize: '12px' }, text: dev.ip + (dev.volume != null ? ' · 音量' + dev.volume : '') + (bound ? ' · 绑' + (bound.name || bound.code || bound.id) : '') }));
       const btn = (label, fn) => el('button', { class: 't-btn', text: label, style: { marginLeft: '6px' }, onclick: fn });
-      list.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', padding: '8px 0', borderBottom: '1px solid var(--border)' } },
-        meta,
-        btn('当前', async () => { try { const r = await api.get(`/api/admin/siqian/${dev.ip}/now`); toast('当前：' + JSON.stringify(r.now).slice(0, 140)); } catch (e) { toast('失败：' + e.message, 'err'); } }),
-        btn('插播', () => {
-          // v1.3.45：Electron 不支持 window.prompt()（抛 "prompt() is and will not be
-          // supported." 且因 async 回调变成 Promise Rejection），改用 openModal 输入框
-          const inp = el('input', { type: 'text', placeholder: '插播内容', style: { width: '100%' } });
-          const close = openModal(el('div', {},
-            el('h2', { text: '插播 · ' + (dev.name || dev.ip) }),
-            el('div', { style: { margin: '14px 0' } }, inp),
-            el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-              el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
-              el('button', { class: 't-btn primary', text: '发送', onclick: async () => {
-                if (!inp.value.trim()) { toast('请输入内容', 'err'); return; }
-                try { await api.post(`/api/admin/siqian/${dev.ip}/message`, { msg: inp.value.trim() }); toast('已插播', 'ok'); close(); }
-                catch (e) { toast('失败：' + e.message, 'err'); }
-              } }))));
-        }),
-        btn('音量', () => {
-          const inp = el('input', { type: 'number', min: '0', max: '100', value: String(dev.volume != null ? dev.volume : 50), style: { width: '100%' } });
-          const close = openModal(el('div', {},
-            el('h2', { text: '音量 · ' + (dev.name || dev.ip) }),
-            el('div', { style: { margin: '14px 0' } }, inp),
-            el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
-              el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
-              el('button', { class: 't-btn primary', text: '设置', onclick: async () => {
-                const v = Number(inp.value);
-                if (!(v >= 0 && v <= 100)) { toast('请输入 0-100', 'err'); return; }
-                try { await api.post(`/api/admin/siqian/${dev.ip}/volume`, { volume: v }); toast('已设置', 'ok'); close(); loadDevices(); }
-                catch (e) { toast('失败：' + e.message, 'err'); }
-              } }))));
-        }),
-        btn('推模式', async () => { try { const r = await api.post(`/api/admin/siqian/${dev.ip}/push-mode`, { mode: 'siqian' }); toast(r.ok ? '已推送兼容模式深链' : ('失败：' + (r.error || '') + ' 手动：' + r.manual), r.ok ? 'ok' : 'err'); } catch (e) { toast('失败：' + e.message, 'err'); } }),
-        btn('删', async () => { const ok = await confirmModal({ title: '删除登记', body: `确定删除 ${dev.ip}？`, danger: true, confirmText: '删除' }); if (ok) { try { await api.del(`/api/admin/siqian/${dev.ip}`); toast('已删除', 'ok'); loadDevices(); } catch (e) { toast('失败：' + e.message, 'err'); } } })));
+      const sel = el('select', { style: { maxWidth: '220px' } });
+      sel.appendChild(el('option', { value: '', text: '（不绑定 / 默认节目）' }));
+      for (const t of terms) sel.appendChild(el('option', { value: t.id, text: (t.name || t.code || t.id) + (t.code ? ' · ' + t.code : '') }));
+      if (dev.terminalId) sel.value = dev.terminalId;
+      list.appendChild(el('div', { style: { padding: '8px 0', borderBottom: '1px solid var(--border)' } },
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+          meta,
+          btn('当前', async () => { try { const r = await api.get(`/api/admin/siqian/${dev.ip}/now`); toast('当前：' + JSON.stringify(r.now).slice(0, 160)); } catch (e) { toast('失败：' + e.message, 'err'); } }),
+          btn('插播', () => {
+            const inp = el('input', { type: 'text', placeholder: '插播内容', style: { width: '100%' } });
+            const close = openModal(el('div', {},
+              el('h2', { text: '插播 · ' + (dev.name || dev.ip) }),
+              el('div', { style: { margin: '14px 0' } }, inp),
+              el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+                el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
+                el('button', { class: 't-btn primary', text: '发送', onclick: async () => {
+                  if (!inp.value.trim()) { toast('请输入内容', 'err'); return; }
+                  try { await api.post(`/api/admin/siqian/${dev.ip}/message`, { msg: inp.value.trim() }); toast('已插播', 'ok'); close(); }
+                  catch (e) { toast('失败：' + e.message, 'err'); }
+                } }))));
+          }),
+          btn('音量', () => {
+            const inp = el('input', { type: 'number', min: '0', max: '100', value: String(dev.volume != null ? dev.volume : 50), style: { width: '100%' } });
+            const close = openModal(el('div', {},
+              el('h2', { text: '音量 · ' + (dev.name || dev.ip) }),
+              el('div', { style: { margin: '14px 0' } }, inp),
+              el('div', { style: { textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+                el('button', { class: 't-btn', text: '取消', onclick: () => close() }),
+                el('button', { class: 't-btn primary', text: '设置', onclick: async () => {
+                  const v = Number(inp.value);
+                  if (!(v >= 0 && v <= 100)) { toast('请输入 0-100', 'err'); return; }
+                  try { await api.post(`/api/admin/siqian/${dev.ip}/volume`, { volume: v }); toast('已设置', 'ok'); close(); loadDevices(); }
+                  catch (e) { toast('失败：' + e.message, 'err'); }
+                } }))));
+          }),
+          btn('推模式', async () => { try { const r = await api.post(`/api/admin/siqian/${dev.ip}/push-mode`, { mode: 'siqian' }); toast(r.ok ? '已推送兼容模式深链' : ('失败：' + (r.error || '') + ' 手动：' + r.manual), r.ok ? 'ok' : 'err'); } catch (e) { toast('失败：' + e.message, 'err'); } }),
+          btn('删', async () => { const ok = await confirmModal({ title: '删除登记', body: `确定删除 ${dev.ip}？`, danger: true, confirmText: '删除' }); if (ok) { try { await api.del(`/api/admin/siqian/${dev.ip}`); toast('已删除', 'ok'); loadDevices(); } catch (e) { toast('失败：' + e.message, 'err'); } } })),
+        el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 0 0', flexWrap: 'wrap' } },
+          el('span', { style: { fontSize: '12px', color: 'var(--text-2)' }, text: '绑定灵屏终端：' }),
+          sel,
+          el('button', { class: 't-btn', text: '绑定', onclick: async () => {
+            try { await api.post(`/api/admin/siqian/${dev.ip}/bind`, { terminalId: sel.value || null }); toast('已更新绑定', 'ok'); loadDevices(); }
+            catch (e) { toast('绑定失败：' + e.message, 'err'); }
+          } }))));
     }
     devCard.appendChild(list);
   }

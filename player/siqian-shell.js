@@ -79,9 +79,13 @@
 
   /* ---------------- 业务 ---------------- */
   function register(cb) {
-    jsonp(CMS + '/api/server?ip=' + encodeURIComponent(selfIp) + '&name=' + encodeURIComponent(NAME), function (err, data) {
+    var code = qs.code || '';
+    var regUrl = CMS + '/api/server?ip=' + encodeURIComponent(selfIp) + '&name=' + encodeURIComponent(NAME) +
+      (code ? '&code=' + encodeURIComponent(code) : '');
+    jsonp(regUrl, function (err, data) {
       setHud('registered', (!err && data && data.ok) ? '是' : '否');
-      log('register ' + (err ? err.message : 'ok'));
+      setHud('bound', (data && data.terminalId) ? data.terminalId : '否');
+      log('register ' + (err ? err.message : 'ok') + (data && data.terminalId ? ' bound=' + data.terminalId : ''));
       if (cb) cb(err, data);
     });
   }

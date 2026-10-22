@@ -110,6 +110,24 @@ export class SiqianProgramMapper {
     } catch { return null; }
   }
 
+  /**
+   * 解析兼容设备应播内容对应的灵屏终端：
+   *  1) 优先用注册表设备上的显式绑定 terminalId（管理端「绑定灵屏终端」/ 注册时按 code 自动绑定）；
+   *  2) 否则按设备 IP 在 terminals 里找（原生终端心跳写回的真实 IP）。
+   * 兼容模式设备只与 CMS 通信、不入原生终端台账，因此绝大多数情况下只能靠 1) 拿到排期，
+   * 否则 programFor 返 lumalign-default → Shell 渲染深色描述卡（视觉≈黑屏）。
+   */
+  _resolveTerminal(ip) {
+    try {
+      const dev = this.ctx.siqianRegistry && this.ctx.siqianRegistry.get(ip);
+      if (dev && dev.terminalId) {
+        const t = this.ctx.store.col('terminals').byId(dev.terminalId);
+        if (t) return t;
+      }
+      return this._terminalByIp(ip);
+    } catch { return null; }
+  }
+
   /** 由设备 IP 解析当前应播 56iq 节目（含可直接渲染的内容 URL，走 CMS 媒体代理）
    *  @param cmsBase 可选，CMS 对外基址（如 http://192.168.2.216:8888）——给了就把媒体
    *  URL 补成绝对地址；播放端页面（:7788/player/siqian.html）与媒体代理（:8888）
@@ -123,7 +141,7 @@ export class SiqianProgramMapper {
    *  主字段仍为首个素材项，真 56iq CMS（无 Playlist）回退单节目渲染不受影响。 */
   programFor(ip, cmsBase) {
     const store = this.ctx.store;
-    const term = this._terminalByIp(ip);
+    const term = this._resolveTerminal(ip);
     if (!term) return { ProjectId: 'lumalign-default', ProjectName: '灵屏默认节目', Scene: { ItemName: '默认场景' } };
     let mf;
     try { mf = buildManifest(store, term); } catch { mf = { schedules: [] }; }
@@ -232,9 +250,19 @@ export class SiqianCmsServer {
       if (p === '/api/server' && req.method === 'GET') {
         const ip = u.searchParams.get('ip') || clientIpFromReq(req);
         const name = u.searchParams.get('name') || ip;
+        const code = u.searchParams.get('code') || '';
         const dev = this.registry.upsert(ip, { name, source: 'cms-register' });
+        // 兼容设备上报终端码 → 自动绑定到对应灵屏终端（即播该终端排期，避免默认节目黑屏）
+        if (code) {
+          dev.code = code;
+          try {
+            const t = this.ctx.store.col('terminals').all().find(x => x.code === code);
+            if (t) dev.terminalId = t.id;
+          } catch { /* 终端码无匹配则留空，等管理端手动绑定 */ }
+          this.registry.upsert(dev.ip, dev);
+        }
         this.ctx.bus?.emit?.('siqian:register', dev);
-        return this._json(res, u, { ok: true, ip, name });
+        return this._json(res, u, { ok: true, ip, name, code: code || null, terminalId: dev.terminalId || null });
       }
       // 2) 节目清单 / 当前播放
       const cmsBase = 'http://' + (req.headers.host || ('localhost:' + this.port));
@@ -343,7 +371,7 @@ export class SiqianCmsServer {
   _recordPlaylog(ip, dev) {
     try {
       const mapper = this.ctx.siqianMapper;
-      const term = mapper ? mapper._terminalByIp(ip) : null;
+      const term = mapper ? mapper._resolveTerminal(ip) : null;
       if (!term) return;
       // 兼容模式不走 /api/t/heartbeat（Shell 只与 CMS 通信，终端台账心跳自此断流，
       // 管理端「终端管理/健康看板」误判离线——设为 launcher 后尤其明显）。
