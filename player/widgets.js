@@ -16,6 +16,63 @@ const pad2 = n => (n < 10 ? '0' + n : '' + n);
 const objAssign = (t, s) => { if (s) { for (const k in s) { if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k]; } } return t; };
 const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] != null) p.appendChild(ns[i]); } return p; };
 
+/* ---------------- 媒体 blob 缓存（v1.3.45） ----------------
+ * 现场事故（2026-10-22 · RK312x/Android 4.4 终端 t_ac4790/192.168.2.221）：
+ *   ① Chromium 33 的 <video> 媒体栈直连网络，绕过 WebView HTTP 缓存，也绕过 APK 的
+ *      shouldInterceptRequest（MediaCache 只拦得住 <img>/XHR——同节目图片单日仅 2 次
+ *      下载，视频却被重下 1638 次）→ 每轮轮播全量重下同一视频（单日 ≈6.2GB 流量）；
+ *   ② 叠加 10-19 上传的 High profile 旧转码产物（baseline 修复 v1.3.25 之前的文件）
+ *      解不动 → 8s 看门狗反复跳过 → 下载+解码双满载 → 1GB 内存设备 WebView 渲染进程
+ *      被 LMKD 杀 → 黑屏 + 心跳/SSE 断（管理端「已断开」toast，偶发恢复「已连接」）。
+ * 修复：XHR（走正常资源栈，可被 MediaCache 拦截本地回源）拉取 → Blob URL 内存缓存，
+ *   次播起零网络请求；XHR 失败回退直连 URL（保底，旧行为）。
+ * 说明：仅覆盖 <video>；音乐走 LumaBridge 原生 MediaPlayer（另一条链路，后续同样处理）。
+ */
+const _mediaBlobs = new Map();      // key -> { url, size, at }
+const MEDIA_BLOB_CACHE_MAX = 8;     // 约 40MB 上限，1GB 内存设备无压力
+
+function _mediaBlobEvictOne() {
+  let oldestKey = null, oldestAt = Infinity;
+  _mediaBlobs.forEach((v, k) => { if (v.at < oldestAt) { oldestAt = v.at; oldestKey = k; } });
+  if (oldestKey !== null) {
+    const old = _mediaBlobs.get(oldestKey);
+    try { URL.revokeObjectURL(old.url); } catch (e) { /* ignore */ }
+    _mediaBlobs.delete(oldestKey);
+  }
+}
+
+/** 取媒体 Blob URL。命中内存缓存立即回调；未命中 XHR 拉取（缓存后回调）。
+ *  任何失败都回调 null，调用方应回退到直连 URL。key 传 mediaId（重传会换新 id，不可变）。 */
+export function mediaBlobUrl(key, url, cb) {
+  const hit = _mediaBlobs.get(key);
+  if (hit) { hit.at = Date.now(); cb(hit.url); return; }
+  if (!url) { cb(null); return; }
+  let settled = false;
+  const done = (u) => { if (!settled) { settled = true; cb(u); } };
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'arraybuffer';
+    xhr.timeout = 60000;
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status === 200 || xhr.status === 304) {
+        try {
+          const ct = (xhr.getResponseHeader('Content-Type') || 'video/mp4').split(';')[0];
+          const blob = new Blob([xhr.response], { type: ct });
+          const blobUrl = URL.createObjectURL(blob);
+          while (_mediaBlobs.size >= MEDIA_BLOB_CACHE_MAX) _mediaBlobEvictOne();
+          _mediaBlobs.set(key, { url: blobUrl, size: blob.size, at: Date.now() });
+          done(blobUrl);
+        } catch (e) { done(null); }
+      } else { done(null); }
+    };
+    xhr.onerror = () => done(null);
+    xhr.ontimeout = () => done(null);
+    xhr.send();
+  } catch (e) { done(null); }
+}
+
 /* ---------------- 图片 ---------------- */
 function renderImage(holder, item, resolver) {
   const img = document.createElement('img');
@@ -48,6 +105,8 @@ function renderImage(holder, item, resolver) {
 function renderVideo(holder, item, resolver, onEnd) {
   const v = document.createElement('video');
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
+  // ★ v1.3.45：mediaId 不可变（重传换新 id），可安全作为 blob 缓存键
+  const cacheKey = item.mediaId || url;
   // ★ Chromium 33 / Android 4.4 兼容：muted 必须在 src 之前设置，否则自动播放策略可能拦截；
   //   显式写入 muted/autoplay/playsinline(+webkit-) 属性，避免视频被系统强制全屏或无法内联自动播放。
   //   v.1.3.25：额外写 v.volume = 0 —— 现场发现 4.4 上 region 内视频每轮会重建 <video> 元素
@@ -60,7 +119,6 @@ function renderVideo(holder, item, resolver, onEnd) {
   v.setAttribute('playsinline', '');
   v.setAttribute('webkit-playsinline', '');
   v.autoplay = true; v.playsInline = true;
-  v.src = url;
   v.loop = !!item.loop && !(item.duration > 0);   // 有固定时长时不循环，播完切下一条
   v.className = 'w-video ' + (item.fit || 'cover');
   v.addEventListener('ended', () => onEnd && onEnd());
@@ -69,16 +127,31 @@ function renderVideo(holder, item, resolver, onEnd) {
   //   readyState 正常但 currentTime 恒为 0（硬解不出帧）→ 区域黑屏卡死。8s 仍未走针
   //   即视为不可播，回调 onEnd 切下一条素材；error 事件同理。
   let started = false;
-  const watchdog = setTimeout(() => {
-    if (!started && v.currentTime < 0.5) {
-      try { v.pause(); } catch (e) { /* ignore */ }
-      onEnd && onEnd();
-    }
-  }, 8000);
+  let watchdog = null;
+  let aborted = false;
+  // ★ v1.3.45：看门狗改到 src 就绪后才启动——此前 src 同步设置、看门狗 8s 从渲染时起算；
+  //   现在 XHR 拉取（含 MediaCache 本地回源）期间不设 src，若看门狗提前起算会在慢网下误杀。
+  const armWatchdog = () => {
+    if (aborted || watchdog) return;
+    watchdog = setTimeout(() => {
+      if (!started && v.currentTime < 0.5) {
+        try { v.pause(); } catch (e) { /* ignore */ }
+        onEnd && onEnd();
+      }
+    }, 8000);
+  };
   v.addEventListener('timeupdate', () => { if (v.currentTime > 0.5) started = true; });
-  v.addEventListener('error', () => { if (!started) { clearTimeout(watchdog); onEnd && onEnd(); } });
-  const p = v.play();
-  if (p && p.catch) p.catch(() => {});
+  v.addEventListener('error', () => { if (!started) { if (watchdog) clearTimeout(watchdog); onEnd && onEnd(); } });
+  // ★ v1.3.45：媒体经 XHR→Blob URL 播放（见文件头「媒体 blob 缓存」注释）：
+  //   消灭 Chromium 33 <video> 每轮重下同一文件的风暴；XHR 失败回退直连 URL（旧行为）。
+  //   无 mediaId 且无 url 时直接走 error 分支由调用方处理。
+  mediaBlobUrl(cacheKey, url, (blobUrl) => {
+    if (aborted) return;   // 期间已被切走/移除：不设 src，blob 已进缓存供次播使用
+    v.src = blobUrl || url;
+    armWatchdog();
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+  });
 
   // ★ 断点续播（v1.3.31，对齐竞品 BreakPointDBAdapter）：
   //   1. 加载完成后查询服务端保存的播放位置，有则 seek
@@ -107,7 +180,8 @@ function renderVideo(holder, item, resolver, onEnd) {
   }
 
   return () => {
-    clearTimeout(watchdog);
+    aborted = true;
+    if (watchdog) clearTimeout(watchdog);
     if (window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint && item.id) {
       const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
       try { if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration); } catch (e) { /* ignore */ }

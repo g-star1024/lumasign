@@ -253,6 +253,17 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         }
     }
 
+    /**
+     * WebView 活性探针（v1.3.45）：播放引擎心跳（15s）时调用。
+     * MainActivity 据此判断 Chromium 33 渲染进程是否已被 LMKD 静默杀死
+     * （那种状态黑屏、心跳/SSE 全断，但应用进程仍在前台，无人恢复）。
+     * 注意：@JavascriptInterface 在 JS 线程执行，Mark 动作必须极轻（仅写时间戳）。
+     */
+    @JavascriptInterface
+    fun ping() {
+        activity.markWebViewAlive()
+    }
+
     @JavascriptInterface
     fun screenOn() {
         // 优先真亮屏（系统签名/root），失败降级为恢复亮度

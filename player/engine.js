@@ -11,7 +11,7 @@
  *
  * 编辑器实时预览：父页面 postMessage({type:'luma:preview', layout}) 即可热更新。
  */
-import { renderWidget } from './widgets.js';
+import { renderWidget, mediaBlobUrl } from './widgets.js';
 
 const app = document.getElementById('app');
 const fallback = document.getElementById('fallback');
@@ -365,8 +365,15 @@ class Player {
         // muted + volume=0 双保险（v1.3.25）：4.4 上 muted 属性在部分时序下不生效，
         // 导致声音间歇漏出；volume 走播放器增益更可靠。两者都必须在 src 之前设置。
         v.muted = true; v.volume = 0; v.autoplay = true; v.loop = true; v.playsInline = true;
-        v.src = url; v.className = 'bg-media';
+        v.className = 'bg-media';
         stage.appendChild(v);
+        // v1.3.45：背景视频同样走 XHR→Blob 缓存（Chromium 33 <video> 每轮重下同一
+        //   文件的风暴，见 widgets.js「媒体 blob 缓存」注释）；失败回退直连 URL。
+        mediaBlobUrl(bg.mediaId, url, (blobUrl) => {
+          v.src = blobUrl || url;
+          const p = v.play();
+          if (p && p.catch) p.catch(() => {});
+        });
       } else {
         const img = document.createElement('img');
         img.src = url; img.className = 'bg-media';
@@ -1067,6 +1074,10 @@ class Player {
           latency: this._hbLatency || undefined,
         };
         pullNativeStatus();
+        // ★ v1.3.45：向 APK 报活（WebView 活性看门狗信号）。Chromium 33 渲染进程被
+        //   LMKD 杀后页面静默死亡（黑屏、无心跳、SSE 断），Java 侧 90s 收不到 ping
+        //   即 reload()，连续失败 restartApp()。桌面浏览器无 LumaBridge，自动跳过。
+        try { if (native('ping')) window.LumaBridge.ping(); } catch (e) { /* ignore */ }
         const info = this._nsCache;
         if (info) {
           if (info.volume != null) body.volume = info.volume;

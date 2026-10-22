@@ -20,6 +20,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.provider.Settings
 import android.view.Gravity
@@ -55,6 +56,27 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bridge: LumaBridge
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     private val uiHandler = Handler(Looper.getMainLooper())
+
+    /* ── WebView 活性看门狗（v1.3.45）──
+     * 背景：RK312x/4.4 上 Chromium 33 渲染进程被 LMKD 杀（OOM）后页面静默死亡——
+     *   黑屏、心跳/SSE 全断，而应用进程仍在前台。KioskGuardService 只防「外部应用
+     *   抢占前台」，救不了这种「自己死在里面」的状态；现场设备因此黑屏 39 分钟
+     *   无人恢复（ping 通但播放端已死）。
+     * 机制：播放引擎心跳（15s）调 LumaBridge.ping()；本看门狗 10s 检查一次，
+     *   页面曾成功加载（onPageFinished）但超过阈值未 ping → reload()；
+     *   连续多次救不回 → restartApp() 整进程重启。
+     * 安全阀：页面从未加载成功时（服务端不可达等）不介入——那属既有重连逻辑的职责，
+     *   避免 reload/重启风暴。 */
+    @Volatile private var lastWebViewAliveAt = 0L
+    private var webViewPageLoaded = false
+    private var webViewRecoveryStreak = 0
+    private var lastWebViewRecoveryAt = 0L
+    private val webViewLivenessCheck = object : Runnable {
+        override fun run() {
+            try { checkWebViewLiveness() } catch (_: Exception) { /* 看门狗自身异常绝不致命 */ }
+            uiHandler.postDelayed(this, WEBVIEW_LIVENESS_INTERVAL_MS)
+        }
+    }
 
     // 加载 / 错误覆盖层（服务端不可达时显示「正在重连」而非黑屏死寂）
     // v1.3.15：容器改为 View（内含文字 + 三个救援按钮），文字提亮，杜绝"黑屏没字"不可自救
@@ -129,6 +151,15 @@ class MainActivity : AppCompatActivity() {
         const val FAIL_STREAK_LIMIT = 4
         /** 手动退出后的静默期：30s 内不拉起，到点由 Alarm 重新拉起电子屏 */
         const val EXIT_GRACE_MS = 30_000L
+        /* ── WebView 活性看门狗（v1.3.45，详见类内字段注释）── */
+        /** 页面加载成功后超过该时长未收到 JS ping → 判渲染进程已死 */
+        const val WEBVIEW_ALIVE_TIMEOUT_MS = 90_000L
+        /** 看门狗检查间隔 */
+        const val WEBVIEW_LIVENESS_INTERVAL_MS = 10_000L
+        /** 两次恢复动作（reload/restart）之间的最小间隔，防恢复风暴 */
+        const val WEBVIEW_RECOVERY_COOLDOWN_MS = 120_000L
+        /** 连续恢复失败达该次数 → 放弃 reload 升级为整进程重启 */
+        const val WEBVIEW_MAX_RECOVERY_STREAK = 3
         @JvmField var crashCount: Int = 0
     }
 
@@ -237,6 +268,9 @@ class MainActivity : AppCompatActivity() {
             //   每次 onCreate 都注册一次是幂等的（同 requestCode + FLAG_UPDATE_CURRENT 覆盖旧 Alarm），
             //   同时覆盖「安装后从未重启过」的场景（那种情况下 BootReceiver 不会触发）。
             WatchdogReceiver.schedule(this)
+            // ── WebView 活性看门狗（v1.3.45）：渲染进程静默死亡（黑屏+心跳断）时自动 reload，连续失败重启进程 ──
+            lastWebViewAliveAt = SystemClock.elapsedRealtime()
+            uiHandler.postDelayed(webViewLivenessCheck, WEBVIEW_LIVENESS_INTERVAL_MS)
             // 竞品「液晶互动」式默认桌面引导：没被设为默认桌面时主动提示用户设置，
             // 这是保证 LumaSign 持续驻守屏幕、不会被系统桌面覆盖的最有效手段。
             maybePromptSetDefaultHome()
@@ -446,12 +480,19 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (loadFailed) showOverlay("灵屏 LumaSign\n正在重新连接服务端…")
+                // 页面开始导航：重置活性计时（给页面加载+引擎启动留出 grace），
+                // 加载成功前看门狗待命（webViewPageLoaded=false），防服务端不可达时的恢复风暴
+                lastWebViewAliveAt = SystemClock.elapsedRealtime()
+                webViewPageLoaded = false
             }
             override fun onPageFinished(view: WebView?, url: String?) {
                 loadFailed = false
                 retryRunnable?.let { uiHandler.removeCallbacks(it) }
                 hideOverlay()
                 updateStatusOverlay("已连接")
+                // 页面加载成功：此后开始接受活性监管（引擎心跳会持续 ping）
+                webViewPageLoaded = true
+                lastWebViewAliveAt = SystemClock.elapsedRealtime()
             }
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) onMainFrameError(error?.description?.toString())
@@ -464,6 +505,43 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) { /* 进度可在 UI 体现，此处保持轻量 */ }
         }
+    }
+
+    /** LumaBridge.ping() 入口（JS 线程调用）：记录播放引擎最近活跃时刻 */
+    fun markWebViewAlive() {
+        lastWebViewAliveAt = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * WebView 活性检查（v1.3.45）：页面曾成功加载但 JS 引擎超过
+     * [WEBVIEW_ALIVE_TIMEOUT_MS] 未报活 → 判渲染进程已死（黑屏死寂态）。
+     * 恢复动作带 cooldown 防风暴；连续 [WEBVIEW_MAX_RECOVERY_STREAK] 次救不回
+     * → 升级为 restartApp() 整进程重启。每次恢复都落崩溃日志，供管理端出证。
+     */
+    private fun checkWebViewLiveness() {
+        if (!webViewPageLoaded) return          // 页面未加载成功：交给既有重连逻辑，不介入
+        val aliveAt = lastWebViewAliveAt
+        if (aliveAt <= 0L) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - aliveAt < WEBVIEW_ALIVE_TIMEOUT_MS) {
+            webViewRecoveryStreak = 0           // 恢复健康：清零连败计数
+            return
+        }
+        if (now - lastWebViewRecoveryAt < WEBVIEW_RECOVERY_COOLDOWN_MS) return
+        lastWebViewRecoveryAt = now
+        webViewRecoveryStreak++
+        val deadMs = now - aliveAt
+        try {
+            writeCrashLog(RuntimeException("webview liveness: dead ${deadMs}ms, streak=$webViewRecoveryStreak"))
+        } catch (_: Exception) { /* 日志失败不阻断恢复 */ }
+        val recovered = if (webViewRecoveryStreak >= WEBVIEW_MAX_RECOVERY_STREAK) {
+            Log.w(TAG, "WebView 活性看门狗：reload x$webViewRecoveryStreak 未恢复，重启应用")
+            try { bridge.restartApp(); true } catch (_: Exception) { recreate(); true }
+        } else {
+            Log.w(TAG, "WebView 活性看门狗：失联 ${deadMs}ms，reload（第 $webViewRecoveryStreak 次）")
+            try { webView.reload(); true } catch (_: Exception) { recreate(); true }
+        }
+        if (recovered) lastWebViewAliveAt = SystemClock.elapsedRealtime()   // 给恢复动作留 grace
     }
 
     private fun onMainFrameError(desc: String?) {
@@ -1141,6 +1219,7 @@ class MainActivity : AppCompatActivity() {
         unregisterConnectivity()
         unregisterSystemReceivers()
         retryRunnable?.let { uiHandler.removeCallbacks(it) }
+        uiHandler.removeCallbacks(webViewLivenessCheck)
         webView.destroy()
         super.onDestroy()
     }
