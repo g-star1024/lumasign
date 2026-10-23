@@ -971,29 +971,27 @@ function _unsupported_iterable_to_array(o, minLen) {
         }
         return p;
     };
-    var _mediaBlobs = /* @__PURE__ */ new Map();
+    var _mediaBlobs = {};
+    var _mediaBlobOrder = [];
     var MEDIA_BLOB_CACHE_MAX = 8;
+    function _mediaBlobHas(k) {
+        return Object.prototype.hasOwnProperty.call(_mediaBlobs, k);
+    }
     function _mediaBlobEvictOne() {
-        var oldestKey = null, oldestAt = Infinity;
-        _mediaBlobs.forEach(function(v, k) {
-            if (v.at < oldestAt) {
-                oldestAt = v.at;
-                oldestKey = k;
-            }
-        });
-        if (oldestKey !== null) {
-            var old = _mediaBlobs.get(oldestKey);
+        if (_mediaBlobOrder.length === 0) return;
+        var oldestKey = _mediaBlobOrder.shift();
+        if (_mediaBlobHas(oldestKey)) {
+            var old = _mediaBlobs[oldestKey];
             try {
                 URL.revokeObjectURL(old.url);
             } catch (e) {}
-            _mediaBlobs.delete(oldestKey);
+            delete _mediaBlobs[oldestKey];
         }
     }
     function mediaBlobUrl(key, url, cb) {
-        var hit = _mediaBlobs.get(key);
-        if (hit) {
-            hit.at = Date.now();
-            cb(hit.url);
+        if (_mediaBlobHas(key)) {
+            _mediaBlobs[key].at = Date.now();
+            cb(_mediaBlobs[key].url);
             return;
         }
         if (!url) {
@@ -1017,18 +1015,29 @@ function _unsupported_iterable_to_array(o, minLen) {
                 if (xhr.status === 200 || xhr.status === 304) {
                     try {
                         var ct = (xhr.getResponseHeader("Content-Type") || "video/mp4").split(";")[0];
+                        var body = xhr.response;
+                        if (typeof body === "string") {
+                            var arr = new Uint8Array(body.length);
+                            for(var i = 0; i < body.length; i++)arr[i] = body.charCodeAt(i) & 255;
+                            body = arr;
+                        } else if (body && !body.byteLength && typeof body.length === "number") {
+                            var arr2 = new Uint8Array(body.length);
+                            for(var j = 0; j < body.length; j++)arr2[j] = body[j];
+                            body = arr2;
+                        }
                         var blob = new Blob([
-                            xhr.response
+                            body
                         ], {
                             type: ct
                         });
                         var blobUrl = URL.createObjectURL(blob);
-                        while(_mediaBlobs.size >= MEDIA_BLOB_CACHE_MAX)_mediaBlobEvictOne();
-                        _mediaBlobs.set(key, {
+                        while(_mediaBlobOrder.length >= MEDIA_BLOB_CACHE_MAX)_mediaBlobEvictOne();
+                        _mediaBlobs[key] = {
                             url: blobUrl,
                             size: blob.size,
                             at: Date.now()
-                        });
+                        };
+                        _mediaBlobOrder.push(key);
                         done(blobUrl);
                     } catch (e) {
                         done(null);
@@ -3419,10 +3428,10 @@ function _unsupported_iterable_to_array(o, minLen) {
                 key: "dispatchHotspot",
                 value: function dispatchHotspot(hs) {
                     var cooldown = hs.cooldownMs || 800;
-                    if (this._hsCooldownMap == null) this._hsCooldownMap = /* @__PURE__ */ new Map();
-                    var lastClick = this._hsCooldownMap.get(hs.id) || 0;
+                    if (this._hsCooldownMap == null) this._hsCooldownMap = {};
+                    var lastClick = this._hsCooldownMap[hs.id] || 0;
                     if (Date.now() - lastClick < cooldown) return;
-                    this._hsCooldownMap.set(hs.id, Date.now());
+                    this._hsCooldownMap[hs.id] = Date.now();
                     this.spawnRipple(hs);
                     this.trackInteraction("hotspot_click", hs.id);
                     var a = hs.action || {

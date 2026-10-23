@@ -489,7 +489,7 @@ export function registerAdminApi(router, ctx) {
               const need = await needsTranscode(dest);
               if (need.needed && need.profiles?.length) {
                 const prof = need.profiles[0];
-                const outRel = hash + '_h264.mp4';          // 与原始文件同目录：xx/<hash>_h264.mp4
+                const outRel = hash + '_h264.mp4';          // 产物固定落 media/ 顶层（非原始文件子目录）
                 const outPath = path.join(paths.media, outRel);
                 // 转码异步进行；完成回调把转码产物地址回填 media，预览即优先使用
                 ctx.transcodeQueue.enqueue({

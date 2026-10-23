@@ -159,6 +159,15 @@ export function registerTerminalApi(router, ctx) {
     });
   });
 
+  /* ---------------- 引擎存活打点（v1.3.46） ----------------
+   * 播放引擎用 `new Image().src='/api/t/ping?stage=...'` 打点（加载/退出等关键阶段），
+   * 此前无此路由 → 单日 4000+ 个 404 噪音日志。Image 请求带不了鉴权头，故不做终端校验，
+   * 只回 204（No Content）不写日志；stage 仅供抓包诊断。 */
+  router.get('/api/t/ping', (req, res) => {
+    res.writeHead(204, { 'Cache-Control': 'no-store' });
+    res.end();
+  });
+
   /* ---------------- 清单 ---------------- */
   router.get('/api/t/manifest', async (req, res, p, url) => {
     const t = authTerminal(req, url);

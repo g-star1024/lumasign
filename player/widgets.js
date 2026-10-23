@@ -28,24 +28,35 @@ const appendAll = (p, ns) => { for (let i = 0; i < ns.length; i++) { if (ns[i] !
  *   次播起零网络请求；XHR 失败回退直连 URL（保底，旧行为）。
  * 说明：仅覆盖 <video>；音乐走 LumaBridge 原生 MediaPlayer（另一条链路，后续同样处理）。
  */
-const _mediaBlobs = new Map();      // key -> { url, size, at }
-const MEDIA_BLOB_CACHE_MAX = 8;     // 约 40MB 上限，1GB 内存设备无压力
+/* ★★★ v1.3.46 教训：此处初版（v1.3.45）用 `new Map()` 做缓存——Chromium 33
+ * （Android 4.4 系统 WebView = Chrome 33）**没有 Map**（Chrome 38 才引入），模块级
+ * `new Map()` 直接抛 ReferenceError → 整个 legacy 引擎加载即死（零心跳零打点全黑屏，
+ * 现场表现为「发了新版本反而彻底不播」）。凡 4.4 兼容代码禁用 Map/Set/let/const/箭头/
+ * Promise/Symbol.iterator——统一 ES5 对象 + 数组实现。 */
+const _mediaBlobs = {};        // key -> { url, size, at }（ES5 对象代替 Map）
+const _mediaBlobOrder = [];    // key 插入序（近似 LRU：越靠前越旧）
+const MEDIA_BLOB_CACHE_MAX = 8; // 约 40MB 上限，1GB 内存设备无压力
+
+function _mediaBlobHas(k) { return Object.prototype.hasOwnProperty.call(_mediaBlobs, k); }
 
 function _mediaBlobEvictOne() {
-  let oldestKey = null, oldestAt = Infinity;
-  _mediaBlobs.forEach((v, k) => { if (v.at < oldestAt) { oldestAt = v.at; oldestKey = k; } });
-  if (oldestKey !== null) {
-    const old = _mediaBlobs.get(oldestKey);
+  if (_mediaBlobOrder.length === 0) return;
+  const oldestKey = _mediaBlobOrder.shift();
+  if (_mediaBlobHas(oldestKey)) {
+    const old = _mediaBlobs[oldestKey];
     try { URL.revokeObjectURL(old.url); } catch (e) { /* ignore */ }
-    _mediaBlobs.delete(oldestKey);
+    delete _mediaBlobs[oldestKey];
   }
 }
 
 /** 取媒体 Blob URL。命中内存缓存立即回调；未命中 XHR 拉取（缓存后回调）。
  *  任何失败都回调 null，调用方应回退到直连 URL。key 传 mediaId（重传会换新 id，不可变）。 */
 export function mediaBlobUrl(key, url, cb) {
-  const hit = _mediaBlobs.get(key);
-  if (hit) { hit.at = Date.now(); cb(hit.url); return; }
+  if (_mediaBlobHas(key)) {
+    _mediaBlobs[key].at = Date.now();
+    cb(_mediaBlobs[key].url);
+    return;
+  }
   if (!url) { cb(null); return; }
   let settled = false;
   const done = (u) => { if (!settled) { settled = true; cb(u); } };
@@ -59,10 +70,22 @@ export function mediaBlobUrl(key, url, cb) {
       if (xhr.status === 200 || xhr.status === 304) {
         try {
           const ct = (xhr.getResponseHeader('Content-Type') || 'video/mp4').split(';')[0];
-          const blob = new Blob([xhr.response], { type: ct });
+          // ★ Chromium 33 兜底：老引擎可能传回字符串 response，统一转 Uint8Array 再构造 Blob
+          let body = xhr.response;
+          if (typeof body === 'string') {
+            const arr = new Uint8Array(body.length);
+            for (let i = 0; i < body.length; i++) arr[i] = body.charCodeAt(i) & 0xff;
+            body = arr;
+          } else if (body && !body.byteLength && typeof body.length === 'number') {
+            const arr2 = new Uint8Array(body.length);
+            for (let j = 0; j < body.length; j++) arr2[j] = body[j];
+            body = arr2;
+          }
+          const blob = new Blob([body], { type: ct });
           const blobUrl = URL.createObjectURL(blob);
-          while (_mediaBlobs.size >= MEDIA_BLOB_CACHE_MAX) _mediaBlobEvictOne();
-          _mediaBlobs.set(key, { url: blobUrl, size: blob.size, at: Date.now() });
+          while (_mediaBlobOrder.length >= MEDIA_BLOB_CACHE_MAX) _mediaBlobEvictOne();
+          _mediaBlobs[key] = { url: blobUrl, size: blob.size, at: Date.now() };
+          _mediaBlobOrder.push(key);
           done(blobUrl);
         } catch (e) { done(null); }
       } else { done(null); }

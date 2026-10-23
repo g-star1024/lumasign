@@ -675,10 +675,11 @@ class Player {
   dispatchHotspot(hs) {
     // P1-3.4 触摸防误触：冷却期内忽略重复点击（默认 0.8s，可按热区配置）
     const cooldown = (hs.cooldownMs || 800);
-    if (this._hsCooldownMap == null) this._hsCooldownMap = new Map();
-    const lastClick = this._hsCooldownMap.get(hs.id) || 0;
+    // ★ Chromium 33 无 Map（v1.3.46 教训，同 widgets.js）：改用 ES5 对象
+    if (this._hsCooldownMap == null) this._hsCooldownMap = {};
+    const lastClick = this._hsCooldownMap[hs.id] || 0;
     if (Date.now() - lastClick < cooldown) return;
-    this._hsCooldownMap.set(hs.id, Date.now());
+    this._hsCooldownMap[hs.id] = Date.now();
 
     // 涟漪动效：在点击位置生成涟漪元素
     this.spawnRipple(hs);
