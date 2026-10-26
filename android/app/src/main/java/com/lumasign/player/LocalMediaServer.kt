@@ -69,76 +69,89 @@ object LocalMediaServer {
 
     private fun handle(sock: Socket) {
         try {
-            sock.soTimeout = 8000
+            sock.soTimeout = 20000
             val input = BufferedReader(InputStreamReader(sock.getInputStream(), "UTF-8"))
-            val requestLine = input.readLine() ?: return
-            val headers = HashMap<String, String>()
-            while (true) {
-                val line = input.readLine() ?: break
-                if (line.isEmpty()) break
-                val idx = line.indexOf(':')
-                if (idx > 0) headers[lower(line.substring(0, idx).trim())] = line.substring(idx + 1).trim()
-            }
             val out = BufferedOutputStream(sock.getOutputStream())
-            val parts = requestLine.split(" ")
-            if (parts.size < 2 || !parts[0].equals("GET", true)) {
-                respond(out, 405, "text/plain", "method not allowed".toByteArray(), null); return
-            }
-            val id = parts[1].substringAfter("/media/", "").substringBefore('?')
-            if (id.isEmpty()) { respond(out, 404, "text/plain", "not found".toByteArray(), null); return }
-            val f = MediaCache.localFile(id)
-            if (f == null) { respond(out, 404, "text/plain", "not cached".toByteArray(), null); return }
+            // ★ v1.3.51：同一连接上循环处理多个请求（keep-alive）——
+            //   媒体栈（ffmpeg/RockFFPlayer）会在一个连接上连发多次 Range 请求，
+            //   服务端若每次都关连接，它下一次请求就「open fail」。
+            while (true) {
+                val requestLine = input.readLine() ?: break      // 客户端断开
+                if (requestLine.isBlank()) continue
+                val headers = HashMap<String, String>()
+                while (true) {
+                    val line = input.readLine() ?: break
+                    if (line.isEmpty()) break
+                    val idx = line.indexOf(':')
+                    if (idx > 0) headers[lower(line.substring(0, idx).trim())] = line.substring(idx + 1).trim()
+                }
+                val parts = requestLine.split(" ")
+                val method = parts.getOrNull(0) ?: "GET"
+                val path = parts.getOrNull(1) ?: "/"
+                Log.i(TAG, "req $method $path range=" + (headers["range"] ?: "-"))
+                val isHead = method.equals("HEAD", true)
+                if (!isHead && !method.equals("GET", true)) {
+                    respond(out, 405, "text/plain", "method not allowed".toByteArray(), null, false)
+                    break
+                }
+                val id = path.substringAfter("/media/", "").substringBefore('?')
+                if (id.isEmpty()) {
+                    respond(out, 404, "text/plain", "not found".toByteArray(), null, false); break
+                }
+                val f = MediaCache.localFile(id)
+                if (f == null) {
+                    respond(out, 404, "text/plain", "not cached".toByteArray(), null, false); break
+                }
 
-            val total = f.length()
-            val mime = MediaCache.sniffMime(f)
-            var start = 0L
-            var end = total - 1
-            var code = 200
-            val range = headers["range"]
-            if (range != null && range.isNotEmpty()) {
-                val m = Regex("bytes=(\\d*)-(\\d*)").find(range)
-                if (m != null) {
-                    val g1 = m.groupValues[1]
-                    val g2 = m.groupValues[2]
-                    if (g1.isNotEmpty()) start = g1.toLong()
-                    if (g2.isNotEmpty()) end = minOf(g2.toLong(), total - 1)
-                    if (start >= total) {
-                        // 注意：这里刻意用字符串拼接而非模板——把 "bytes " 与星号斜杠连写、
-                        // 后接 $ 模板的写法，会让 Kotlin 词法解析在 CI 上炸出 235 条
-                        // 「Expecting a top level declaration」（v1.3.50 首轮构建踩坑，已修）。
-                        respond(out, 416, "text/plain", "range not satisfiable".toByteArray(),
-                            "Content-Range: bytes " + "*" + "/" + total.toString())
-                        return
-                    }
-                    code = 206
-                }
-            }
-            val len = (end - start + 1).coerceAtLeast(0L)
-            val head = StringBuilder()
-            head.append("HTTP/1.1 ").append(code).append(' ').append(if (code == 206) "Partial Content" else "OK").append("\r\n")
-            head.append("Content-Type: ").append(mime).append("\r\n")
-            head.append("Content-Length: ").append(len).append("\r\n")
-            head.append("Accept-Ranges: bytes\r\n")
-            if (code == 206) head.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(total).append("\r\n")
-            head.append("Cache-Control: no-store\r\n")
-            head.append("Connection: close\r\n\r\n")
-            out.write(head.toString().toByteArray(Charsets.UTF_8))
-            out.flush()
-            if (len > 0) {
-                RandomAccessFile(f, "r").use { raf ->
-                    raf.seek(start)
-                    val buf = ByteArray(64 * 1024)
-                    var remaining = len
-                    while (remaining > 0) {
-                        val want = minOf(buf.size.toLong(), remaining).toInt()
-                        val n = raf.read(buf, 0, want)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        remaining -= n
+                val total = f.length()
+                val mime = MediaCache.sniffMime(f)
+                var start = 0L
+                var end = total - 1
+                var code = 200
+                val range = headers["range"]
+                if (range != null && range.isNotEmpty()) {
+                    val m = Regex("bytes=(\\d*)-(\\d*)").find(range)
+                    if (m != null) {
+                        val g1 = m.groupValues[1]
+                        val g2 = m.groupValues[2]
+                        if (g1.isNotEmpty()) start = g1.toLong()
+                        if (g2.isNotEmpty()) end = minOf(g2.toLong(), total - 1)
+                        if (start >= total) {
+                            respond(out, 416, "text/plain", "range not satisfiable".toByteArray(),
+                                "Content-Range: bytes " + "*" + "/" + total.toString(), false)
+                            break
+                        }
+                        code = 206
                     }
                 }
+                val len = (end - start + 1).coerceAtLeast(0L)
+                val head = StringBuilder()
+                head.append("HTTP/1.1 ").append(code).append(' ').append(if (code == 206) "Partial Content" else "OK").append("\r\n")
+                head.append("Content-Type: ").append(mime).append("\r\n")
+                head.append("Content-Length: ").append(len).append("\r\n")
+                head.append("Accept-Ranges: bytes\r\n")
+                if (code == 206) head.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(total).append("\r\n")
+                head.append("Cache-Control: no-store\r\n")
+                head.append("Connection: keep-alive\r\n\r\n")
+                out.write(head.toString().toByteArray(Charsets.UTF_8))
+                out.flush()
+                if (isHead) continue                      // HEAD：只回头，不发 body，连接保留
+                if (len > 0) {
+                    RandomAccessFile(f, "r").use { raf ->
+                        raf.seek(start)
+                        val buf = ByteArray(64 * 1024)
+                        var remaining = len
+                        while (remaining > 0) {
+                            val want = minOf(buf.size.toLong(), remaining).toInt()
+                            val n = raf.read(buf, 0, want)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            remaining -= n
+                        }
+                    }
+                }
+                out.flush()
             }
-            out.flush()
         } catch (_: Exception) {
             // 回源失败一律忽略：调用方会回退网络直连
         } finally {
@@ -146,14 +159,14 @@ object LocalMediaServer {
         }
     }
 
-    private fun respond(out: BufferedOutputStream, code: Int, mime: String, body: ByteArray, extra: String?) {
+    private fun respond(out: BufferedOutputStream, code: Int, mime: String, body: ByteArray, extra: String?, keepAlive: Boolean) {
         try {
             val head = StringBuilder()
             head.append("HTTP/1.1 ").append(code).append(" X\r\n")
             head.append("Content-Type: ").append(mime).append("\r\n")
             head.append("Content-Length: ").append(body.size).append("\r\n")
             if (extra != null) head.append(extra).append("\r\n")
-            head.append("Connection: close\r\n\r\n")
+            head.append("Connection: ").append(if (keepAlive) "keep-alive" else "close").append("\r\n\r\n")
             out.write(head.toString().toByteArray(Charsets.UTF_8))
             out.write(body)
             out.flush()

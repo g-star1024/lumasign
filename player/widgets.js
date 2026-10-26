@@ -229,6 +229,17 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
     }
     // ★ v1.3.49：本地 file:// 播放失败（文件被系统清掉/格式不认）→ 回退网络直连
     if (v._lumaLocal && !started) {
+      // ★ v1.3.51：媒体栈（ffmpeg/RockFFPlayer）首次 open 本地源常失败一次（logcat 可见
+      //   「open fail」后重试才 read_header ok），直接回退网络等于白费本地缓存。
+      //   故先原地重试一次本地源，仍失败才回退网络直连。
+      if (!v._lumaLocalRetried) {
+        v._lumaLocalRetried = true;
+        try { v.src = src; } catch (e) { /* ignore */ }
+        if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+        armWatchdog();
+        try { v.play(); } catch (e) { /* ignore */ }
+        return;
+      }
       v._lumaLocal = false;
       try { v.src = url; } catch (e) { /* ignore */ }
       if (watchdog) { clearTimeout(watchdog); watchdog = null; }

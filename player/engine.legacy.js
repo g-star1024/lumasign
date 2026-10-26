@@ -1185,6 +1185,21 @@ function _unsupported_iterable_to_array(o, minLen) {
                 return;
             }
             if (v._lumaLocal && !started) {
+                if (!v._lumaLocalRetried) {
+                    v._lumaLocalRetried = true;
+                    try {
+                        v.src = src;
+                    } catch (e) {}
+                    if (watchdog) {
+                        clearTimeout(watchdog);
+                        watchdog = null;
+                    }
+                    armWatchdog();
+                    try {
+                        v.play();
+                    } catch (e) {}
+                    return;
+                }
                 v._lumaLocal = false;
                 try {
                     v.src = url;
