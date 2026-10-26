@@ -867,6 +867,23 @@ class Player {
           const warm = it => { if (it && it.mediaId && (!it.widget || it.widget === 'image')) { const im = new Image(); im.src = this.resolver(it.mediaId); } };
           warm(item); warm(items[(idx + 1) % items.length]);
         } catch (e) { /* 预热失败不影响播放 */ }
+        // ★ v1.3.49：把本节目所有素材预下载到屏幕端本地（原生后台线程，不阻塞渲染）——
+        //   视频媒体栈绕过 WebView 拦截，只有先把文件落到本机、再用 file:// 播，才真正做到
+        //   「下载到本地播放」且首帧不黑屏。节目内容不变时只触发一次（预下载幂等）。
+        try {
+          if (window.LumaBridge && typeof window.LumaBridge.prefetchMedia === 'function') {
+            const warmKey = items.map(i => (i && i.id) || '').join('|');
+            if (warmKey && this._prefetchKey !== warmKey) {
+              this._prefetchKey = warmKey;
+              for (const it of items) {
+                if (it && it.mediaId) {
+                  const u = this.resolver(it.mediaId);
+                  if (u) window.LumaBridge.prefetchMedia(u, it.mediaId);
+                }
+              }
+            }
+          }
+        } catch (e) { /* 预下载失败不影响播放 */ }
 
         const holder = document.createElement('div');
         holder.className = 'widget-holder';

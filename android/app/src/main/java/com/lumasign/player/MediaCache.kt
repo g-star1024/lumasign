@@ -51,11 +51,35 @@ object MediaCache {
 
     private fun safeKey(id: String): String = id.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
+    /**
+     * 缓存文件扩展名候选（v1.3.49）：`<video src="file://…">` 由平台媒体栈读取时按
+     * **扩展名**判定 MIME，扩展名缺失会导致「无法播放该资源」。故缓存落盘时按嗅探出的
+     * mime 补上真实扩展名（mp4/webm/png/jpg/gif/webp）。
+     */
+    private val EXTS = arrayOf("mp4", "webm", "png", "jpg", "gif", "webp")
+
+    /** mime → 扩展名（供缓存文件命名） */
+    private fun extForMime(mime: String): String? = when (mime) {
+        "video/mp4" -> "mp4"
+        "video/webm" -> "webm"
+        "image/png" -> "png"
+        "image/jpeg" -> "jpg"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        else -> null
+    }
+
     /** 已完整落地的本地文件（不存在或半途 .tmp 都返回 null） */
     fun localFile(id: String): File? {
         val d = dir ?: return null
-        val f = File(d, safeKey(id))
-        return if (f.isFile && f.length() > 0) f else null
+        val key = safeKey(id)
+        // v1.3.49：优先带扩展名的文件（file:// 播放需要），回退旧的无扩展名文件
+        for (ext in EXTS) {
+            val f = File(d, "$key.$ext")
+            if (f.isFile && f.length() > 0) return f
+        }
+        val legacy = File(d, key)
+        return if (legacy.isFile && legacy.length() > 0) legacy else null
     }
 
     /**
@@ -115,8 +139,14 @@ object MediaCache {
                 }
             }
             if (tmp.length() <= 0L) { tmp.delete(); return }
-            val fin = File(d, key)
+            // v1.3.49：按嗅探出的 mime 补真实扩展名（file:// 播放时媒体栈靠扩展名判 MIME）
+            val mime = sniffMime(tmp)
+            val ext = extForMime(mime)
+            val fin = File(d, if (ext != null) "$key.$ext" else key)
             if (fin.exists()) fin.delete()
+            // 清理旧的无扩展名同名文件（v1.3.48 及更早落盘格式），避免双份占空间
+            val legacy = File(d, key)
+            if (legacy.exists() && legacy != fin) legacy.delete()
             if (!tmp.renameTo(fin)) { tmp.delete(); return }
             Log.i(TAG, "cached $key (${fin.length()}B)")
             evictIfNeeded(d)

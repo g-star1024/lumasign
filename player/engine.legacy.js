@@ -1096,6 +1096,19 @@ function _unsupported_iterable_to_array(o, minLen) {
         var v = document.createElement("video");
         var url = item.mediaId ? resolver2(item.mediaId) : item.url || "";
         var cacheKey = item.mediaId || url;
+        var src = url;
+        try {
+            if (window.LumaBridge && typeof window.LumaBridge.localMediaUrl === "function") {
+                var mid = item.mediaId || String(url || "").split("?")[0].split("/").pop() || "";
+                if (mid) {
+                    var local = window.LumaBridge.localMediaUrl(mid);
+                    if (local) {
+                        src = local;
+                        v._lumaLocal = true;
+                    }
+                }
+            }
+        } catch (e) {}
         v.muted = true;
         v.defaultMuted = true;
         v.setAttribute("muted", "");
@@ -1161,6 +1174,21 @@ function _unsupported_iterable_to_array(o, minLen) {
                 } catch (e) {}
                 return;
             }
+            if (v._lumaLocal && !started) {
+                v._lumaLocal = false;
+                try {
+                    v.src = url;
+                } catch (e) {}
+                if (watchdog) {
+                    clearTimeout(watchdog);
+                    watchdog = null;
+                }
+                armWatchdog();
+                try {
+                    v.play();
+                } catch (e) {}
+                return;
+            }
             if (!started) {
                 if (watchdog) clearTimeout(watchdog);
                 onEnd && onEnd();
@@ -1168,7 +1196,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         });
         if (!blobMediaUsable()) {
             try {
-                v.src = url;
+                v.src = src;
             } catch (e) {}
             armWatchdog();
             var p0 = v.play();
@@ -1177,7 +1205,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             mediaBlobUrl(cacheKey, url, function(blobUrl) {
                 if (aborted) return;
                 var useBlob = !!blobUrl && !_blobMediaBroken;
-                v.src = useBlob ? blobUrl : url;
+                v.src = useBlob ? blobUrl : src;
                 v._lumaBlob = useBlob;
                 armWatchdog();
                 var p = v.play();
@@ -3812,7 +3840,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 switch(_state.label){
                                     case 0:
                                         _loop = function() {
-                                            var items, item, warm, holder, ended, onEnd, stop, tName, tDur, prev, single, ms, startedAt, endedAt, tName2;
+                                            var items, item, warm, warmKey, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, it, u, holder, ended, onEnd, stop, tName, tDur, prev, single, ms, startedAt, endedAt, tName2;
                                             return _ts_generator(this, function(_state) {
                                                 switch(_state.label){
                                                     case 0:
@@ -3846,6 +3874,39 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             };
                                                             warm(item);
                                                             warm(items[(idx + 1) % items.length]);
+                                                        } catch (e) {}
+                                                        try {
+                                                            if (window.LumaBridge && typeof window.LumaBridge.prefetchMedia === "function") {
+                                                                warmKey = items.map(function(i) {
+                                                                    return i && i.id || "";
+                                                                }).join("|");
+                                                                if (warmKey && _this._prefetchKey !== warmKey) {
+                                                                    _this._prefetchKey = warmKey;
+                                                                    _iteratorNormalCompletion = true, _didIteratorError = false, _iteratorError = undefined;
+                                                                    try {
+                                                                        for(_iterator = items[Symbol.iterator](); !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true){
+                                                                            it = _step.value;
+                                                                            if (it && it.mediaId) {
+                                                                                u = _this.resolver(it.mediaId);
+                                                                                if (u) window.LumaBridge.prefetchMedia(u, it.mediaId);
+                                                                            }
+                                                                        }
+                                                                    } catch (err) {
+                                                                        _didIteratorError = true;
+                                                                        _iteratorError = err;
+                                                                    } finally{
+                                                                        try {
+                                                                            if (!_iteratorNormalCompletion && _iterator.return != null) {
+                                                                                _iterator.return();
+                                                                            }
+                                                                        } finally{
+                                                                            if (_didIteratorError) {
+                                                                                throw _iteratorError;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         } catch (e) {}
                                                         holder = document.createElement("div");
                                                         holder.className = "widget-holder";

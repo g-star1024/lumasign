@@ -264,6 +264,37 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
         activity.markWebViewAlive()
     }
 
+    /**
+     * 屏幕端本地缓存素材的可播路径（file://）——v1.3.49。
+     *
+     * 背景（2026-10-26 真机实测）：Android 4.4 上 `<video>` 的媒体请求由**平台媒体栈**发起
+     *   （access log 里 UA=AppleCoreMedia/1.0.0.7B367 + RockFFPlayer），**绕过**
+     *   WebViewClient.shouldInterceptRequest → MediaCache 的「本地回源」对视频完全不生效，
+     *   表现为每轮轮播都远程重下同一文件（首帧前长时间黑屏 + 连接池抖动 → SSE 闪断）。
+     *   而 `<img>` 走 WebView 资源加载器，拦截生效、命中本地缓存 → 纯图片轮播不黑屏。
+     *   这里把已缓存文件直接交给 `<video>`，让媒体栈读本机文件：零网络、零等待、无黑屏。
+     *
+     * @return file:// 绝对路径；未缓存或异常返回 null（调用方回退网络 URL）。
+     */
+    @JavascriptInterface
+    fun localMediaUrl(mediaId: String): String? {
+        return try {
+            if (mediaId.isBlank()) null
+            else MediaCache.localFile(mediaId)?.let { "file://" + it.absolutePath }
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * 后台预下载素材到本机（供下一轮轮播本地播，消除首播黑屏）——v1.3.49。
+     * 幂等：已缓存/正在下载直接返回；网络失败静默忽略（绝不影响播放）。
+     */
+    @JavascriptInterface
+    fun prefetchMedia(url: String, mediaId: String) {
+        try {
+            if (url.isNotBlank() && mediaId.isNotBlank()) MediaCache.prefetch(url, mediaId)
+        } catch (_: Exception) { }
+    }
+
     @JavascriptInterface
     fun screenOn() {
         // 优先真亮屏（系统签名/root），失败降级为恢复亮度

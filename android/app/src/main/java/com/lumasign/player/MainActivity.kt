@@ -102,6 +102,8 @@ class MainActivity : AppCompatActivity() {
     private var kioskAttempted = false
     // 默认桌面引导弹窗：同进程只提示一次，避免反复打扰
     private var homePromptShown = false
+    // ★ v1.3.49：默认桌面引导弹窗句柄 + 自动隐藏时长（现场无鼠标/触摸，30s 后自动收起）
+    private var homePromptDialog: AlertDialog? = null
 
     // 网络连通性监听
     private val connectivityManager by lazy {
@@ -159,6 +161,8 @@ class MainActivity : AppCompatActivity() {
         const val FAIL_STREAK_LIMIT = 2
         /** 手动退出后的静默期：30s 内不拉起，到点由 Alarm 重新拉起电子屏 */
         const val EXIT_GRACE_MS = 30_000L
+        /** ★ v1.3.49：默认桌面引导弹窗无交互自动隐藏时长（现场无鼠标/触摸） */
+        const val HOME_PROMPT_AUTO_HIDE_MS = 30_000L
         /* ── WebView 活性看门狗（v1.3.45，详见类内字段注释）── */
         /** 页面加载成功后超过该时长未收到 JS ping → 判渲染进程已死 */
         const val WEBVIEW_ALIVE_TIMEOUT_MS = 90_000L
@@ -796,7 +800,7 @@ class MainActivity : AppCompatActivity() {
         if (server.isBlank()) return
         homePromptShown = true
         try {
-            AlertDialog.Builder(this)
+            val dlg = AlertDialog.Builder(this)
                 .setTitle("设为默认桌面")
                 .setMessage("为保证灵屏播放端持续驻守屏幕，请将「灵屏播放端」设为默认桌面。\n\n设置后按 Home 键将始终回到灵屏，不会被系统桌面覆盖。")
                 .setCancelable(false)
@@ -812,6 +816,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 .setNegativeButton("暂不") { _, _ -> }
                 .show()
+            homePromptDialog = dlg
+            // ★ v1.3.49：电子屏现场没有鼠标/触摸，无法点「暂不」→ 弹窗会永久挡住整屏。
+            //   30s 无人点击自动隐藏，播放优先（可后续在运维菜单里再手动设置）。
+            uiHandler.postDelayed({
+                try { if (homePromptDialog === dlg) { dlg.dismiss(); homePromptDialog = null } } catch (_: Exception) {}
+            }, HOME_PROMPT_AUTO_HIDE_MS)
         } catch (_: Exception) {}
     }
 

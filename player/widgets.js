@@ -143,6 +143,23 @@ function renderVideo(holder, item, resolver, onEnd) {
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
   // ★ v1.3.45：mediaId 不可变（重传换新 id），可安全作为 blob 缓存键
   const cacheKey = item.mediaId || url;
+  // ★ v1.3.49：优先用屏幕端本地缓存文件播（file://）——
+  //   4.4 上 <video> 的媒体请求由**平台媒体栈**发起（access log 里 UA=AppleCoreMedia/1.0.0.7B367
+  //   + RockFFPlayer），**绕过** WebViewClient.shouldInterceptRequest → MediaCache 的
+  //   「本地回源」对视频根本不生效，于是每轮轮播都远程重下同一文件：首帧前长时间黑屏，
+  //   且连接池被媒体栈反复抢占 → 终端 SSE 每 ~15s 闪断一次（管理端「已断开/已连接」toast）。
+  //   <img> 走 WebView 资源加载器、拦截生效命中本地缓存 → 纯图片轮播不黑屏，正是这个差别。
+  //   这里向原生索取已缓存文件的 file:// 路径，有就直接本地播：零网络、零等待、无黑屏。
+  let src = url;
+  try {
+    if (window.LumaBridge && typeof window.LumaBridge.localMediaUrl === 'function') {
+      const mid = item.mediaId || (String(url || '').split('?')[0].split('/').pop() || '');
+      if (mid) {
+        const local = window.LumaBridge.localMediaUrl(mid);
+        if (local) { src = local; v._lumaLocal = true; }
+      }
+    }
+  } catch (e) { /* 取不到本地路径就用网络 URL */ }
   // ★ Chromium 33 / Android 4.4 兼容：muted 必须在 src 之前设置，否则自动播放策略可能拦截；
   //   显式写入 muted/autoplay/playsinline(+webkit-) 属性，避免视频被系统强制全屏或无法内联自动播放。
   //   v.1.3.25：额外写 v.volume = 0 —— 现场发现 4.4 上 region 内视频每轮会重建 <video> 元素
@@ -199,6 +216,15 @@ function renderVideo(holder, item, resolver, onEnd) {
       try { v.play(); } catch (e) { /* ignore */ }
       return;
     }
+    // ★ v1.3.49：本地 file:// 播放失败（文件被系统清掉/格式不认）→ 回退网络直连
+    if (v._lumaLocal && !started) {
+      v._lumaLocal = false;
+      try { v.src = url; } catch (e) { /* ignore */ }
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+      armWatchdog();
+      try { v.play(); } catch (e) { /* ignore */ }
+      return;
+    }
     if (!started) { if (watchdog) clearTimeout(watchdog); onEnd && onEnd(); }
   });
   // ★ v1.3.45：媒体经 XHR→Blob URL 播放（见文件头「媒体 blob 缓存」注释）：
@@ -210,7 +236,9 @@ function renderVideo(holder, item, resolver, onEnd) {
     // ★ v1.3.48：Chromium 33 不认 blob: 协议，且 mediaBlobUrl 的 XHR 拉全片做 blob 会白白
     //   占内存（每轮轮播重拉一次，缓存最多 8 条≈40MB 常驻）。blob 不可用时直接走直连 URL
     //   （重下载由 APK MediaCache 的 shouldInterceptRequest 本地回源兜底），跳过 XHR，立即播放。
-    try { v.src = url; } catch (e) { /* ignore */ }
+    // ★ v1.3.49：src 优先取屏幕端本地缓存文件（file://）——平台媒体栈绕过 shouldInterceptRequest，
+    //   只有显式给本地路径才能真正「下载到本地播放」，彻底消除首帧前黑屏与重复下载。
+    try { v.src = src; } catch (e) { /* ignore */ }
     armWatchdog();
     const p0 = v.play();
     if (p0 && p0.catch) p0.catch(() => {});
@@ -218,7 +246,7 @@ function renderVideo(holder, item, resolver, onEnd) {
     mediaBlobUrl(cacheKey, url, (blobUrl) => {
       if (aborted) return;   // 期间已被切走/移除：不设 src，blob 已进缓存供次播使用
       const useBlob = !!blobUrl && !_blobMediaBroken;
-      v.src = useBlob ? blobUrl : url;
+      v.src = useBlob ? blobUrl : src;
       v._lumaBlob = useBlob;
       armWatchdog();
       const p = v.play();

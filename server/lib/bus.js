@@ -14,6 +14,10 @@ export class Bus {
     this.terminals = new Map();  // terminalId -> Set<sseHandle>
     this.admins = new Set();     // 管理端 SSE
     this.pending = new Map();    // cmdId -> { cmd, terminalId, sentAt, retry }
+    // ★ v1.3.49：终端 SSE 瞬断瞬连（视频媒体栈抢占连接池时每 ~15s 一次）不再让管理端
+    //   toast 红/绿乱闪——只有「真实状态翻转」才广播。延迟 4s 判定，期间重连即视为抖动。
+    this._offlineTimers = new Map();  // terminalId -> Timeout
+    this._linkState = new Map();      // terminalId -> 上次广播的在线态
     setInterval(() => this._retryLoop(), 10000).unref?.();
   }
 
@@ -21,7 +25,14 @@ export class Bus {
   attachTerminal(terminalId, handle) {
     if (!this.terminals.has(terminalId)) this.terminals.set(terminalId, new Set());
     this.terminals.get(terminalId).add(handle);
-    this.broadcastAdmin('terminal:link', { terminalId, connected: true });
+    // 取消待发的「离线」广播（说明是抖动重连，不是真离线）
+    const t = this._offlineTimers.get(terminalId);
+    if (t) { clearTimeout(t); this._offlineTimers.delete(terminalId); }
+    // ★ v1.3.49：仅在状态真正翻转时广播在线（避免每次重连都弹一次「已连接」）
+    if (this._linkState.get(terminalId) !== true) {
+      this._linkState.set(terminalId, true);
+      this.broadcastAdmin('terminal:link', { terminalId, connected: true });
+    }
     // 补投该终端未 ACK 的指令
     for (const p of this.pending.values()) if (p.terminalId === terminalId) handle.send('command', p.cmd);
   }
@@ -31,7 +42,16 @@ export class Bus {
     set.delete(handle);
     if (!set.size) {
       this.terminals.delete(terminalId);
-      this.broadcastAdmin('terminal:link', { terminalId, connected: false });
+      // ★ v1.3.49：延迟 4s 判定离线，期间重连即取消——管理端不再每秒闪「已断开/已连接」
+      if (this._offlineTimers.has(terminalId)) return;
+      const timer = setTimeout(() => {
+        this._offlineTimers.delete(terminalId);
+        if (!this.terminals.has(terminalId)) {
+          this._linkState.set(terminalId, false);
+          this.broadcastAdmin('terminal:link', { terminalId, connected: false });
+        }
+      }, 4000);
+      this._offlineTimers.set(terminalId, timer);
     }
   }
   isLinked(id) { return this.terminals.has(id); }
