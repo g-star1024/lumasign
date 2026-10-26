@@ -11,7 +11,7 @@
  *
  * 编辑器实时预览：父页面 postMessage({type:'luma:preview', layout}) 即可热更新。
  */
-import { renderWidget, mediaBlobUrl } from './widgets.js';
+import { renderWidget, mediaBlobUrl, blobMediaUsable, noteBlobMediaBroken } from './widgets.js';
 
 const app = document.getElementById('app');
 const fallback = document.getElementById('fallback');
@@ -369,10 +369,22 @@ class Player {
         stage.appendChild(v);
         // v1.3.45：背景视频同样走 XHR→Blob 缓存（Chromium 33 <video> 每轮重下同一
         //   文件的风暴，见 widgets.js「媒体 blob 缓存」注释）；失败回退直连 URL。
+        //   v1.3.47：Chromium 33 媒体栈不支持 blob: 协议（实测 err 4），blob 播不动
+        //   立即换直连（重下载由 APK MediaCache 本地回源兜底，见 widgets.js 注释）。
         mediaBlobUrl(bg.mediaId, url, (blobUrl) => {
-          v.src = blobUrl || url;
+          const useBlob = !!blobUrl && blobMediaUsable();
+          v.src = useBlob ? blobUrl : url;
+          v._lumaBlob = useBlob;
           const p = v.play();
           if (p && p.catch) p.catch(() => {});
+        });
+        v.addEventListener('error', () => {
+          if (v._lumaBlob) {
+            noteBlobMediaBroken();
+            v._lumaBlob = false;
+            try { v.src = url; } catch (e) { /* ignore */ }
+            try { v.play(); } catch (e) { /* ignore */ }
+          }
         });
       } else {
         const img = document.createElement('img');

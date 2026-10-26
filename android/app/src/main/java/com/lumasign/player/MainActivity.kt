@@ -84,10 +84,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayText: TextView
     private var loadFailed = false
     private var retryRunnable: Runnable? = null
+    // ★ v1.3.47：页面加载兜底超时（4.4 主文档失败不回调 onReceivedError，见 loadPlayer 注释）
+    private var loadTimeoutRunnable: Runnable? = null
     // 常驻状态条：竞品「Version-5.99SM + 状态」式运维可见性设计
     private lateinit var statusView: TextView
     // v1.3.15：连续加载失败计数。≥ FAIL_STREAK_LIMIT 时清空错误地址并回到零配置发现。
     // 现场事故：设备存了错/不可达的 server_url 后永不重新发现，黑屏死锁。
+    // v1.3.47：FAIL_STREAK_LIMIT 4→2、重试间隔 15s→8s——现场用户等不及 60s 自愈手动配置；
+    //   配合开机并行发现，最坏 ~19s 自己爬回正确地址。
     private var failStreak = 0
 
     // 5.0+ Kiosk 进入标记（onResume 只尝试一次，避免反复调用 DevicePolicyManager）
@@ -147,8 +151,8 @@ class MainActivity : AppCompatActivity() {
         /** 终端显示名（56iq 注册 name / authorized_device_id 兜底） */
         const val KEY_NAME = "terminal_name"
         const val DEFAULT_PORT = 7788
-        /** 连续加载失败达到该次数 → 判定"地址存错了"，清空并重新零配置发现（约 4×15s ≈ 60s） */
-        const val FAIL_STREAK_LIMIT = 4
+        /** 连续加载失败达到该次数 → 判定"地址存错了"，清空并重新零配置发现（v1.3.47：约 2×8s ≈ 16s） */
+        const val FAIL_STREAK_LIMIT = 2
         /** 手动退出后的静默期：30s 内不拉起，到点由 Alarm 重新拉起电子屏 */
         const val EXIT_GRACE_MS = 30_000L
         /* ── WebView 活性看门狗（v1.3.45，详见类内字段注释）── */
@@ -256,6 +260,11 @@ class MainActivity : AppCompatActivity() {
             } else {
                 showBootStatus("④ 加载播放端：$server")
                 loadPlayer(server)
+                // ★ v1.3.47：开机并行零配置发现。旧实现只有加载连败 FAIL_STREAK_LIMIT×15s 后
+                //   才重新发现——服务端 IP 漂移（DHCP：.97→.213→.239→.216→.200…）后现场用户
+                //   等不及，只能手动重新配置（2026-10-26 事故）。现在每次开机都并行问一次
+                //   「服务端在哪」：发现到不同地址立即热切换，相同则无动作，失败不影响正常加载。
+                discoverAndAdoptServer()
             }
             applyScreenIntent(intent)
 
@@ -487,6 +496,7 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onPageFinished(view: WebView?, url: String?) {
                 loadFailed = false
+                loadTimeoutRunnable?.let { uiHandler.removeCallbacks(it) }
                 retryRunnable?.let { uiHandler.removeCallbacks(it) }
                 hideOverlay()
                 updateStatusOverlay("已连接")
@@ -590,7 +600,7 @@ class MainActivity : AppCompatActivity() {
             }
             if (server.isNotBlank() && loadFailed) { loadFailed = false; loadPlayer(server) }
         }
-        uiHandler.postDelayed(retryRunnable!!, 15000)
+        uiHandler.postDelayed(retryRunnable!!, 8000)
     }
 
     /**
@@ -807,6 +817,19 @@ class MainActivity : AppCompatActivity() {
         }
         webView.loadUrl(url)
         updateStatusOverlay("正在加载…")
+        // ★ v1.3.47：4.4 WebView 主文档失败时不回调 onReceivedError（2026-10-26 实测：
+        //   ERR_ADDRESS_UNREACHABLE 只出 Chromium 错误页，onMainFrameError 收不到通知）→
+        //   「失败→重试→重发现」自愈链永不启动，设备死坐错误页等人手动配置。
+        //   兜底：加载后 20s 仍未 onPageFinished 即按加载失败处理，亮 overlay 救援按钮
+        //   并走重试/发现链（开机并行发现 + 网络恢复探测 + 此兜底，三道防线）。
+        loadTimeoutRunnable?.let { uiHandler.removeCallbacks(it) }
+        loadTimeoutRunnable = Runnable {
+            if (!webViewPageLoaded && !loadFailed) {
+                Log.w(TAG, "page not finished in 20s, treating as load failure")
+                onMainFrameError("页面加载超时")
+            }
+        }
+        uiHandler.postDelayed(loadTimeoutRunnable!!, 20000)
     }
 
     /** 网络连通性变化：恢复时通知引擎重连指令流+刷新清单，并兜底重载失败的页面 */
@@ -820,8 +843,52 @@ class MainActivity : AppCompatActivity() {
             if (loadFailed) {
                 val server = prefs.getString(KEY_SERVER, "") ?: ""
                 if (server.isNotBlank()) { loadPlayer(server) }
+                return@post
+            }
+            // ★ v1.3.47：网络恢复时探测存址服务端是否可达。IP 漂移的隐蔽失效模式：
+            //   页面加载成功时服务端还在旧 IP，之后 IP 变了——页面「已加载」loadFailed=false，
+            //   但所有请求都发向死 IP，旧逻辑什么都不做 → 黑屏到人工干预。
+            //   现在网络一恢复就探测，不可达立即重新发现热切换。
+            probeServerThenRediscover()
+        }
+    }
+
+    /** v1.3.47：开机/网络恢复时的并行零配置发现——服务端挪窝则自动热切换，无需人工配置 */
+    private fun discoverAndAdoptServer() {
+        val current = prefs.getString(KEY_SERVER, "") ?: ""
+        if (current.isBlank()) return
+        tryDiscoverServer { url ->
+            if (url == null) return@tryDiscoverServer
+            val norm = normalizeServerUrl(url) ?: return@tryDiscoverServer
+            val cur = normalizeServerUrl(current) ?: current
+            if (norm == cur) return@tryDiscoverServer
+            Log.w(TAG, "server moved: $cur -> $norm, adopting")
+            runOnUiThread {
+                prefs.edit().putString(KEY_SERVER, norm).apply()
+                loadPlayer(norm)
+                updateStatusOverlay("服务端已自动切换：$norm")
             }
         }
+    }
+
+    /** v1.3.47：后台 HTTP 探测存址服务端 /health；不可达 → 零配置发现热切换 */
+    private fun probeServerThenRediscover() {
+        val server = prefs.getString(KEY_SERVER, "") ?: ""
+        if (server.isBlank()) return
+        Thread {
+            val ok = try {
+                val conn = (java.net.URL(server.trimEnd('/') + "/health").openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 2500
+                    readTimeout = 2500
+                    requestMethod = "GET"
+                }
+                conn.responseCode in 200..299
+            } catch (_: Exception) { false }
+            if (!ok) {
+                Log.w(TAG, "stored server $server unreachable, rediscovering")
+                discoverAndAdoptServer()
+            }
+        }.start()
     }
 
     @Suppress("DEPRECATION")

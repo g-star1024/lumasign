@@ -39,6 +39,19 @@ const MEDIA_BLOB_CACHE_MAX = 8; // 约 40MB 上限，1GB 内存设备无压力
 
 function _mediaBlobHas(k) { return Object.prototype.hasOwnProperty.call(_mediaBlobs, k); }
 
+/* ★ v1.3.47 现场事故（RK312x/Chromium 33 实测）：<video src="blob:..."> 在该媒体栈
+ * 直接抛 MEDIA_ERR_SRC_NOT_SUPPORTED(4)——Chromium 33 的 Android 媒体播放器不认 blob:
+ * 协议，XHR 拿到的字节没问题、直连 URL 同文件播放完美（CDP 实测 loadedmetadata→playing
+ * →全程 10.5s 走完）。因此：一旦某视频 blob 播放失败，永久标记 _blobMediaBroken，
+ * 此后一律直连 URL（重下载由 APK 侧 MediaCache 的 shouldInterceptRequest 本地回源消灭，
+ * 不需要引擎层 blob）。现代浏览器（桌面端预览）不受影响，blob 缓存仍生效。 */
+var _blobMediaBroken = false;
+
+/** v1.3.47：供 engine.js 背景视频等外部使用——blob 媒体是否仍可用 */
+export function blobMediaUsable() { return !_blobMediaBroken; }
+/** v1.3.47：标记 blob 媒体不可用（Chromium 33 媒体栈实测不支持 blob: 协议） */
+export function noteBlobMediaBroken() { _blobMediaBroken = true; }
+
 function _mediaBlobEvictOne() {
   if (_mediaBlobOrder.length === 0) return;
   const oldestKey = _mediaBlobOrder.shift();
@@ -158,19 +171,46 @@ function renderVideo(holder, item, resolver, onEnd) {
     if (aborted || watchdog) return;
     watchdog = setTimeout(() => {
       if (!started && v.currentTime < 0.5) {
+        // ★ v1.3.47：blob 播不动（Chromium 33 不认 blob:）→ 换直连 URL 再给一次机会，
+        //   而不是当不可播跳过（跳过会黑屏 8s，直连实测可正常播放）
+        if (v._lumaBlob && !_blobMediaBroken) {
+          _blobMediaBroken = true;
+          v._lumaBlob = false;
+          try { v.src = url; } catch (e) { /* ignore */ }
+          if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+          armWatchdog();
+          try { v.play(); } catch (e) { /* ignore */ }
+          return;
+        }
         try { v.pause(); } catch (e) { /* ignore */ }
         onEnd && onEnd();
       }
     }, 8000);
   };
   v.addEventListener('timeupdate', () => { if (v.currentTime > 0.5) started = true; });
-  v.addEventListener('error', () => { if (!started) { if (watchdog) clearTimeout(watchdog); onEnd && onEnd(); } });
+  v.addEventListener('error', () => {
+    // ★ v1.3.47：blob 解码失败（Chromium 33 SRC_NOT_SUPPORTED）→ 立即回退直连，不跳过
+    if (v._lumaBlob && !_blobMediaBroken && !started) {
+      _blobMediaBroken = true;
+      v._lumaBlob = false;
+      try { v.src = url; } catch (e) { /* ignore */ }
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+      armWatchdog();
+      try { v.play(); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (!started) { if (watchdog) clearTimeout(watchdog); onEnd && onEnd(); }
+  });
   // ★ v1.3.45：媒体经 XHR→Blob URL 播放（见文件头「媒体 blob 缓存」注释）：
   //   消灭 Chromium 33 <video> 每轮重下同一文件的风暴；XHR 失败回退直连 URL（旧行为）。
+  //   v1.3.47：blob 播放失败（error/看门狗）时永久回退直连 URL——Chromium 33 媒体栈
+  //   不支持 blob: 协议（实测 err 4），而直连同文件可正常播放；重下载由 APK MediaCache 兜底。
   //   无 mediaId 且无 url 时直接走 error 分支由调用方处理。
   mediaBlobUrl(cacheKey, url, (blobUrl) => {
     if (aborted) return;   // 期间已被切走/移除：不设 src，blob 已进缓存供次播使用
-    v.src = blobUrl || url;
+    const useBlob = !!blobUrl && !_blobMediaBroken;
+    v.src = useBlob ? blobUrl : url;
+    v._lumaBlob = useBlob;
     armWatchdog();
     const p = v.play();
     if (p && p.catch) p.catch(() => {});

@@ -977,6 +977,13 @@ function _unsupported_iterable_to_array(o, minLen) {
     function _mediaBlobHas(k) {
         return Object.prototype.hasOwnProperty.call(_mediaBlobs, k);
     }
+    var _blobMediaBroken = false;
+    function blobMediaUsable() {
+        return !_blobMediaBroken;
+    }
+    function noteBlobMediaBroken() {
+        _blobMediaBroken = true;
+    }
     function _mediaBlobEvictOne() {
         if (_mediaBlobOrder.length === 0) return;
         var oldestKey = _mediaBlobOrder.shift();
@@ -1107,10 +1114,26 @@ function _unsupported_iterable_to_array(o, minLen) {
         var started = false;
         var watchdog = null;
         var aborted = false;
-        var armWatchdog = function armWatchdog() {
+        var armWatchdog = function armWatchdog1() {
             if (aborted || watchdog) return;
             watchdog = setTimeout(function() {
                 if (!started && v.currentTime < 0.5) {
+                    if (v._lumaBlob && !_blobMediaBroken) {
+                        _blobMediaBroken = true;
+                        v._lumaBlob = false;
+                        try {
+                            v.src = url;
+                        } catch (e) {}
+                        if (watchdog) {
+                            clearTimeout(watchdog);
+                            watchdog = null;
+                        }
+                        armWatchdog();
+                        try {
+                            v.play();
+                        } catch (e) {}
+                        return;
+                    }
                     try {
                         v.pause();
                     } catch (e) {}
@@ -1122,6 +1145,22 @@ function _unsupported_iterable_to_array(o, minLen) {
             if (v.currentTime > 0.5) started = true;
         });
         v.addEventListener("error", function() {
+            if (v._lumaBlob && !_blobMediaBroken && !started) {
+                _blobMediaBroken = true;
+                v._lumaBlob = false;
+                try {
+                    v.src = url;
+                } catch (e) {}
+                if (watchdog) {
+                    clearTimeout(watchdog);
+                    watchdog = null;
+                }
+                armWatchdog();
+                try {
+                    v.play();
+                } catch (e) {}
+                return;
+            }
             if (!started) {
                 if (watchdog) clearTimeout(watchdog);
                 onEnd && onEnd();
@@ -1129,7 +1168,9 @@ function _unsupported_iterable_to_array(o, minLen) {
         });
         mediaBlobUrl(cacheKey, url, function(blobUrl) {
             if (aborted) return;
-            v.src = blobUrl || url;
+            var useBlob = !!blobUrl && !_blobMediaBroken;
+            v.src = useBlob ? blobUrl : url;
+            v._lumaBlob = useBlob;
             armWatchdog();
             var p = v.play();
             if (p && p.catch) p.catch(function() {});
@@ -3005,9 +3046,23 @@ function _unsupported_iterable_to_array(o, minLen) {
                             v.className = "bg-media";
                             stage.appendChild(v);
                             mediaBlobUrl(bg.mediaId, url, function(blobUrl) {
-                                v.src = blobUrl || url;
+                                var useBlob = !!blobUrl && blobMediaUsable();
+                                v.src = useBlob ? blobUrl : url;
+                                v._lumaBlob = useBlob;
                                 var p = v.play();
                                 if (p && p.catch) p.catch(function() {});
+                            });
+                            v.addEventListener("error", function() {
+                                if (v._lumaBlob) {
+                                    noteBlobMediaBroken();
+                                    v._lumaBlob = false;
+                                    try {
+                                        v.src = url;
+                                    } catch (e) {}
+                                    try {
+                                        v.play();
+                                    } catch (e) {}
+                                }
                             });
                         } else {
                             var img = document.createElement("img");
