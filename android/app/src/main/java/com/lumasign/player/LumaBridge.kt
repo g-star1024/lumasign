@@ -265,22 +265,26 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     }
 
     /**
-     * 屏幕端本地缓存素材的可播路径（file://）——v1.3.49。
+     * 屏幕端本地缓存素材的可播地址（v1.3.50）——**http://127.0.0.1:\<port\>/media/\<id\>**。
      *
      * 背景（2026-10-26 真机实测）：Android 4.4 上 `<video>` 的媒体请求由**平台媒体栈**发起
      *   （access log 里 UA=AppleCoreMedia/1.0.0.7B367 + RockFFPlayer），**绕过**
      *   WebViewClient.shouldInterceptRequest → MediaCache 的「本地回源」对视频完全不生效，
      *   表现为每轮轮播都远程重下同一文件（首帧前长时间黑屏 + 连接池抖动 → SSE 闪断）。
-     *   而 `<img>` 走 WebView 资源加载器，拦截生效、命中本地缓存 → 纯图片轮播不黑屏。
-     *   这里把已缓存文件直接交给 `<video>`，让媒体栈读本机文件：零网络、零等待、无黑屏。
+     *   而 `<img>` 走 WebView 资源加载器、拦截生效命中本地缓存 → 纯图片轮播不黑屏。
+     *   `file://` 也不行：Chromium 33 拒绝 http 源页面加载 file:// 子资源
+     *   （Not allowed to load local resource）→ 只能给媒体栈一个 http:// 地址，
+     *   由 [LocalMediaServer] 在回环端口回源到本地缓存文件。
      *
-     * @return file:// 绝对路径；未缓存或异常返回 null（调用方回退网络 URL）。
+     * @return 本地 http 地址；未缓存/服务未起/异常返回 null（调用方回退网络 URL）。
      */
     @JavascriptInterface
     fun localMediaUrl(mediaId: String): String? {
         return try {
             if (mediaId.isBlank()) null
-            else MediaCache.localFile(mediaId)?.let { "file://" + it.absolutePath }
+            else if (LocalMediaServer.port <= 0) null
+            else if (MediaCache.localFile(mediaId) == null) null
+            else "http://127.0.0.1:${LocalMediaServer.port}/media/$mediaId"
         } catch (_: Exception) { null }
     }
 

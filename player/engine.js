@@ -891,24 +891,32 @@ class Player {
 
         let ended = false;
         const onEnd = () => { ended = true; };
+        // ★ v1.3.49：视频首帧未上屏前不淡入，且旧层保留到新层真正显示为止。
+        //   旧实现「创建即淡入 + 450ms 后撤旧层」：切到视频时淡入的是一层全黑（<video>
+        //   首帧未渲染），旧层又被撤走 → 轮播到视频必露一段黑屏（纯图片无此问题）。
+        //   现在：视频触发 'playing'（首帧已上屏）才淡入；旧层等淡入完成再撤；2.5s 兜底放行。
+        let shown = false;
         let stop = () => {};
-        try { stop = renderWidget(holder, item, this.resolver, onEnd) || (() => {}); }
-        catch (e) { console.error('widget render error', e); }
-
-        requestAnimationFrame(() => holder.classList.add('show'));
-
-        // ★ 交叉淡入淡出：新层盖在旧层之上淡入，完成后才移除旧层 —— 切换全程无黑屏。
-        //   旧实现先淡出旧层（450ms 露出黑色舞台背景）再淡入新层，图片切换必闪一下黑。
-        //   ★ v1.3.31：24 种切换动画。tName 从 region.transition 读取（默认 fade），
-        //   给 holder 加 t-{name} class，CSS keyframes 按 name 触发；过渡时长查 TRANSITION_MS 表。
         const tName = region.transition || 'fade';
         if (tName !== 'none') holder.classList.add('t-' + tName);
         const tDur = transitionMs(tName);
         const prev = showing;
         showing = { holder, stop };
-        setTimeout(() => {
+        const removePrev = () => {
           if (prev) { try { prev.stop(); } catch (e) { /* ignore */ } if (prev.holder.parentNode) prev.holder.remove(); }
-        }, (tName === 'none') ? 30 : tDur);
+        };
+        const doShow = () => {
+          if (shown) return;
+          shown = true;
+          try { clearTimeout(readyTimer); } catch (e) { /* ignore */ }
+          requestAnimationFrame(() => holder.classList.add('show'));
+          // 旧层在新层淡入完成后再撤（图片/文本走同一路径，行为不变）
+          setTimeout(removePrev, (tName === 'none') ? 30 : tDur);
+        };
+        const readyTimer = setTimeout(doShow, 2500);   // 首帧迟迟不来也要放行，绝不卡住轮播
+        try { stop = renderWidget(holder, item, this.resolver, onEnd, doShow) || (() => {}); }
+        catch (e) { console.error('widget render error', e); }
+        if (item.widget !== 'video') doShow();
 
         const single = items.length === 1;
         let ms;

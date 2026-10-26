@@ -138,18 +138,29 @@ function renderImage(holder, item, resolver) {
 }
 
 /* ---------------- 视频 ---------------- */
-function renderVideo(holder, item, resolver, onEnd) {
+function renderVideo(holder, item, resolver, onEnd, onReady) {
   const v = document.createElement('video');
+  // ★ v1.3.49：首帧就绪通知——引擎据此把「淡入」推迟到视频真正出画为止。
+  //   <video> 在首帧渲染前画面是全黑的，旧实现「创建即淡入」→ 淡入的就是一层黑，
+  //   而旧层又在 450ms 后被撤掉 → 轮播切到视频时必露一段黑屏（纯图片无此问题）。
+  let readyFired = false;
+  const fireReady = () => {
+    if (readyFired) return;
+    readyFired = true;
+    try { if (typeof onReady === 'function') onReady(); } catch (e) { /* ignore */ }
+  };
+  v.addEventListener('playing', fireReady);   // 播放已开始 = 首帧已上屏
+  v.addEventListener('error', fireReady);      // 出错也别卡住切换（引擎另有 2.5s 兜底）
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
   // ★ v1.3.45：mediaId 不可变（重传换新 id），可安全作为 blob 缓存键
   const cacheKey = item.mediaId || url;
-  // ★ v1.3.49：优先用屏幕端本地缓存文件播（file://）——
-  //   4.4 上 <video> 的媒体请求由**平台媒体栈**发起（access log 里 UA=AppleCoreMedia/1.0.0.7B367
-  //   + RockFFPlayer），**绕过** WebViewClient.shouldInterceptRequest → MediaCache 的
-  //   「本地回源」对视频根本不生效，于是每轮轮播都远程重下同一文件：首帧前长时间黑屏，
-  //   且连接池被媒体栈反复抢占 → 终端 SSE 每 ~15s 闪断一次（管理端「已断开/已连接」toast）。
+  // ★ v1.3.49/50：优先用屏幕端本地缓存播——4.4 上 <video> 的媒体请求由**平台媒体栈**发起
+  //   （access log 里 UA=AppleCoreMedia/1.0.0.7B367 + RockFFPlayer），**绕过**
+  //   WebViewClient.shouldInterceptRequest → MediaCache 本地回源对视频无效，
+  //   每轮轮播都远程重下同一文件（首帧前长时间黑屏 + 连接池抢占 → SSE 闪断）。
   //   <img> 走 WebView 资源加载器、拦截生效命中本地缓存 → 纯图片轮播不黑屏，正是这个差别。
-  //   这里向原生索取已缓存文件的 file:// 路径，有就直接本地播：零网络、零等待、无黑屏。
+  //   原生给的是本机回环地址 http://127.0.0.1:<port>/media/<id>（APK 内 LocalMediaServer 回源缓存文件）。
+  //   注：file:// 不行——Chromium 33 对 http 源页面直接拒绝「Not allowed to load local resource」。
   let src = url;
   try {
     if (window.LumaBridge && typeof window.LumaBridge.localMediaUrl === 'function') {
@@ -1219,7 +1230,7 @@ const RENDERERS = {
   music: renderMusic,
 };
 
-export function renderWidget(holder, item, resolver, onEnd) {
+export function renderWidget(holder, item, resolver, onEnd, onReady) {
   const fn = RENDERERS[item.widget] || renderText;
-  return fn(holder, item, resolver, onEnd) || (() => {});
+  return fn(holder, item, resolver, onEnd, onReady) || (() => {});
 }

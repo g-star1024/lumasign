@@ -1092,8 +1092,18 @@ function _unsupported_iterable_to_array(o, minLen) {
         holder.appendChild(img);
         return function() {};
     }
-    function renderVideo(holder, item, resolver2, onEnd) {
+    function renderVideo(holder, item, resolver2, onEnd, onReady) {
         var v = document.createElement("video");
+        var readyFired = false;
+        var fireReady = function fireReady() {
+            if (readyFired) return;
+            readyFired = true;
+            try {
+                if (typeof onReady === "function") onReady();
+            } catch (e) {}
+        };
+        v.addEventListener("playing", fireReady);
+        v.addEventListener("error", fireReady);
         var url = item.mediaId ? resolver2(item.mediaId) : item.url || "";
         var cacheKey = item.mediaId || url;
         var src = url;
@@ -2410,9 +2420,9 @@ function _unsupported_iterable_to_array(o, minLen) {
         "form": renderForm,
         music: renderMusic
     };
-    function renderWidget(holder, item, resolver2, onEnd) {
+    function renderWidget(holder, item, resolver2, onEnd, onReady) {
         var fn = RENDERERS[item.widget] || renderText;
-        return fn(holder, item, resolver2, onEnd) || function() {};
+        return fn(holder, item, resolver2, onEnd, onReady) || function() {};
     }
     // player/engine.js
     var app = document.getElementById("app");
@@ -3840,7 +3850,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 switch(_state.label){
                                     case 0:
                                         _loop = function() {
-                                            var items, item, warm, warmKey, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, it, u, holder, ended, onEnd, stop, tName, tDur, prev, single, ms, startedAt, endedAt, tName2;
+                                            var items, item, warm, warmKey, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, it, u, holder, ended, onEnd, shown, stop, tName, tDur, prev, removePrev, doShow, readyTimer, single, ms, startedAt, endedAt, tName2;
                                             return _ts_generator(this, function(_state) {
                                                 switch(_state.label){
                                                     case 0:
@@ -3915,15 +3925,8 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                         onEnd = function onEnd() {
                                                             ended = true;
                                                         };
+                                                        shown = false;
                                                         stop = function stop() {};
-                                                        try {
-                                                            stop = renderWidget(holder, item, _this.resolver, onEnd) || function() {};
-                                                        } catch (e) {
-                                                            console.error("widget render error", e);
-                                                        }
-                                                        requestAnimationFrame(function() {
-                                                            return holder.classList.add("show");
-                                                        });
                                                         tName = region.transition || "fade";
                                                         if (tName !== "none") holder.classList.add("t-" + tName);
                                                         tDur = transitionMs(tName);
@@ -3932,14 +3935,32 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             holder: holder,
                                                             stop: stop
                                                         };
-                                                        setTimeout(function() {
+                                                        removePrev = function removePrev() {
                                                             if (prev) {
                                                                 try {
                                                                     prev.stop();
                                                                 } catch (e) {}
                                                                 if (prev.holder.parentNode) prev.holder.remove();
                                                             }
-                                                        }, tName === "none" ? 30 : tDur);
+                                                        };
+                                                        doShow = function doShow() {
+                                                            if (shown) return;
+                                                            shown = true;
+                                                            try {
+                                                                clearTimeout(readyTimer);
+                                                            } catch (e) {}
+                                                            requestAnimationFrame(function() {
+                                                                return holder.classList.add("show");
+                                                            });
+                                                            setTimeout(removePrev, tName === "none" ? 30 : tDur);
+                                                        };
+                                                        readyTimer = setTimeout(doShow, 2500);
+                                                        try {
+                                                            stop = renderWidget(holder, item, _this.resolver, onEnd, doShow) || function() {};
+                                                        } catch (e) {
+                                                            console.error("widget render error", e);
+                                                        }
+                                                        if (item.widget !== "video") doShow();
                                                         single = items.length === 1;
                                                         ms = void 0;
                                                         if (item.widget === "video" && !(item.duration > 0)) ms = -1;

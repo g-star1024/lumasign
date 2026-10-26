@@ -477,6 +477,10 @@ class MainActivity : AppCompatActivity() {
         // 播放素材本地缓存（v1.3.34）：<img>/<video> 的 /api/t/media/* 命中本地即离线回源，
         // 实现「视频/图片下载到屏幕端再播放」；需在 loadUrl 前初始化。
         MediaCache.init(this)
+        // ★ v1.3.50：本地素材回源服务（127.0.0.1 随机端口）——4.4 上 <video> 由平台媒体栈取数，
+        //   绕过 WebView 拦截，file:// 又被 Chromium 拒绝；给媒体栈一个 http:// 回环地址，
+        //   才能真正「下载到屏幕端再播放」（零远程重下、零首帧等待）。
+        LocalMediaServer.start()
         bridge = LumaBridge(this, webView)
         webView.addJavascriptInterface(bridge, "LumaBridge")
         // 56iq 兼容：触拓原生网页模板走 window.Android.getDeviceInfo()，复用同一桥
