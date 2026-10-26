@@ -18,7 +18,7 @@ import java.net.Socket
  *    → MediaCache 的「本地回源」对视频根本不生效（对 `<img>` 有效），于是每轮轮播都远程重下同一文件。
  *  - 改用 `file://` 也不行：Chromium 33 对 http 源页面直接拒绝
  *    「Not allowed to load local resource: file:///data/data/...」，媒体栈拿不到 MIME。
- *  - 唯一可行路径：给媒体栈一个 **http://** 地址，指向本机回环端口，由本服务回源到本地缓存文件。
+ *  - 唯一可行路径：给媒体栈一个 http 回环地址，指向本机回环端口，由本服务回源到本地缓存文件。
  *
  * 设计要点：
  *  - 只监听 127.0.0.1（回环），不对局域网暴露；仅回源**已完整落盘**的缓存文件（半途 .tmp 不给）。
@@ -103,7 +103,12 @@ object LocalMediaServer {
                     if (g1.isNotEmpty()) start = g1.toLong()
                     if (g2.isNotEmpty()) end = minOf(g2.toLong(), total - 1)
                     if (start >= total) {
-                        respond(out, 416, "text/plain", "range not satisfiable".toByteArray(), "Content-Range: bytes */$total"); return
+                        // 注意：这里刻意用字符串拼接而非模板——把 "bytes " 与星号斜杠连写、
+                        // 后接 $ 模板的写法，会让 Kotlin 词法解析在 CI 上炸出 235 条
+                        // 「Expecting a top level declaration」（v1.3.50 首轮构建踩坑，已修）。
+                        respond(out, 416, "text/plain", "range not satisfiable".toByteArray(),
+                            "Content-Range: bytes " + "*" + "/" + total.toString())
+                        return
                     }
                     code = 206
                 }
