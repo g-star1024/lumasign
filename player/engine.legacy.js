@@ -1202,6 +1202,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                 }
                 v._lumaLocal = false;
                 try {
+                    if (window.LumaBridge && typeof window.LumaBridge.reportLocalMediaFailed === "function") {
+                        var mid = item.mediaId || String(url || "").split("?")[0].split("/").pop() || "";
+                        if (mid) window.LumaBridge.reportLocalMediaFailed(mid);
+                    }
+                } catch (e) {}
+                try {
                     v.src = url;
                 } catch (e) {}
                 if (watchdog) {

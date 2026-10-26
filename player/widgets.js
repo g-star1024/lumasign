@@ -229,7 +229,7 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
     }
     // ★ v1.3.49：本地 file:// 播放失败（文件被系统清掉/格式不认）→ 回退网络直连
     if (v._lumaLocal && !started) {
-      // ★ v1.3.51：媒体栈（ffmpeg/RockFFPlayer）首次 open 本地源常失败一次（logcat 可见
+      // ★ v1.3.51/52：媒体栈（ffmpeg/RockFFPlayer）首次 open 本地源常失败一次（logcat 可见
       //   「open fail」后重试才 read_header ok），直接回退网络等于白费本地缓存。
       //   故先原地重试一次本地源，仍失败才回退网络直连。
       if (!v._lumaLocalRetried) {
@@ -241,6 +241,14 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
         return;
       }
       v._lumaLocal = false;
+      // ★ v1.3.52：向原生回报本地源失败 → 连续失败达阈值后原生自动熔断（不再提供本地地址），
+      //   播放回退网络直连。老设备媒体栈行为不可控，本地源必须能自己失能。
+      try {
+        if (window.LumaBridge && typeof window.LumaBridge.reportLocalMediaFailed === 'function') {
+          const mid = item.mediaId || (String(url || '').split('?')[0].split('/').pop() || '');
+          if (mid) window.LumaBridge.reportLocalMediaFailed(mid);
+        }
+      } catch (e) { /* ignore */ }
       try { v.src = url; } catch (e) { /* ignore */ }
       if (watchdog) { clearTimeout(watchdog); watchdog = null; }
       armWatchdog();

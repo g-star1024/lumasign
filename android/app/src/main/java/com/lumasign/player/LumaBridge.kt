@@ -18,6 +18,7 @@ import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import android.view.PixelCopy
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -27,6 +28,11 @@ import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileReader
+
+/** 同一素材本地源连续失败多少次后熔断（自动回退网络直连） */
+private const val LOCAL_FAIL_LIMIT = 3
+/** 熔断统计窗口（超窗即清零重算） */
+private const val LOCAL_FAIL_WINDOW_MS = 5 * 60 * 1000L
 
 /**
  * 灵屏播放端 JS 桥：暴露原生能力给 Web 播放引擎（player/engine.js）。
@@ -276,7 +282,11 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
      *   （Not allowed to load local resource）→ 只能给媒体栈一个 http:// 地址，
      *   由 [LocalMediaServer] 在回环端口回源到本地缓存文件。
      *
-     * @return 本地 http 地址；未缓存/服务未起/异常返回 null（调用方回退网络 URL）。
+     * ★ v1.3.52 熔断：同一素材连续失败 [LOCAL_FAIL_LIMIT] 次 → [LOCAL_FAIL_WINDOW_MS] 内
+     *   不再提供本地地址，播放自动回退网络直连。老设备（1GB RK312x / 4.4）上媒体栈行为
+     *   不可控，本地源必须能自己「失能」，绝不能让设备陷在本地↔网络的重试循环里。
+     *
+     * @return 本地 http 地址；未缓存/已熔断/服务未起/异常返回 null（调用方回退网络 URL）。
      */
     @JavascriptInterface
     fun localMediaUrl(mediaId: String): String? {
@@ -284,8 +294,41 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
             if (mediaId.isBlank()) null
             else if (LocalMediaServer.port <= 0) null
             else if (MediaCache.localFile(mediaId) == null) null
+            else if (isLocalCircuitOpen(mediaId)) null
             else "http://127.0.0.1:${LocalMediaServer.port}/media/$mediaId"
         } catch (_: Exception) { null }
+    }
+
+    /** 播放端回报「本地源播放失败」→ 计入熔断计数（v1.3.52） */
+    @JavascriptInterface
+    fun reportLocalMediaFailed(mediaId: String) {
+        try {
+            if (mediaId.isBlank()) return
+            synchronized(localFails) {
+                val now = SystemClock.elapsedRealtime()
+                val st = localFails.getOrPut(mediaId) { FailState() }
+                if (now - st.lastAt > LOCAL_FAIL_WINDOW_MS) st.count = 0
+                st.count += 1
+                st.lastAt = now
+                Log.w("LumaLocalMedia", "local media failed: $mediaId count=${st.count}")
+            }
+        } catch (_: Exception) {}
+    }
+
+    private class FailState {
+        var count = 0
+        var lastAt = 0L
+    }
+
+    private val localFails = HashMap<String, FailState>()
+
+    private fun isLocalCircuitOpen(mediaId: String): Boolean {
+        synchronized(localFails) {
+            val st = localFails[mediaId] ?: return false
+            val now = SystemClock.elapsedRealtime()
+            if (now - st.lastAt > LOCAL_FAIL_WINDOW_MS) { localFails.remove(mediaId); return false }
+            return st.count >= LOCAL_FAIL_LIMIT
+        }
     }
 
     /**

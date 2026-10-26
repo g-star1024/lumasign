@@ -29,6 +29,9 @@ import java.net.Socket
 object LocalMediaServer {
     private const val TAG = "LumaLocalMedia"
 
+    /** 单连接最多处理的请求数（防线程/连接堆积） */
+    private const val MAX_REQS_PER_CONN = 16
+
     /** 回环端口（0 = 由系统分配，start 后可读） */
     @Volatile
     var port: Int = 0
@@ -69,15 +72,18 @@ object LocalMediaServer {
 
     private fun handle(sock: Socket) {
         try {
-            sock.soTimeout = 20000
+            sock.soTimeout = 8000
             val input = BufferedReader(InputStreamReader(sock.getInputStream(), "UTF-8"))
             val out = BufferedOutputStream(sock.getOutputStream())
-            // ★ v1.3.51：同一连接上循环处理多个请求（keep-alive）——
+            // ★ v1.3.51/52：同一连接上循环处理多个请求（keep-alive）——
             //   媒体栈（ffmpeg/RockFFPlayer）会在一个连接上连发多次 Range 请求，
             //   服务端若每次都关连接，它下一次请求就「open fail」。
-            while (true) {
+            //   但连接数与时长必须封顶（MAX_REQS_PER_CONN / soTimeout），否则线程会堆积。
+            var served = 0
+            while (served < MAX_REQS_PER_CONN) {
                 val requestLine = input.readLine() ?: break      // 客户端断开
                 if (requestLine.isBlank()) continue
+                served++
                 val headers = HashMap<String, String>()
                 while (true) {
                     val line = input.readLine() ?: break
@@ -105,6 +111,14 @@ object LocalMediaServer {
 
                 val total = f.length()
                 val mime = MediaCache.sniffMime(f)
+                // ★ v1.3.52：与桌面端 sendFile 完全同款的缓存语义（ETag / Cache-Control / 304），
+                //   媒体栈对「像静态文件服务器」的响应最友好（桌面端 /api/t/media 就是这么发的）。
+                val etag = "W/\"${total}-${f.lastModified()}\""
+                if (headers["if-none-match"] == etag) {
+                    out.write("HTTP/1.1 304 Not Modified\r\nETag: $etag\r\nCache-Control: public, max-age=300, must-revalidate\r\nConnection: keep-alive\r\n\r\n".toByteArray(Charsets.UTF_8))
+                    out.flush()
+                    continue
+                }
                 var start = 0L
                 var end = total - 1
                 var code = 200
@@ -130,8 +144,9 @@ object LocalMediaServer {
                 head.append("Content-Type: ").append(mime).append("\r\n")
                 head.append("Content-Length: ").append(len).append("\r\n")
                 head.append("Accept-Ranges: bytes\r\n")
+                head.append("ETag: ").append(etag).append("\r\n")
                 if (code == 206) head.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(total).append("\r\n")
-                head.append("Cache-Control: no-store\r\n")
+                head.append("Cache-Control: public, max-age=300, must-revalidate\r\n")
                 head.append("Connection: keep-alive\r\n\r\n")
                 out.write(head.toString().toByteArray(Charsets.UTF_8))
                 out.flush()
