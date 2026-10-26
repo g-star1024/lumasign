@@ -206,15 +206,25 @@ function renderVideo(holder, item, resolver, onEnd) {
   //   v1.3.47：blob 播放失败（error/看门狗）时永久回退直连 URL——Chromium 33 媒体栈
   //   不支持 blob: 协议（实测 err 4），而直连同文件可正常播放；重下载由 APK MediaCache 兜底。
   //   无 mediaId 且无 url 时直接走 error 分支由调用方处理。
-  mediaBlobUrl(cacheKey, url, (blobUrl) => {
-    if (aborted) return;   // 期间已被切走/移除：不设 src，blob 已进缓存供次播使用
-    const useBlob = !!blobUrl && !_blobMediaBroken;
-    v.src = useBlob ? blobUrl : url;
-    v._lumaBlob = useBlob;
+  if (!blobMediaUsable()) {
+    // ★ v1.3.48：Chromium 33 不认 blob: 协议，且 mediaBlobUrl 的 XHR 拉全片做 blob 会白白
+    //   占内存（每轮轮播重拉一次，缓存最多 8 条≈40MB 常驻）。blob 不可用时直接走直连 URL
+    //   （重下载由 APK MediaCache 的 shouldInterceptRequest 本地回源兜底），跳过 XHR，立即播放。
+    try { v.src = url; } catch (e) { /* ignore */ }
     armWatchdog();
-    const p = v.play();
-    if (p && p.catch) p.catch(() => {});
-  });
+    const p0 = v.play();
+    if (p0 && p0.catch) p0.catch(() => {});
+  } else {
+    mediaBlobUrl(cacheKey, url, (blobUrl) => {
+      if (aborted) return;   // 期间已被切走/移除：不设 src，blob 已进缓存供次播使用
+      const useBlob = !!blobUrl && !_blobMediaBroken;
+      v.src = useBlob ? blobUrl : url;
+      v._lumaBlob = useBlob;
+      armWatchdog();
+      const p = v.play();
+      if (p && p.catch) p.catch(() => {});
+    });
+  }
 
   // ★ 断点续播（v1.3.31，对齐竞品 BreakPointDBAdapter）：
   //   1. 加载完成后查询服务端保存的播放位置，有则 seek
@@ -250,6 +260,12 @@ function renderVideo(holder, item, resolver, onEnd) {
       try { if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration); } catch (e) { /* ignore */ }
     }
     try { v.pause(); } catch (e) { /* ignore */ }
+    // ★ v1.3.48：显式释放视频解码器缓冲——4.4 上仅从 DOM 移除 <video> 不会立即回收解码缓冲，
+    //   跨轮播累积会把 1GB 设备内存撑爆（LMKD 杀渲染进程→黑屏卡死）。src 清空 + load() 强制释放，
+    //   再移除元素，确保每轮切换都归还解码器资源。
+    try { v.removeAttribute('src'); v.src = ''; } catch (e) { /* ignore */ }
+    try { v.load(); } catch (e) { /* ignore */ }
+    if (v.parentNode) { try { v.parentNode.removeChild(v); } catch (e) { /* ignore */ } }
   };
 }
 

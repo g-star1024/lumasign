@@ -1166,15 +1166,24 @@ function _unsupported_iterable_to_array(o, minLen) {
                 onEnd && onEnd();
             }
         });
-        mediaBlobUrl(cacheKey, url, function(blobUrl) {
-            if (aborted) return;
-            var useBlob = !!blobUrl && !_blobMediaBroken;
-            v.src = useBlob ? blobUrl : url;
-            v._lumaBlob = useBlob;
+        if (!blobMediaUsable()) {
+            try {
+                v.src = url;
+            } catch (e) {}
             armWatchdog();
-            var p = v.play();
-            if (p && p.catch) p.catch(function() {});
-        });
+            var p0 = v.play();
+            if (p0 && p0.catch) p0.catch(function() {});
+        } else {
+            mediaBlobUrl(cacheKey, url, function(blobUrl) {
+                if (aborted) return;
+                var useBlob = !!blobUrl && !_blobMediaBroken;
+                v.src = useBlob ? blobUrl : url;
+                v._lumaBlob = useBlob;
+                armWatchdog();
+                var p = v.play();
+                if (p && p.catch) p.catch(function() {});
+            });
+        }
         if (window.__lumaPlayer) {
             var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
             v.addEventListener("loadedmetadata", function() {
@@ -1212,6 +1221,18 @@ function _unsupported_iterable_to_array(o, minLen) {
             try {
                 v.pause();
             } catch (e) {}
+            try {
+                v.removeAttribute("src");
+                v.src = "";
+            } catch (e) {}
+            try {
+                v.load();
+            } catch (e) {}
+            if (v.parentNode) {
+                try {
+                    v.parentNode.removeChild(v);
+                } catch (e) {}
+            }
         };
     }
     function renderBorderMarquee(holder, item) {

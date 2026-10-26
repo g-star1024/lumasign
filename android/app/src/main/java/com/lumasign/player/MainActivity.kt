@@ -71,6 +71,10 @@ class MainActivity : AppCompatActivity() {
     private var webViewPageLoaded = false
     private var webViewRecoveryStreak = 0
     private var lastWebViewRecoveryAt = 0L
+    // ★ v1.3.48：原生渲染器活性探针状态——独立于 JS ping，直接探测 WebView 渲染进程是否还能响应。
+    //   探针在途标记 + 派发时刻；若超时未回 → 渲染进程已死/卡死 → 触发恢复（reload/重启）。
+    private var webViewProbePending = false
+    private var webViewProbeIssuedAt = 0L
     private val webViewLivenessCheck = object : Runnable {
         override fun run() {
             try { checkWebViewLiveness() } catch (_: Exception) { /* 看门狗自身异常绝不致命 */ }
@@ -164,6 +168,13 @@ class MainActivity : AppCompatActivity() {
         const val WEBVIEW_RECOVERY_COOLDOWN_MS = 120_000L
         /** 连续恢复失败达该次数 → 放弃 reload 升级为整进程重启 */
         const val WEBVIEW_MAX_RECOVERY_STREAK = 3
+        /**
+         * ★ v1.3.48：原生渲染器活性探针超时。
+         * 每隔检查周期派发一次 evaluateJavascript，若超过该时长回调仍未到达，
+         * 判定渲染进程已死/主线程卡死（4.4 上 LMKD 杀渲染进程后页面常仍“画着最后一帧”，
+         * 但 JS 全死、evaluateJavascript 不再返回）——这正是“画面还画着但引擎已死”的冻结态。
+         */
+        const val WEBVIEW_PROBE_TIMEOUT_MS = 5_000L
         @JvmField var crashCount: Int = 0
     }
 
@@ -523,35 +534,71 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * WebView 活性检查（v1.3.45）：页面曾成功加载但 JS 引擎超过
-     * [WEBVIEW_ALIVE_TIMEOUT_MS] 未报活 → 判渲染进程已死（黑屏死寂态）。
-     * 恢复动作带 cooldown 防风暴；连续 [WEBVIEW_MAX_RECOVERY_STREAK] 次救不回
-     * → 升级为 restartApp() 整进程重启。每次恢复都落崩溃日志，供管理端出证。
+     * WebView 活性检查（v1.3.45，v1.3.48 加固）：
+     *  - 原生渲染器探针：页面已加载时每周期派发 evaluateJavascript，超过 [WEBVIEW_PROBE_TIMEOUT_MS]
+     *    回调未到 → 渲染进程已死/主线程卡死。4.4 上 LMKD 杀渲染进程后页面常仍“画着最后一帧”，
+     *    但 JS 全死、evaluateJavascript 不再返回——这正是“画面还画着但引擎已死”的冻结态，
+     *    旧版仅靠 JS ping + onPageFinished 门控会漏判（现场曾冻结 67 分钟未被 reload）。
+     *  - JS 心跳失活：页面曾加载但引擎循环超过 [WEBVIEW_ALIVE_TIMEOUT_MS] 未 ping → 判引擎循环死。
+     *    注意：探针只清自己的在途标记，绝不改写 lastWebViewAliveAt，否则会掩盖“引擎死但渲染进程还活着”的分支。
+     * 两种信号任一命中即走 [handleWebViewDead]（reload → 连败升级 restartApp），带 cooldown 防风暴。
      */
     private fun checkWebViewLiveness() {
-        if (!webViewPageLoaded) return          // 页面未加载成功：交给既有重连逻辑，不介入
+        if (!webViewPageLoaded) return          // 页面未加载成功：交给既有重连逻辑，不介入（含探针，避免重连期风暴）
+        val now = SystemClock.elapsedRealtime()
+        // ① 原生渲染器探针超时判定：在途探针超过阈值无回调 → 渲染进程无响应（画面画着但已死）
+        if (webViewProbePending && webViewProbeIssuedAt > 0L
+            && now - webViewProbeIssuedAt > WEBVIEW_PROBE_TIMEOUT_MS) {
+            webViewProbePending = false
+            handleWebViewDead(now, "renderer unresponsive >${WEBVIEW_PROBE_TIMEOUT_MS}ms")
+            return
+        }
+        // ② 派发新探针（无在途探针时）。回调到达即证明渲染进程活着，仅清在途标记，不碰 JS 心跳时间戳。
+        if (!webViewProbePending) {
+            webViewProbePending = true
+            webViewProbeIssuedAt = now
+            try {
+                webView.evaluateJavascript("1") { _ -> webViewProbePending = false }
+            } catch (_: Exception) {
+                webViewProbePending = false
+                handleWebViewDead(SystemClock.elapsedRealtime(), "evaluateJavascript threw")
+                return
+            }
+        }
+        // ③ JS 心跳失活判定（引擎循环已死，ping 长期不来）
         val aliveAt = lastWebViewAliveAt
         if (aliveAt <= 0L) return
-        val now = SystemClock.elapsedRealtime()
         if (now - aliveAt < WEBVIEW_ALIVE_TIMEOUT_MS) {
             webViewRecoveryStreak = 0           // 恢复健康：清零连败计数
             return
         }
+        handleWebViewDead(now, "no js ping >${WEBVIEW_ALIVE_TIMEOUT_MS}ms")
+    }
+
+    /**
+     * 统一恢复入口（v1.3.48 抽出）：渲染进程判死后执行 reload，连续
+     * [WEBVIEW_MAX_RECOVERY_STREAK] 次救不回 → 升级 restartApp() 整进程重启。
+     * 带 [WEBVIEW_RECOVERY_COOLDOWN_MS] 冷却防恢复风暴，每次恢复落崩溃日志供管理端出证。
+     */
+    private fun handleWebViewDead(now: Long, reason: String) {
         if (now - lastWebViewRecoveryAt < WEBVIEW_RECOVERY_COOLDOWN_MS) return
         lastWebViewRecoveryAt = now
         webViewRecoveryStreak++
-        val deadMs = now - aliveAt
+        val deadMs = if (lastWebViewAliveAt > 0L) now - lastWebViewAliveAt else 0L
         try {
-            writeCrashLog(RuntimeException("webview liveness: dead ${deadMs}ms, streak=$webViewRecoveryStreak"))
+            writeCrashLog(RuntimeException("webview liveness: $reason, streak=$webViewRecoveryStreak"))
         } catch (_: Exception) { /* 日志失败不阻断恢复 */ }
         val recovered = if (webViewRecoveryStreak >= WEBVIEW_MAX_RECOVERY_STREAK) {
-            Log.w(TAG, "WebView 活性看门狗：reload x$webViewRecoveryStreak 未恢复，重启应用")
+            Log.w(TAG, "WebView 活性看门狗：reload x$webViewRecoveryStreak 未恢复，重启应用 ($reason)")
             try { bridge.restartApp(); true } catch (_: Exception) { recreate(); true }
         } else {
-            Log.w(TAG, "WebView 活性看门狗：失联 ${deadMs}ms，reload（第 $webViewRecoveryStreak 次）")
+            Log.w(TAG, "WebView 活性看门狗：失联，reload（第 $webViewRecoveryStreak 次）($reason)")
             try { webView.reload(); true } catch (_: Exception) { recreate(); true }
         }
-        if (recovered) lastWebViewAliveAt = SystemClock.elapsedRealtime()   // 给恢复动作留 grace
+        if (recovered) {
+            lastWebViewAliveAt = SystemClock.elapsedRealtime()   // 给恢复动作留 grace
+            webViewProbePending = false
+        }
     }
 
     private fun onMainFrameError(desc: String?) {
