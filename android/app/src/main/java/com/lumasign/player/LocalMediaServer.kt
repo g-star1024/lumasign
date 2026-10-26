@@ -122,7 +122,7 @@ object LocalMediaServer {
             if (code == 206) head.append("Content-Range: bytes ").append(start).append('-').append(end).append('/').append(total).append("\r\n")
             head.append("Cache-Control: no-store\r\n")
             head.append("Connection: close\r\n\r\n")
-            out.write(head.toString().toByteArray("UTF-8"))
+            out.write(head.toString().toByteArray(Charsets.UTF_8))
             out.flush()
             if (len > 0) {
                 RandomAccessFile(f, "r").use { raf ->
@@ -154,7 +154,7 @@ object LocalMediaServer {
             head.append("Content-Length: ").append(body.size).append("\r\n")
             if (extra != null) head.append(extra).append("\r\n")
             head.append("Connection: close\r\n\r\n")
-            out.write(head.toString().toByteArray("UTF-8"))
+            out.write(head.toString().toByteArray(Charsets.UTF_8))
             out.write(body)
             out.flush()
         } catch (_: Exception) {}
