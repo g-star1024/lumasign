@@ -210,7 +210,12 @@ export function registerTerminalApi(router, ctx) {
     const h = sse(res);
     bus.attachTerminal(t.id, h);
     h.send('hello', { serverTime: Date.now(), terminalId: t.id, name: t.name });
-    const ping = setInterval(() => { if (!h.send('ping', { t: Date.now() })) cleanup(); }, 25000);
+    // ★ v1.3.52：keep-alive 心跳由 25s 降到 8s——实测设备端 SSE 每 15.1s 断开重连一次
+    //   （2395 次连接、间隔 15071/15100/15091…ms 高度规律），而 curl 保持同一连接 40s 不掉：
+    //   说明是**客户端侧对空闲流的超时**（Chromium 33 的 EventSource 流加载器），
+    //   服务端首个 ping 在 25s > 空闲阈值 → 每次都是「还没等到 ping 就被掐」→ 15s 周期性重连。
+    //   提前到 8s 心跳即可让流保持活跃，根除周期性重连（也顺带消除管理端 toast 抖动源）。
+    const ping = setInterval(() => { if (!h.send('ping', { t: Date.now() })) cleanup(); }, 8000);
     const cleanup = () => { clearInterval(ping); bus.detachTerminal(t.id, h); h.close(); };
     req.on('close', cleanup);
     req.on('error', cleanup);
