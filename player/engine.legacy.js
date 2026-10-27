@@ -1064,6 +1064,13 @@ function _unsupported_iterable_to_array(o, minLen) {
             done(null);
         }
     }
+    var LOCAL_MEDIA_ON = function() {
+        try {
+            return /(^|[?&])localmedia=1(&|$)/.test(String(location.search || ""));
+        } catch (e) {
+            return false;
+        }
+    }();
     function renderImage(holder, item, resolver2) {
         var img = document.createElement("img");
         var url = item.mediaId ? resolver2(item.mediaId) : item.url || "";
@@ -1108,7 +1115,7 @@ function _unsupported_iterable_to_array(o, minLen) {
         var cacheKey = item.mediaId || url;
         var src = url;
         try {
-            if (window.LumaBridge && typeof window.LumaBridge.localMediaUrl === "function") {
+            if (LOCAL_MEDIA_ON && window.LumaBridge && typeof window.LumaBridge.localMediaUrl === "function") {
                 var mid = item.mediaId || String(url || "").split("?")[0].split("/").pop() || "";
                 if (mid) {
                     var local = window.LumaBridge.localMediaUrl(mid);

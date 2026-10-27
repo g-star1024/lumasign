@@ -291,12 +291,30 @@ class LumaBridge(private val activity: MainActivity, private val webView: WebVie
     @JavascriptInterface
     fun localMediaUrl(mediaId: String): String? {
         return try {
-            if (mediaId.isBlank()) null
+            if (!localMediaEnabled()) null       // ★ v1.3.53 原生侧总开关（默认关）
+            else if (mediaId.isBlank()) null
             else if (LocalMediaServer.port <= 0) null
             else if (MediaCache.localFile(mediaId) == null) null
             else if (isLocalCircuitOpen(mediaId)) null
             else "http://127.0.0.1:${LocalMediaServer.port}/media/$mediaId"
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * 本地回环媒体源**原生侧总开关**（v1.3.53，默认关）。
+     *
+     * 为什么要有原生侧的第二道闸：v1.3.51 真机上本地回环播放生效了（媒体栈改打 127.0.0.1、
+     * 服务端媒体请求骤降），但随后设备整机失联 40 分钟且 adbd 起来又掉（重启循环）——
+     * 唯一新增变量就是「平台媒体栈(RockFFPlayer) 改读本机回环 HTTP 源」。老 ROM 媒体驱动
+     * 在该路径上崩溃的风险不可接受（现场只有一台，崩了即砖）。
+     * 因此：即使设备上还是旧版播放页（WebView 缓存），原生也不再发放本地地址 → 强制走网络直连。
+     * 复验时把 pref `local_media_enabled` 置 true（root 下可直接改 luma_config.xml）。
+     */
+    private fun localMediaEnabled(): Boolean {
+        return try {
+            val sp = activity.getSharedPreferences("luma_config", android.content.Context.MODE_PRIVATE)
+            sp.getBoolean("local_media_enabled", false)
+        } catch (_: Exception) { false }
     }
 
     /** 播放端回报「本地源播放失败」→ 计入熔断计数（v1.3.52） */

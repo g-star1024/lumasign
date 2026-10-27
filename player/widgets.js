@@ -110,6 +110,13 @@ export function mediaBlobUrl(key, url, cb) {
 }
 
 /* ---------------- 图片 ---------------- */
+/* ★ v1.3.53：本地回环媒体源开关（默认关，见 renderVideo 内的说明）。
+ *   开启方式：播放页 URL 带 ?localmedia=1（仅限可随时断电的验证设备）。 */
+const LOCAL_MEDIA_ON = (function () {
+  try { return /(^|[?&])localmedia=1(&|$)/.test(String(location.search || '')); }
+  catch (e) { return false; }
+})();
+
 function renderImage(holder, item, resolver) {
   const img = document.createElement('img');
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
@@ -163,7 +170,13 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
   //   注：file:// 不行——Chromium 33 对 http 源页面直接拒绝「Not allowed to load local resource」。
   let src = url;
   try {
-    if (window.LumaBridge && typeof window.LumaBridge.localMediaUrl === 'function') {
+    // ★ v1.3.53：本地回环媒体源**默认关闭**——
+    //   v1.3.51 真机上本地回环播放确实生效了（媒体栈改打 127.0.0.1、服务端媒体请求 10 次/2分→2 次/110 秒），
+    //   但随后设备整机失联 40 分钟、且 adbd 起来又掉（重启/崩溃循环），唯一新增变量就是「平台媒体栈
+    //   (RockFFPlayer) 改读本机回环 HTTP 源」。老 ROM 媒体驱动在这个路径上崩的风险不可接受
+    //   （现场设备是唯一一台，崩了就砖），故先全局关掉本地源、回到已验证的网络直连路径。
+    //   需要复验时用 ?localmedia=1 打开（务必在可随时断电的设备上做）。
+    if (LOCAL_MEDIA_ON && window.LumaBridge && typeof window.LumaBridge.localMediaUrl === 'function') {
       const mid = item.mediaId || (String(url || '').split('?')[0].split('/').pop() || '');
       if (mid) {
         const local = window.LumaBridge.localMediaUrl(mid);

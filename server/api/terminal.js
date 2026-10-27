@@ -258,6 +258,11 @@ export function registerTerminalApi(router, ctx) {
   router.get('/api/t/media/:hash', async (req, res, { hash }, url) => {
     const t = authTerminal(req, url);
     if (!t) return fail(res, '终端未注册或令牌无效', 401);
+    // ★ v1.3.53 应急闸：LUMASIGN_MEDIA_OFF=1 时拒绝一切素材下发。
+    //   背景：v1.3.51 起终端改从本机回环源取素材，随后设备进入重启循环（adbd 起来又掉，
+    //   疑似 ROM 媒体栈读回环源时驱动崩溃）。先用服务端闸门把「媒体栈」从链路上摘掉，
+    //   让设备先活下来；装上带原生侧熔断的 APK 后再放开。
+    if (process.env.LUMASIGN_MEDIA_OFF === '1') return fail(res, '素材下发已临时关闭', 503);
     const bare = hash.replace(/\.[^.]+$/, '');
     const m = S('media').findOne(x => x.hash === hash || x.hash === bare || x.id === hash || x.id === bare);
     if (!m) return fail(res, '素材不存在', 404);
