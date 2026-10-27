@@ -13,6 +13,26 @@
  */
 import { renderWidget, mediaBlobUrl, blobMediaUsable, noteBlobMediaBroken } from './widgets.js';
 
+/* ★ v1.3.51：页面卸载前必须停掉所有 <video>——
+ *   Android 4.4 WebView 的视频硬件 overlay（SurfaceView）在「页面导航/重载时视频正在播放」
+ *   会被遗留（orphan）→ WebView 合成层挂掉：屏幕全黑，但 DOM 完全正常
+ *   （实测：img complete、holder opacity=1、layout 正确，只有物理屏是纯黑，且必须再 reload 才恢复）。
+ *   这就是「加视频就长时间黑屏、纯图片不会」的真凶之一（另一是淡入未出帧，已修）。
+ *   卸载前主动 pause + 释放 src，让 overlay 正常回收。 */
+function stopAllMediaForUnload() {
+  try {
+    var vs = document.querySelectorAll('video');
+    for (var i = 0; i < vs.length; i++) {
+      var v = vs[i];
+      try { v.pause(); } catch (e) { }
+      try { v.removeAttribute('src'); v.src = ''; } catch (e) { }
+      try { v.load(); } catch (e) { }
+    }
+  } catch (e) { }
+}
+try { window.addEventListener('pagehide', stopAllMediaForUnload, true); } catch (e) { }
+try { window.addEventListener('beforeunload', stopAllMediaForUnload, true); } catch (e) { }
+
 const app = document.getElementById('app');
 const fallback = document.getElementById('fallback');
 const welcome = document.getElementById('welcome');

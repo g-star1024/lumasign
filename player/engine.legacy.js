@@ -2453,6 +2453,30 @@ function _unsupported_iterable_to_array(o, minLen) {
         return fn(holder, item, resolver2, onEnd, onReady) || function() {};
     }
     // player/engine.js
+    function stopAllMediaForUnload() {
+        try {
+            var vs = document.querySelectorAll("video");
+            for(var i = 0; i < vs.length; i++){
+                var v = vs[i];
+                try {
+                    v.pause();
+                } catch (e) {}
+                try {
+                    v.removeAttribute("src");
+                    v.src = "";
+                } catch (e) {}
+                try {
+                    v.load();
+                } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    try {
+        window.addEventListener("pagehide", stopAllMediaForUnload, true);
+    } catch (e) {}
+    try {
+        window.addEventListener("beforeunload", stopAllMediaForUnload, true);
+    } catch (e) {}
     var app = document.getElementById("app");
     var fallback = document.getElementById("fallback");
     var welcome = document.getElementById("welcome");
