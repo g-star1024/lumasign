@@ -145,6 +145,7 @@ class Player {
     this.ctl = { aborted: false };
     this.regionCtls = [];
     this.stage = null;
+    this.stageDual = null;   // ★ v1.3.56：双屏模式的舞台容器（切排期时同样留作垫底）
     this.layout = null;
     this.resolver = id => id;
     this.mode = 'preview';
@@ -175,8 +176,23 @@ class Player {
     if (this.es) { try { this.es.close(); } catch {} this.es = null; }
     if (this._dsTimer) { clearInterval(this._dsTimer); this._dsTimer = null; }
     this.stopRotation();
-    app.innerHTML = '';
-    this.stage = null; this.regionCtls = []; this.hotspotsLayer = null;
+    // ★ v1.3.56：舞台**不要立刻清空**——原来 `app.innerHTML=''` 会让屏幕瞬间露出黑色背景
+    //   （body 背景），新内容再从 opacity:0 淡入 → **每次切素材都黑一下**（真机肉眼可见，
+    //   与视频/图片无关，纯图片节目同样会闪）。
+    //   改为：旧舞台留在 DOM 里垫底（新舞台 append 在其后 → 盖在上面淡入），1.4s 后再移除；
+    //   旧舞台里的 video 暂停（留最后一帧），避免继续解码占内存。
+    const oldStage = this.stage || this.stageDual;
+    this.stage = null; this.stageDual = null; this.regionCtls = []; this.hotspotsLayer = null;
+    if (oldStage && oldStage.parentNode) {
+      try {
+        oldStage.style.pointerEvents = 'none';
+        const ovs = oldStage.querySelectorAll('video');
+        for (let i = 0; i < ovs.length; i++) { try { ovs[i].pause(); } catch (e) { } }
+      } catch (e) { }
+      setTimeout(() => { try { if (oldStage.parentNode) oldStage.parentNode.removeChild(oldStage); } catch (e) { } }, 1400);
+    } else {
+      app.innerHTML = '';
+    }
     if (this.navBar && this.navBar.parentNode) this.navBar.remove();
     this.navBar = null; this.cancelNavTimer();
   }
@@ -958,14 +974,10 @@ class Player {
         this.reportPlay({ itemId: item.id, mediaId: item.mediaId || null, startedAt, endedAt });
 
         if (!loop && idx >= items.length - 1) {
-          // 不循环的最后一项：淡出后收尾（循环播放的切换由下一轮交叉淡入接管，不做淡出）
-          holder.classList.remove('show');
-          holder.classList.add('hide');
-          const tName2 = region.transition || 'fade';
-          await this.wait((tName2 === 'none') ? 0 : transitionMs(tName2), () => true, ctl);
-          try { stop(); } catch (e2) { /* ignore */ }
-          if (holder.parentNode) holder.remove();
-          showing = null;
+          // ★ v1.3.56：不再「淡出到黑」收尾——淡出会把 opacity 降到 0，露出黑色舞台背景，
+          //   切素材时肉眼可见地黑一下。改为：保持最后一帧留在屏上，等下一个内容淡入盖住它
+          //   （真正的交叉淡入）；本层随旧舞台一起在 1.4s 后被移除（见 stop()）。
+          //   注意这里**不要**调 stop()：那会把 <video> 停放/释放，最后一帧随之消失 → 又是黑的。
           break;
         }
         idx = (idx + 1) % Math.max(1, items.length);

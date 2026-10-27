@@ -2700,6 +2700,7 @@ function _unsupported_iterable_to_array(o, minLen) {
             };
             this.regionCtls = [];
             this.stage = null;
+            this.stageDual = null;
             this.layout = null;
             this.resolver = function(id) {
                 return id;
@@ -2748,10 +2749,29 @@ function _unsupported_iterable_to_array(o, minLen) {
                         this._dsTimer = null;
                     }
                     this.stopRotation();
-                    app.innerHTML = "";
+                    var oldStage = this.stage || this.stageDual;
                     this.stage = null;
+                    this.stageDual = null;
                     this.regionCtls = [];
                     this.hotspotsLayer = null;
+                    if (oldStage && oldStage.parentNode) {
+                        try {
+                            oldStage.style.pointerEvents = "none";
+                            var ovs = oldStage.querySelectorAll("video");
+                            for(var i1 = 0; i1 < ovs.length; i1++){
+                                try {
+                                    ovs[i1].pause();
+                                } catch (e) {}
+                            }
+                        } catch (e) {}
+                        setTimeout(function() {
+                            try {
+                                if (oldStage.parentNode) oldStage.parentNode.removeChild(oldStage);
+                            } catch (e) {}
+                        }, 1400);
+                    } else {
+                        app.innerHTML = "";
+                    }
                     if (this.navBar && this.navBar.parentNode) this.navBar.remove();
                     this.navBar = null;
                     this.cancelNavTimer();
@@ -3957,7 +3977,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                 switch(_state.label){
                                     case 0:
                                         _loop = function() {
-                                            var items, item, warm, warmKey, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, it, u, holder, ended, onEnd, shown, stop, tName, tDur, prev, removePrev, doShow, readyTimer, single, ms, startedAt, endedAt, tName2;
+                                            var items, item, warm, warmKey, _iteratorNormalCompletion, _didIteratorError, _iteratorError, _iterator, _step, it, u, holder, ended, onEnd, shown, stop, tName, tDur, prev, removePrev, doShow, readyTimer, single, ms, startedAt, endedAt;
                                             return _ts_generator(this, function(_state) {
                                                 switch(_state.label){
                                                     case 0:
@@ -4096,31 +4116,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             startedAt: startedAt,
                                                             endedAt: endedAt
                                                         });
-                                                        if (!(!loop && idx >= items.length - 1)) return [
-                                                            3,
-                                                            5
-                                                        ];
-                                                        holder.classList.remove("show");
-                                                        holder.classList.add("hide");
-                                                        tName2 = region.transition || "fade";
-                                                        return [
-                                                            4,
-                                                            _this.wait(tName2 === "none" ? 0 : transitionMs(tName2), function() {
-                                                                return true;
-                                                            }, ctl)
-                                                        ];
-                                                    case 4:
-                                                        _state.sent();
-                                                        try {
-                                                            stop();
-                                                        } catch (e2) {}
-                                                        if (holder.parentNode) holder.remove();
-                                                        showing = null;
-                                                        return [
-                                                            2,
-                                                            "break"
-                                                        ];
-                                                    case 5:
+                                                        if (!loop && idx >= items.length - 1) {
+                                                            return [
+                                                                2,
+                                                                "break"
+                                                            ];
+                                                        }
                                                         idx = (idx + 1) % Math.max(1, items.length);
                                                         return [
                                                             2
