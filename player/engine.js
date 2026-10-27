@@ -1216,6 +1216,16 @@ class Player {
     const url = `/api/t/events?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`;
     const es = new EventSource(url);
     this.es = es;
+    // ★ v1.3.54 诊断：把 SSE 连接建立/断开时刻与 readyState 上报到服务端 access log，
+    //   用于定位「每 15.1s 周期性重连」到底是谁先断开的。
+    const sseOpenedAt = Date.now();
+    try {
+      const report = (stage, extra) => {
+        try { fetch(`/api/t/ping?stage=${stage}${extra || ''}&t=${Date.now()}`).catch(() => {}); } catch (e) { }
+      };
+      es.addEventListener('open', () => report('sse-open'));
+      es.addEventListener('error', () => report('sse-err', '&rs=' + (es.readyState || 0) + '&alive=' + (Date.now() - sseOpenedAt)));
+    } catch (e) { }
     es.addEventListener('command', ev => {
       let cmd; try { cmd = JSON.parse(ev.data); } catch { return; }
       this.handleCommand(cmd);

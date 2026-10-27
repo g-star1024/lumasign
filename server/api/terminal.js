@@ -216,9 +216,16 @@ export function registerTerminalApi(router, ctx) {
     //   服务端首个 ping 在 25s > 空闲阈值 → 每次都是「还没等到 ping 就被掐」→ 15s 周期性重连。
     //   提前到 8s 心跳即可让流保持活跃，根除周期性重连（也顺带消除管理端 toast 抖动源）。
     const ping = setInterval(() => { if (!h.send('ping', { t: Date.now() })) cleanup(); }, 8000);
-    const cleanup = () => { clearInterval(ping); bus.detachTerminal(t.id, h); h.close(); };
-    req.on('close', cleanup);
-    req.on('error', cleanup);
+    // ★ v1.3.54 诊断：记录 SSE 连接的存活时长与关闭方（req close = 客户端断；res finish = 服务端结束）
+    const openedAt = Date.now();
+    try { logger?.task?.({ kind: 'sse_open', terminalId: t.id }); } catch (_e) { }
+    const cleanup = (by) => {
+      clearInterval(ping); bus.detachTerminal(t.id, h); h.close();
+      try { logger?.task?.({ kind: 'sse_close', terminalId: t.id, by, ms: Date.now() - openedAt }); } catch (_e) { }
+    };
+    req.on('close', () => cleanup('client'));
+    req.on('error', () => cleanup('error'));
+    res.on('finish', () => cleanup('server-finish'));
   });
 
   /* ---------------- 长轮询降级（老 WebView 无 SSE 时） ---------------- */

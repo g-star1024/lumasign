@@ -4708,6 +4708,20 @@ function _unsupported_iterable_to_array(o, minLen) {
                     var url = "/api/t/events?terminalId=".concat(encodeURIComponent(this.terminalId), "&token=").concat(encodeURIComponent(this.token || ""));
                     var es = new EventSource(url);
                     this.es = es;
+                    var sseOpenedAt = Date.now();
+                    try {
+                        var report = function report(stage, extra) {
+                            try {
+                                fetch("/api/t/ping?stage=".concat(stage).concat(extra || "", "&t=").concat(Date.now())).catch(function() {});
+                            } catch (e) {}
+                        };
+                        es.addEventListener("open", function() {
+                            return report("sse-open");
+                        });
+                        es.addEventListener("error", function() {
+                            return report("sse-err", "&rs=" + (es.readyState || 0) + "&alive=" + (Date.now() - sseOpenedAt));
+                        });
+                    } catch (e) {}
                     es.addEventListener("command", function(ev) {
                         var cmd;
                         try {
