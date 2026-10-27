@@ -145,8 +145,54 @@ function renderImage(holder, item, resolver) {
 }
 
 /* ---------------- 视频 ---------------- */
+/* ★ v1.3.55：<video> 元素**池化常驻**，不再随 holder 一起销毁。
+ *   4.4 WebView 的视频硬件 overlay（SurfaceView）在「元素被销毁 / overlay 被拆除」瞬间会闪一帧黑：
+ *   引擎切项时销毁旧 holder → <video> 随之销毁 → 切到图片时黑帧一闪（实测 100s 采样抓到 16KB 纯黑帧）。
+ *   改为：切项时先把元素「停放」到可见层之外（park），再释放解码器 → overlay 拆除的闪黑落在不可见处；
+ *   元素回收进池复用（监听器只挂一次、事件转给当前状态 __vs）→ 既不闪黑帧，也不累积 DOM/解码器/内存。 */
+const _videoPool = [];
+let _videoPark = null;
+
+function getVideoPark() {
+  if (!_videoPark) {
+    _videoPark = document.createElement('div');
+    _videoPark.className = 'luma-video-park';
+    _videoPark.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
+    (document.body || document.documentElement).appendChild(_videoPark);
+  }
+  return _videoPark;
+}
+
+/** 取一个可用的 <video>（优先复用池子里的）；监听器只挂一次，事件转给元素当前状态 __vs */
+function acquireVideo() {
+  let el = _videoPool.pop();
+  if (!el) {
+    el = document.createElement('video');
+    el.className = 'w-video';
+    el.preload = 'auto';
+    el.addEventListener('playing', () => { const s = el.__vs; if (s && s.onPlaying) s.onPlaying(); });
+    el.addEventListener('error', () => { const s = el.__vs; if (s && s.onError) s.onError(); });
+    el.addEventListener('ended', () => { const s = el.__vs; if (s && s.onEnded) s.onEnded(); });
+    el.addEventListener('timeupdate', () => { const s = el.__vs; if (s && s.onTime) s.onTime(); });
+    el.addEventListener('loadedmetadata', () => { const s = el.__vs; if (s && s.onMeta) s.onMeta(); });
+  }
+  el.__vs = null;
+  return el;
+}
+
+/** 归还：先移出可见层（overlay 拆除的闪黑帧落在不可见处），再释放解码器，最后进池复用 */
+function releaseVideo(el) {
+  el.__vs = null;
+  try { el.pause(); } catch (e) { }
+  try { getVideoPark().appendChild(el); } catch (e) { }
+  try { el.removeAttribute('src'); el.src = ''; } catch (e) { }
+  try { el.load(); } catch (e) { }
+  if (_videoPool.length < 4) { _videoPool.push(el); }
+  else { try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) { } }
+}
+
 function renderVideo(holder, item, resolver, onEnd, onReady) {
-  const v = document.createElement('video');
+  const v = acquireVideo();
   // ★ v1.3.49：首帧就绪通知——引擎据此把「淡入」推迟到视频真正出画为止。
   //   <video> 在首帧渲染前画面是全黑的，旧实现「创建即淡入」→ 淡入的就是一层黑，
   //   而旧层又在 450ms 后被撤掉 → 轮播切到视频时必露一段黑屏（纯图片无此问题）。
@@ -156,8 +202,8 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
     readyFired = true;
     try { if (typeof onReady === 'function') onReady(); } catch (e) { /* ignore */ }
   };
-  v.addEventListener('playing', fireReady);   // 播放已开始 = 首帧已上屏
-  v.addEventListener('error', fireReady);      // 出错也别卡住切换（引擎另有 2.5s 兜底）
+  // ★ v1.3.55：事件监听器不再逐次挂到元素上（元素会被复用）——统一转给下面的状态对象 S。
+  //   'playing'（首帧已上屏）→ fireReady；'error' → fireReady + 回退逻辑（见 S.onError）。
   const url = item.mediaId ? resolver(item.mediaId) : (item.url || '');
   // ★ v1.3.45：mediaId 不可变（重传换新 id），可安全作为 blob 缓存键
   const cacheKey = item.mediaId || url;
@@ -198,14 +244,16 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
   v.autoplay = true; v.playsInline = true;
   v.loop = !!item.loop && !(item.duration > 0);   // 有固定时长时不循环，播完切下一条
   v.className = 'w-video ' + (item.fit || 'cover');
-  v.addEventListener('ended', () => onEnd && onEnd());
-  holder.appendChild(v);
-  // ★ 解码停滞看门狗（v1.3.23）：HEVC 等设备不支持的编码在 RK312x/4.4 上表现为
-  //   readyState 正常但 currentTime 恒为 0（硬解不出帧）→ 区域黑屏卡死。8s 仍未走针
-  //   即视为不可播，回调 onEnd 切下一条素材；error 事件同理。
+  v._lumaBlob = false; v._lumaLocal = false; v._lumaLocalRetried = false;
+  // ★ v1.3.55：元素会被复用，所有「本次渲染」的状态收拢到这里
   let started = false;
   let watchdog = null;
   let aborted = false;
+  let lastReport = 0;
+  const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
+  // ★ 解码停滞看门狗（v1.3.23）：HEVC 等设备不支持的编码在 RK312x/4.4 上表现为
+  //   readyState 正常但 currentTime 恒为 0（硬解不出帧）→ 区域黑屏卡死。8s 仍未走针
+  //   即视为不可播，回调 onEnd 切下一条素材；error 事件同理。
   // ★ v1.3.45：看门狗改到 src 就绪后才启动——此前 src 同步设置、看门狗 8s 从渲染时起算；
   //   现在 XHR 拉取（含 MediaCache 本地回源）期间不设 src，若看门狗提前起算会在慢网下误杀。
   const armWatchdog = () => {
@@ -228,8 +276,11 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
       }
     }, 8000);
   };
-  v.addEventListener('timeupdate', () => { if (v.currentTime > 0.5) started = true; });
-  v.addEventListener('error', () => {
+  // ★ v1.3.55：事件桥——共享元素的监听器只挂一次，事件全部转给当前状态 S
+  const S = {};
+  S.onPlaying = () => { fireReady(); };   // 播放已开始 = 首帧已上屏
+  S.onError = () => {
+    fireReady();                            // 出错也别卡住切换（引擎另有 2.5s 兜底）
     // ★ v1.3.47：blob 解码失败（Chromium 33 SRC_NOT_SUPPORTED）→ 立即回退直连，不跳过
     if (v._lumaBlob && !_blobMediaBroken && !started) {
       _blobMediaBroken = true;
@@ -269,7 +320,30 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
       return;
     }
     if (!started) { if (watchdog) clearTimeout(watchdog); onEnd && onEnd(); }
-  });
+  };
+  S.onEnded = () => { onEnd && onEnd(); };
+  S.onTime = () => {
+    if (v.currentTime > 0.5) started = true;
+    // ★ 断点续播：播放中每 3s 上报一次进度（单 region 不循环时随视频播完切走）
+    if (!item.duration && window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint) {
+      const now = Date.now();
+      if (now - lastReport > 3000 && v.currentTime > 0) {
+        lastReport = now;
+        try { window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0); } catch (e) { /* ignore */ }
+      }
+    }
+  };
+  S.onMeta = () => {
+    // ★ 断点续播：加载完成后查询服务端保存的播放位置，有则 seek
+    if (window.__lumaPlayer && window.__lumaPlayer.loadBreakpoint) {
+      const bp = window.__lumaPlayer.loadBreakpoint(bpKey);
+      if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
+        try { v.currentTime = bp.position; } catch (e) { /* ignore */ }
+      }
+    }
+  };
+  v.__vs = S;
+  holder.appendChild(v);
   // ★ v1.3.45：媒体经 XHR→Blob URL 播放（见文件头「媒体 blob 缓存」注释）：
   //   消灭 Chromium 33 <video> 每轮重下同一文件的风暴；XHR 失败回退直连 URL（旧行为）。
   //   v1.3.47：blob 播放失败（error/看门狗）时永久回退直连 URL——Chromium 33 媒体栈
@@ -297,46 +371,17 @@ function renderVideo(holder, item, resolver, onEnd, onReady) {
     });
   }
 
-  // ★ 断点续播（v1.3.31，对齐竞品 BreakPointDBAdapter）：
-  //   1. 加载完成后查询服务端保存的播放位置，有则 seek
-  //   2. 播放中每 3s 上报一次进度，切换/退出前上报最终位置
-  //   3. 单 region 不循环时（视频自然播完切下一条）跳过上报——避免污染下一条素材的位置
-  if (window.__lumaPlayer) {
-    const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
-    v.addEventListener('loadedmetadata', () => {
-      if (window.__lumaPlayer.loadBreakpoint) {
-        const bp = window.__lumaPlayer.loadBreakpoint(bpKey);
-        if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
-          try { v.currentTime = bp.position; } catch (e) { /* ignore */ }
-        }
-      }
-    });
-    let lastReport = 0;
-    v.addEventListener('timeupdate', () => {
-      if (!item.duration && window.__lumaPlayer.reportBreakpoint) {
-        const now = Date.now();
-        if (now - lastReport > 3000 && v.currentTime > 0) {
-          lastReport = now;
-          try { window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0); } catch (e) { /* ignore */ }
-        }
-      }
-    });
-  }
+  // ★ 断点续播（v1.3.31，对齐竞品 BreakPointDBAdapter）：已并入 S.onMeta / S.onTime（见上）。
 
   return () => {
     aborted = true;
-    if (watchdog) clearTimeout(watchdog);
+    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
     if (window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint && item.id) {
-      const bpKey = (item.id || '') + '|' + (item.mediaId || url || '');
       try { if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration); } catch (e) { /* ignore */ }
     }
-    try { v.pause(); } catch (e) { /* ignore */ }
-    // ★ v1.3.48：显式释放视频解码器缓冲——4.4 上仅从 DOM 移除 <video> 不会立即回收解码缓冲，
-    //   跨轮播累积会把 1GB 设备内存撑爆（LMKD 杀渲染进程→黑屏卡死）。src 清空 + load() 强制释放，
-    //   再移除元素，确保每轮切换都归还解码器资源。
-    try { v.removeAttribute('src'); v.src = ''; } catch (e) { /* ignore */ }
-    try { v.load(); } catch (e) { /* ignore */ }
-    if (v.parentNode) { try { v.parentNode.removeChild(v); } catch (e) { /* ignore */ } }
+    // ★ v1.3.55：归还视频元素——先移出可见层再释放解码器（overlay 拆除的闪黑帧落在不可见处），
+    //   元素进池复用，不再随 holder 销毁（v1.3.48 的「每轮归还解码器」诉求由 releaseVideo 保留）。
+    releaseVideo(v);
   };
 }
 

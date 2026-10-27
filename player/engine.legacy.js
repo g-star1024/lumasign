@@ -1099,8 +1099,72 @@ function _unsupported_iterable_to_array(o, minLen) {
         holder.appendChild(img);
         return function() {};
     }
+    var _videoPool = [];
+    var _videoPark = null;
+    function getVideoPark() {
+        if (!_videoPark) {
+            _videoPark = document.createElement("div");
+            _videoPark.className = "luma-video-park";
+            _videoPark.style.cssText = "position:absolute;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;";
+            (document.body || document.documentElement).appendChild(_videoPark);
+        }
+        return _videoPark;
+    }
+    function acquireVideo() {
+        var el2 = _videoPool.pop();
+        if (!el2) {
+            el2 = document.createElement("video");
+            el2.className = "w-video";
+            el2.preload = "auto";
+            el2.addEventListener("playing", function() {
+                var s = el2.__vs;
+                if (s && s.onPlaying) s.onPlaying();
+            });
+            el2.addEventListener("error", function() {
+                var s = el2.__vs;
+                if (s && s.onError) s.onError();
+            });
+            el2.addEventListener("ended", function() {
+                var s = el2.__vs;
+                if (s && s.onEnded) s.onEnded();
+            });
+            el2.addEventListener("timeupdate", function() {
+                var s = el2.__vs;
+                if (s && s.onTime) s.onTime();
+            });
+            el2.addEventListener("loadedmetadata", function() {
+                var s = el2.__vs;
+                if (s && s.onMeta) s.onMeta();
+            });
+        }
+        el2.__vs = null;
+        return el2;
+    }
+    function releaseVideo(el2) {
+        el2.__vs = null;
+        try {
+            el2.pause();
+        } catch (e) {}
+        try {
+            getVideoPark().appendChild(el2);
+        } catch (e) {}
+        try {
+            el2.removeAttribute("src");
+            el2.src = "";
+        } catch (e) {}
+        try {
+            el2.load();
+        } catch (e) {}
+        if (_videoPool.length < 4) {
+            _videoPool.push(el2);
+        } else {
+            try {
+                if (el2.parentNode) el2.parentNode.removeChild(el2);
+            } catch (e) {}
+        }
+    }
     function renderVideo(holder, item, resolver2, onEnd, onReady) {
-        var v = document.createElement("video");
+        var v = acquireVideo();
         var readyFired = false;
         var fireReady = function fireReady() {
             if (readyFired) return;
@@ -1109,8 +1173,6 @@ function _unsupported_iterable_to_array(o, minLen) {
                 if (typeof onReady === "function") onReady();
             } catch (e) {}
         };
-        v.addEventListener("playing", fireReady);
-        v.addEventListener("error", fireReady);
         var url = item.mediaId ? resolver2(item.mediaId) : item.url || "";
         var cacheKey = item.mediaId || url;
         var src = url;
@@ -1137,13 +1199,14 @@ function _unsupported_iterable_to_array(o, minLen) {
         v.playsInline = true;
         v.loop = !!item.loop && !(item.duration > 0);
         v.className = "w-video " + (item.fit || "cover");
-        v.addEventListener("ended", function() {
-            return onEnd && onEnd();
-        });
-        holder.appendChild(v);
+        v._lumaBlob = false;
+        v._lumaLocal = false;
+        v._lumaLocalRetried = false;
         var started = false;
         var watchdog = null;
         var aborted = false;
+        var lastReport = 0;
+        var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
         var armWatchdog = function armWatchdog1() {
             if (aborted || watchdog) return;
             watchdog = setTimeout(function() {
@@ -1171,10 +1234,12 @@ function _unsupported_iterable_to_array(o, minLen) {
                 }
             }, 8e3);
         };
-        v.addEventListener("timeupdate", function() {
-            if (v.currentTime > 0.5) started = true;
-        });
-        v.addEventListener("error", function() {
+        var S = {};
+        S.onPlaying = function() {
+            fireReady();
+        };
+        S.onError = function() {
+            fireReady();
             if (v._lumaBlob && !_blobMediaBroken && !started) {
                 _blobMediaBroken = true;
                 v._lumaBlob = false;
@@ -1231,7 +1296,34 @@ function _unsupported_iterable_to_array(o, minLen) {
                 if (watchdog) clearTimeout(watchdog);
                 onEnd && onEnd();
             }
-        });
+        };
+        S.onEnded = function() {
+            onEnd && onEnd();
+        };
+        S.onTime = function() {
+            if (v.currentTime > 0.5) started = true;
+            if (!item.duration && window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint) {
+                var now = Date.now();
+                if (now - lastReport > 3e3 && v.currentTime > 0) {
+                    lastReport = now;
+                    try {
+                        window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0);
+                    } catch (e) {}
+                }
+            }
+        };
+        S.onMeta = function() {
+            if (window.__lumaPlayer && window.__lumaPlayer.loadBreakpoint) {
+                var bp = window.__lumaPlayer.loadBreakpoint(bpKey);
+                if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
+                    try {
+                        v.currentTime = bp.position;
+                    } catch (e) {}
+                }
+            }
+        };
+        v.__vs = S;
+        holder.appendChild(v);
         if (!blobMediaUsable()) {
             try {
                 v.src = src;
@@ -1250,55 +1342,18 @@ function _unsupported_iterable_to_array(o, minLen) {
                 if (p && p.catch) p.catch(function() {});
             });
         }
-        if (window.__lumaPlayer) {
-            var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
-            v.addEventListener("loadedmetadata", function() {
-                if (window.__lumaPlayer.loadBreakpoint) {
-                    var bp = window.__lumaPlayer.loadBreakpoint(bpKey);
-                    if (bp && bp.position > 0 && bp.position < (v.duration || Infinity)) {
-                        try {
-                            v.currentTime = bp.position;
-                        } catch (e) {}
-                    }
-                }
-            });
-            var lastReport = 0;
-            v.addEventListener("timeupdate", function() {
-                if (!item.duration && window.__lumaPlayer.reportBreakpoint) {
-                    var now = Date.now();
-                    if (now - lastReport > 3e3 && v.currentTime > 0) {
-                        lastReport = now;
-                        try {
-                            window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration || 0);
-                        } catch (e) {}
-                    }
-                }
-            });
-        }
         return function() {
             aborted = true;
-            if (watchdog) clearTimeout(watchdog);
+            if (watchdog) {
+                clearTimeout(watchdog);
+                watchdog = null;
+            }
             if (window.__lumaPlayer && window.__lumaPlayer.reportBreakpoint && item.id) {
-                var bpKey = (item.id || "") + "|" + (item.mediaId || url || "");
                 try {
                     if (v.currentTime > 0 && v.duration) window.__lumaPlayer.reportBreakpoint(bpKey, v.currentTime, v.duration);
                 } catch (e) {}
             }
-            try {
-                v.pause();
-            } catch (e) {}
-            try {
-                v.removeAttribute("src");
-                v.src = "";
-            } catch (e) {}
-            try {
-                v.load();
-            } catch (e) {}
-            if (v.parentNode) {
-                try {
-                    v.parentNode.removeChild(v);
-                } catch (e) {}
-            }
+            releaseVideo(v);
         };
     }
     function renderBorderMarquee(holder, item) {
