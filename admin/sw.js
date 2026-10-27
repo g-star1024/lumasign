@@ -9,8 +9,15 @@
  *   - CACHE 升 v2：激活时自动删除 v1 毒缓存；
  *   - 导航请求（HTML）改网络优先：在线时永远拿最新页面，杜绝坏页被长期缓存；
  *   - 其余静态资源（js/css/图片）仍缓存优先，保留离线能力。
+ *
+ * v3（2026-10-27）：修「管理端改了代码、浏览器却跑旧版」——admin 的 JS（views.js
+ * 等 ES module）经 `import` 加载，URL 不带版本号，v2 对静态资源 cache-first 导致
+ * 浏览器永远吐 SW 里的旧 JS；服务端改了预览/播放逻辑、甚至重部署，用户侧毫无变化。
+ *   - CACHE 升 v3：激活时自动删除 v2 旧缓存，强制重新拉取；
+ *   - JS（.js）改网络优先：JS 常改，绝不能 cache-first，确保部署即时生效；
+ *   - CSS/图片/字体仍缓存优先，保留离线能力与加载速度。
  */
-const CACHE = 'lumasign-admin-v2';
+const CACHE = 'lumasign-admin-v3';
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -48,7 +55,20 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // 其余静态资源：缓存优先，缺失则网络并缓存
+  // 其余静态资源
+  const isJs = /\.js(\?|$|#)/.test(url.pathname);
+  if (isJs) {
+    // JS（含 views.js 等 ES module，URL 无版本号）：网络优先，确保部署即时生效，
+    // 失败再兜底缓存（离线时仍能跑旧版）。
+    e.respondWith(
+      fetch(req)
+        .then(r => { if (r.ok) { const c = r.clone(); caches.open(CACHE).then(ca => ca.put(req, c)); } return r; })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // CSS / 图片 / 字体：缓存优先，保留离线能力
   e.respondWith(
     caches.match(req).then(m =>
       m || fetch(req).then(r => {
