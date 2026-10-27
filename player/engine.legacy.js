@@ -4059,7 +4059,7 @@ function _unsupported_iterable_to_array(o, minLen) {
                                                             requestAnimationFrame(function() {
                                                                 return holder.classList.add("show");
                                                             });
-                                                            setTimeout(removePrev, tName === "none" ? 30 : tDur);
+                                                            setTimeout(removePrev, tName === "none" ? 30 : tDur + 250);
                                                         };
                                                         readyTimer = setTimeout(doShow, 2500);
                                                         try {

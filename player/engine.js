@@ -931,7 +931,11 @@ class Player {
           try { clearTimeout(readyTimer); } catch (e) { /* ignore */ }
           requestAnimationFrame(() => holder.classList.add('show'));
           // 旧层在新层淡入完成后再撤（图片/文本走同一路径，行为不变）
-          setTimeout(removePrev, (tName === 'none') ? 30 : tDur);
+          // ★ v1.3.55：再延后 250ms 撤旧层 —— 淡入动画与 transitionMs 同为 550ms，
+          //   旧层恰好在淡入收尾那一帧被撤掉时，视频的硬件 overlay 拆除会在尚未完全合成的
+          //   新层上闪出一帧黑（实测 60 帧采样抓到 2 帧纯黑 16KB）。延后一点撤旧层，
+          //   闪黑就落在完全合成的新层之下，看不见。
+          setTimeout(removePrev, (tName === 'none') ? 30 : tDur + 250);
         };
         const readyTimer = setTimeout(doShow, 2500);   // 首帧迟迟不来也要放行，绝不卡住轮播
         try { stop = renderWidget(holder, item, this.resolver, onEnd, doShow) || (() => {}); }
