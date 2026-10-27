@@ -601,12 +601,31 @@ class MainActivity : AppCompatActivity() {
             try { bridge.restartApp(); true } catch (_: Exception) { recreate(); true }
         } else {
             Log.w(TAG, "WebView 活性看门狗：失联，reload（第 $webViewRecoveryStreak 次）($reason)")
-            try { webView.reload(); true } catch (_: Exception) { recreate(); true }
+            stopMediaThenReload()
+            true
         }
         if (recovered) {
             lastWebViewAliveAt = SystemClock.elapsedRealtime()   // 给恢复动作留 grace
             webViewProbePending = false
         }
+    }
+
+    /**
+     * ★ v1.3.54：reload 前先让页面停掉所有 `<video>` 再 reload——
+     *   Android 4.4 WebView 的视频硬件 overlay（SurfaceView）在「导航/重载时视频正在播放」会被遗留，
+     *   导致 WebView 合成层挂掉：**屏幕全黑但 DOM 完全正常**（img complete、opacity=1、health=100），
+     *   只有再 reload 一次才恢复。这正是「一加视频就长时间黑屏、纯图片不会」的真凶之一。
+     *   播放端已有 pagehide/beforeunload 兜底，这里从原生侧再兜一层（含渲染进程半死、JS 跑不动的场景）。
+     */
+    private fun stopMediaThenReload() {
+        try {
+            webView.evaluateJavascript(
+                "try{document.querySelectorAll('video').forEach(function(v){try{v.pause();}catch(e){}" +
+                    "try{v.removeAttribute('src');v.src='';}catch(e){}try{v.load();}catch(e){}});}catch(e){}", null)
+        } catch (_: Exception) { }
+        uiHandler.postDelayed({
+            try { webView.reload() } catch (_: Exception) { try { recreate() } catch (_e2) { } }
+        }, 350)
     }
 
     private fun onMainFrameError(desc: String?) {
