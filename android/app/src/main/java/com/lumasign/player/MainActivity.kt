@@ -624,7 +624,7 @@ class MainActivity : AppCompatActivity() {
                     "try{v.removeAttribute('src');v.src='';}catch(e){}try{v.load();}catch(e){}});}catch(e){}", null)
         } catch (_: Exception) { }
         uiHandler.postDelayed({
-            try { webView.reload() } catch (_: Exception) { try { recreate() } catch (_e2) { } }
+            try { webView.reload() } catch (_: Exception) { try { recreate() } catch (_: Exception) { } }
         }, 350)
     }
 
