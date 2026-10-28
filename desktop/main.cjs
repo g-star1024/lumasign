@@ -17,15 +17,31 @@ const { pathToFileURL } = require('node:url');
 const isWin = process.platform === 'win32';
 const isPackaged = app.isPackaged;
 
-// 呈现层修复（2026-10-21）：本机显卡驱动下，Electron 自带 Chromium 的硬件加速合成无法把
-// 画面送显——GPU 开启时渲染进程存活、DOM 有内容、浏览器同源同页正常，但物理窗口全黑
-// （GPU 进程出帧失败）。本机显卡本身能正常呈现（系统 Chrome 正常），故问题在 GPU 进程/沙箱，
-// 而非驱动。
-// 临时基线（诊断中）：移除 in-process-gpu（该开关会让 lifecycle/settings/proof 三页在软件
-// 回退下渲染器崩溃）。保持默认 GPU 开启（三页稳定），改用 CLI 传入的呈现层开关测试，
-// 最终命中可同时「出画面 + 三页不崩」的配置后再固化到此文件。
-// 候选：--disable-gpu-sandbox / --use-angle=gl / --disable-features=VizDisplayCompositor
-// app.commandLine.appendSwitch('in-process-gpu');
+/* ---------------- GPU 呈现层开关（固化基线，可经环境变量覆盖） ----------------
+ * 本机显卡驱动下 Electron 自带 Chromium 的硬件加速合成无法送显（窗口全黑），且硬件加速下
+ * 渲染进程在素材库（#/media，含视频/画布合成）等页面会崩溃。经逐组实测，软件回退
+ *   --use-gl=angle --use-angle=swiftshader
+ * 可同时达成「窗口出画面 + 各页不崩」，故固化为默认基线。出包/重启后自动生效，无需手动
+ * 设环境变量。仍可用 LUMASIGN_GPU_FLAGS（空格分隔，支持 --name 与 --name=value）覆盖，
+ * 便于后续机型再试其它组合。 */
+const DEFAULT_GPU_FLAGS = '--use-gl=angle --use-angle=swiftshader';
+const GPU_FLAGS_ENV = (process.env.LUMASIGN_GPU_FLAGS || DEFAULT_GPU_FLAGS).trim();
+if (GPU_FLAGS_ENV) {
+  const applied = [];
+  for (const tok of GPU_FLAGS_ENV.split(/\s+/)) {
+    if (!tok.startsWith('--')) continue;
+    const body = tok.slice(2);
+    const eq = body.indexOf('=');
+    if (eq >= 0) { app.commandLine.appendSwitch(body.slice(0, eq), body.slice(eq + 1)); applied.push(tok); }
+    else { app.commandLine.appendSwitch(body); applied.push(tok); }
+  }
+  console.log('[gpu] applied flags:', applied.join(' '));
+}
+
+// 呈现层背景（2026-10-21 起排查，2026-10-28 固化）：本机显卡驱动下硬件加速合成无法送显，
+// 硬件加速又令 #/media 渲染进程崩溃；最终命中可同时「出画面 + 不崩」的软件回退基线
+//   --use-gl=angle --use-angle=swiftshader
+// 已固化为默认，无需再手动传临时开关。环境变量的 LUMASIGN_GPU_FLAGS 仍可作后续机型覆盖。
 const ROOT = isPackaged ? path.dirname(__dirname) : path.resolve(__dirname, '..');
 
 const PORT = parseInt(process.env.LUMASIGN_PORT || '7788', 10);
