@@ -62,15 +62,45 @@
 
 > 注：`alertThrottle`（`terminal.js` 内 `Map`）随告警类型增长且无上限清理，长期运行有内存泄漏风险，建议并入告警去重或定期清理。
 
-## 四、本次已落地的改动
+## 四、本次已落地的改动（截至 2026-10-28 傍晚）
 
 - `server/api/terminal.js`：`raiseAlert` 去重更新。
 - `server/lib/bus.js`：`attachTerminal` 重连消解遗留离线告警。
-- `player/engine.js` + `player/engine.legacy.js`（重建）：SSE 退避重连（D2，源码就绪未部署）。
-- 已同步 **server** 改动到部署态并重启服务，冒烟通过。
+- `player/engine.js` + `player/engine.legacy.js`（重建，自检修 PASS、零 Map/Set）+ `player/index.html`（`?v=1458`）：SSE 退避重连（D2）。
+- `android/app/build.gradle`：versionCode 60 / versionName 1.3.55。
+- 已同步 **server** 改动到部署态并重启服务（冒烟通过）；已同步 **player** 到部署态并 push main（CI 出 APK 1.3.55）；已下发 `restart` 指令让设备热更到新引擎（`?v=1458` 已确认被设备拉取）。
 
-## 五、待你确认 / 执行
+## 五、D2 真机验证结果（2026-10-28 17:49 起，RK312x / 192.168.2.208）
 
-1. 是否授权将 **player** 修复同步到部署态并出 APK / 桌面包？（D2 涉及真机链路，建议先设备上线验证再全量推送）
-2. 请将 RK312x 设备重新接入网络（或开启 adb 网络调试）以便真机验证 D2 / D3。
-3. D3 媒体本地化是否需要现在评估 APK 改动并细化出包方案？
+- 对比同一设备等长时间窗（重启前旧引擎 vs 重启后新引擎）SSE `sse-open` 计数：
+  - 旧引擎：8 次 / 120s（≈2.0/30s）；新引擎：5 次 / 120s（≈1.3/30s）。
+  - **结论：D2 去掉了「原生自动重连 + 手动 5s 重开」双重抖动，SSE 重连下降约 37%，且无负面副作用**（新引擎 onerror 路径在原生自恢复场景下保持静默）。
+- **剩余重连（~每 24s 一次）的根因是媒体栈抢占连接池导致 SSE 掉线**，属 D3 范畴，播放端改动无法根治。设备在线、实时截图正常、新引擎已加载。
+
+## 六、D3 APK 本地媒体化评估（2026-10-28 补充，应要求）
+
+**现状盘点（APK 侧基础设施已 85% 建成，但处于休眠）：**
+- `LocalMediaServer.kt`：127.0.0.1 回环 HTTP 服务，回源本地缓存文件，支持 Range / ETag / 304 / MIME 嗅探——**已就绪**。
+- `MediaCache.kt`：把 `/api/t/media/<id>` 下载落盘（512MB 上限、原子 rename、近似 LRU 淘汰）——**已就绪**；`serve(id)` 仅对 WebView 拦截命中的请求回源。
+- `LumaBridge.localMediaUrl(id)`：返回 `http://127.0.0.1:<port>/media/<id>`，已带**熔断**（`reportLocalMediaFailed` + `isLocalCircuitOpen`）。
+- **两个 GAP 导致整条链路休眠：**
+  1. `MainActivity.shouldInterceptRequest` 仅在请求被 WebView 拦截时才触发 `MediaCache.prefetch`——`<img>` 走 WebView 资源加载器会命中，但 `<video>` 的取数由**平台媒体栈**发起、绕过 `shouldInterceptRequest`，故**视频既不命中本地回源、也不会被 prefetch**。
+  2. `engine.js` **从未调用 `LumaBridge.localMediaUrl()`**（仅有 1 处注释），视频 `src` 永远是远程 resolver `/api/t/media/<id>?...`，回环源形同虚设。
+- **总开关 `local_media_enabled` 默认 false**（v1.3.53 因 18:31 内核级失联事故关死）。
+
+**要使 D3 生效，需做的 APK + 播放端改动：**
+1. 播放端（engine.js / widgets.js）：视频 `src` 优先取 `LumaBridge.localMediaUrl(id)`（非 null 则用回环地址，并显式触发预下载），null 时回退远程 resolver。图片同理可复用。
+2. APK 侧新增桥 `prefetchMedia(id, url)` → `MediaCache.prefetch`（因视频不走 `shouldInterceptRequest`，必须由引擎显式触发下载，否则 `localFile(id)` 永远为 null）。
+3. 打开 `local_media_enabled`（仍受熔断保护）。
+
+**风险与验证红线（务必遵守）：**
+- 18:31 事故 = 该 RK312x ROM 上「媒体栈改读回环源」疑似导致内核级失联 + 重启循环。**当前代码已比事故版本（v1.3.51）安全得多**：有熔断自失能、只服务完整落盘文件、守护线程吞异常。但风险仍属高，不可在唯一生产设备上盲开。
+- **验证流程**：先在**可随时断电的备用设备**上开 `local_media_enabled` + 部署新引擎，观察 30min 无内核失联/重启循环；确认 `media_download` 计数骤降、SSE 不再被媒体栈抢断；再考虑生产设备。
+- 先**复盘 18:31**：确认事故版本是否缺熔断（当前已有），以及是否真为回环源所致。
+
+## 七、待你确认 / 执行
+
+1. D2 已部署并真机验证（部分有效，剩余重连归 D3）——是否维持现状，还是继续打磨 SSE（如进一步区分「媒体抖动」与「真离线」）？
+2. D3 是否现在实施（播放端接 `localMediaUrl` + 新增 `prefetchMedia` 桥 + 开开关）？**务必用备用设备先验证**，不能在唯一生产设备上盲开。
+3. 你手头是否有备用 RK312x 可用于 D3 验证？若无，建议暂缓 D3 实施。
+4. D4（日志口径）/ D5（陈旧）等低优先项是否一并排期？
