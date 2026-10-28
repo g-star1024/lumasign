@@ -2557,7 +2557,152 @@ function _unsupported_iterable_to_array(o, minLen) {
             })[c];
         });
     };
-    var HTML_V = "1455";
+    function LumaSSE(url, handlers) {
+        this.url = url;
+        this.h = handlers || {};
+        this.readyState = 0;
+        this._xhr = null;
+        this._closed = false;
+        this._backoff = 0;
+        this._lastData = 0;
+        this._openedAt = 0;
+        this._consumed = 0;
+        this._reconnectTimer = null;
+        this._resetTimer = null;
+        this._watchdog = null;
+        this._openFired = false;
+        this._connect();
+    }
+    LumaSSE.prototype._connect = function() {
+        if (this._closed) return;
+        var self = this;
+        var xhr = new XMLHttpRequest();
+        this._xhr = xhr;
+        this.readyState = 0;
+        this._lastData = Date.now();
+        this._openFired = false;
+        try {
+            xhr.open("GET", this.url, true);
+        } catch (e) {
+            this._scheduleReconnect();
+            return;
+        }
+        try {
+            xhr.setRequestHeader("Cache-Control", "no-cache");
+        } catch (e) {}
+        xhr.onreadystatechange = function() {
+            if (self._closed) return;
+            if (xhr.readyState === 3 || xhr.readyState === 4) {
+                if (!self._openFired && xhr.status === 200) {
+                    self._openFired = true;
+                    self.readyState = 1;
+                    self._openedAt = Date.now();
+                    self._backoff = 0;
+                    self._lastData = Date.now();
+                    if (self.h.onopen) self.h.onopen();
+                }
+                if (xhr.readyState === 3 && typeof xhr.responseText === "string") self._drain(xhr.responseText);
+            }
+            if (xhr.readyState === 4) self._scheduleReconnect();
+        };
+        xhr.onerror = function() {
+            if (self._closed) return;
+            if (self.h.onerror) self.h.onerror("xhr-error");
+            self._scheduleReconnect();
+        };
+        xhr.onabort = function() {
+            if (self._closed) return;
+            self._scheduleReconnect();
+        };
+        try {
+            xhr.send();
+        } catch (e) {
+            self._scheduleReconnect();
+        }
+        if (this._resetTimer) clearTimeout(this._resetTimer);
+        this._resetTimer = setTimeout(function() {
+            if (self._closed) return;
+            try {
+                if (self._xhr) self._xhr.abort();
+            } catch (e) {}
+            self._xhr = null;
+            self._consumed = 0;
+            self._connect();
+        }, 6e5);
+        if (this._watchdog) clearInterval(this._watchdog);
+        this._watchdog = setInterval(function() {
+            if (self._closed) return;
+            if (Date.now() - self._lastData > 3e4) {
+                try {
+                    if (self._xhr) self._xhr.abort();
+                } catch (e) {}
+                self._xhr = null;
+                self._consumed = 0;
+                self._connect();
+            }
+        }, 5e3);
+    };
+    LumaSSE.prototype._drain = function(text) {
+        this._lastData = Date.now();
+        if (typeof this._consumed !== "number") this._consumed = 0;
+        if (text.length <= this._consumed) return;
+        var chunk = text.slice(this._consumed);
+        var lastSep = chunk.lastIndexOf("\n\n");
+        if (lastSep === -1) return;
+        var frameBlock = chunk.slice(0, lastSep);
+        this._consumed += lastSep + 2;
+        var frames = frameBlock.split("\n\n");
+        for(var i = 0; i < frames.length; i++)this._parseFrame(frames[i]);
+    };
+    LumaSSE.prototype._parseFrame = function(frame) {
+        var lines = frame.split("\n");
+        var type = "message";
+        var dataLines = [];
+        for(var i = 0; i < lines.length; i++){
+            var line = lines[i];
+            if (line.charAt(0) === ":") continue;
+            if (line.indexOf("event:") === 0) type = line.slice(6).trim();
+            else if (line.indexOf("data:") === 0) dataLines.push(line.slice(5).replace(/^ /, ""));
+        }
+        if (!type && dataLines.length === 0) return;
+        var dataStr = dataLines.join("\n");
+        var data = null;
+        try {
+            data = JSON.parse(dataStr);
+        } catch (e) {
+            data = dataStr;
+        }
+        if (this.h.onEvent) this.h.onEvent(type, data);
+    };
+    LumaSSE.prototype._scheduleReconnect = function() {
+        if (this._closed || this._reconnectTimer) return;
+        this.readyState = 2;
+        var self = this;
+        this._backoff = Math.min((this._backoff || 0) + 1, 6);
+        var delay = Math.min(5e3 * Math.pow(2, this._backoff - 1), 6e4);
+        this._reconnectTimer = setTimeout(function() {
+            self._reconnectTimer = null;
+            if (self._closed) return;
+            try {
+                if (self._xhr) self._xhr.abort();
+            } catch (e) {}
+            self._xhr = null;
+            self._consumed = 0;
+            self._connect();
+        }, delay);
+    };
+    LumaSSE.prototype.close = function() {
+        this._closed = true;
+        if (this._resetTimer) clearTimeout(this._resetTimer);
+        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        if (this._watchdog) clearInterval(this._watchdog);
+        try {
+            if (this._xhr) this._xhr.abort();
+        } catch (e) {}
+        this._xhr = null;
+        this.readyState = 2;
+    };
+    var HTML_V = "1456";
     var pad22 = function pad22(n) {
         return n < 10 ? "0" + n : "" + n;
     };
@@ -4780,55 +4925,38 @@ function _unsupported_iterable_to_array(o, minLen) {
             {
                 key: "startCommands",
                 value: function startCommands() {
-                    var _this = this;
-                    if (this.es) try {
-                        this.es.close();
+                    if (this._sse) try {
+                        this._sse.close();
                     } catch (unused) {}
                     if (!this.terminalId) return;
                     var url = "/api/t/events?terminalId=".concat(encodeURIComponent(this.terminalId), "&token=").concat(encodeURIComponent(this.token || ""));
-                    var es = new EventSource(url);
-                    this.es = es;
-                    var sseOpenedAt = Date.now();
-                    if (typeof this._sseBackoff !== "number") this._sseBackoff = 0;
-                    this._sseLastOpen = 0;
-                    try {
-                        var report = function report(stage, extra) {
-                            try {
-                                fetch("/api/t/ping?stage=".concat(stage).concat(extra || "", "&t=").concat(Date.now())).catch(function() {});
-                            } catch (e) {}
-                        };
-                        es.addEventListener("open", function() {
-                            _this._sseBackoff = 0;
-                            _this._sseLastOpen = Date.now();
-                            report("sse-open");
-                        });
-                        es.addEventListener("error", function() {
-                            return report("sse-err", "&rs=" + (es.readyState || 0) + "&alive=" + (Date.now() - sseOpenedAt));
-                        });
-                    } catch (e) {}
-                    es.addEventListener("command", function(ev) {
-                        var cmd;
+                    var self = this;
+                    var report = function report(stage, extra) {
                         try {
-                            cmd = JSON.parse(ev.data);
-                        } catch (unused) {
-                            return;
-                        }
-                        _this.handleCommand(cmd);
-                    });
-                    es.onerror = function() {
-                        var now = Date.now();
-                        var stuck = es.readyState === 0 && now - (_this._sseLastOpen || 0) > 3e4;
-                        if (es.readyState === 2 || stuck) {
-                            try {
-                                es.close();
-                            } catch (e2) {}
-                            _this._sseBackoff = Math.min((_this._sseBackoff || 0) + 1, 6);
-                            var delay = Math.min(5e3 * Math.pow(2, _this._sseBackoff - 1), 6e4);
-                            setTimeout(function() {
-                                if (_this.terminalId && _this.es === es) _this.startCommands();
-                            }, delay);
-                        }
+                            fetch("/api/t/ping?stage=".concat(stage).concat(extra || "", "&t=").concat(Date.now())).catch(function() {});
+                        } catch (e) {}
                     };
+                    if (typeof self._sseBackoff !== "number") self._sseBackoff = 0;
+                    self._sseLastOpen = 0;
+                    var sse = new LumaSSE(url, {
+                        onopen: function onopen() {
+                            self._sseBackoff = 0;
+                            self._sseLastOpen = Date.now();
+                            report("sse-open");
+                        },
+                        onerror: function onerror(by) {
+                            report("sse-err", "&rs=" + (sse.readyState || 0) + "&by=" + by);
+                        },
+                        onEvent: function onEvent(type, data) {
+                            if (type === "command") {
+                                try {
+                                    self.handleCommand(data);
+                                } catch (e) {}
+                            }
+                        }
+                    });
+                    this._sse = sse;
+                    this.es = sse;
                 }
             },
             {

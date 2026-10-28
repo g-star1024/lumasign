@@ -219,7 +219,11 @@ export function registerTerminalApi(router, ctx) {
     // ★ v1.3.54 诊断：记录 SSE 连接的存活时长与关闭方（req close = 客户端断；res finish = 服务端结束）
     const openedAt = Date.now();
     try { logger?.task?.({ kind: 'sse_open', terminalId: t.id }); } catch (_e) { }
+    // ★ v1.3.56：用 _closed 守卫确保每条连接只产出一条 sse_close（旧实现下 req 'close' 与
+    //   req 'error' 同刻双触发 → 日志翻倍 4778 vs 2397，误导诊断）。
+    let _closed = false;
     const cleanup = (by) => {
+      if (_closed) return; _closed = true;
       clearInterval(ping); bus.detachTerminal(t.id, h); h.close();
       try { logger?.task?.({ kind: 'sse_close', terminalId: t.id, by, ms: Date.now() - openedAt }); } catch (_e) { }
     };

@@ -43,11 +43,143 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ★ v1.3.56：自管理 SSE 客户端（XHR 流式）—— 根除 rk312x / Android 4.4 原生 EventSource
+//   每 ~15.03s 周期性静默重连：Chromium 33 的 EventSource 空闲流超时，服务端 8s ping 无法重置，
+//   且连接被关闭时不触发 error 事件（实测设备侧 sse_open 4119 次 / sse-err 仅 5 次）→ 退避逻辑
+//   永不生效，100% 由原生驱动重连。改用 XHR 流式读取（ES3 级 API，Chromium 33 稳定支持），
+//   自行解析 event:/data: 帧并管理重连/退避。responseText 增长缓慢（~10KB/h），每 10min 自愈
+//   重置一次兜底；并加 30s 活性看门狗，覆盖「半开连接（服务端消失却无 FIN）」哑死场景。
+function LumaSSE(url, handlers) {
+  this.url = url;
+  this.h = handlers || {};
+  this.readyState = 0;        // 0 CONNECTING, 1 OPEN, 2 CLOSED（仿 EventSource）
+  this._xhr = null;
+  this._closed = false;
+  this._backoff = 0;
+  this._lastData = 0;
+  this._openedAt = 0;
+  this._consumed = 0;         // responseText 已解析字符游标
+  this._reconnectTimer = null;
+  this._resetTimer = null;
+  this._watchdog = null;
+  this._openFired = false;
+  this._connect();
+}
+LumaSSE.prototype._connect = function () {
+  if (this._closed) return;
+  var self = this;
+  var xhr = new XMLHttpRequest();
+  this._xhr = xhr;
+  this.readyState = 0;
+  this._lastData = Date.now();
+  this._openFired = false;
+  try { xhr.open('GET', this.url, true); } catch (e) { this._scheduleReconnect(); return; }
+  try { xhr.setRequestHeader('Cache-Control', 'no-cache'); } catch (e) {}
+  xhr.onreadystatechange = function () {
+    if (self._closed) return;
+    if (xhr.readyState === 3 || xhr.readyState === 4) {
+      if (!self._openFired && xhr.status === 200) {
+        self._openFired = true;
+        self.readyState = 1;
+        self._openedAt = Date.now();
+        self._backoff = 0;
+        self._lastData = Date.now();
+        if (self.h.onopen) self.h.onopen();
+      }
+      if (xhr.readyState === 3 && typeof xhr.responseText === 'string') self._drain(xhr.responseText);
+    }
+    if (xhr.readyState === 4) self._scheduleReconnect();
+  };
+  xhr.onerror = function () {
+    if (self._closed) return;
+    if (self.h.onerror) self.h.onerror('xhr-error');
+    self._scheduleReconnect();
+  };
+  xhr.onabort = function () {
+    if (self._closed) return;
+    self._scheduleReconnect();
+  };
+  try { xhr.send(); } catch (e) { self._scheduleReconnect(); }
+  // 10min 自愈重置：abort 旧 XHR（释放 responseText）+ 重建，约束内存并兜底活性
+  if (this._resetTimer) clearTimeout(this._resetTimer);
+  this._resetTimer = setTimeout(function () {
+    if (self._closed) return;
+    try { if (self._xhr) self._xhr.abort(); } catch (e) {}
+    self._xhr = null;
+    self._consumed = 0;
+    self._connect();
+  }, 600000);
+  // 30s 活性看门狗：半开连接（服务端消失却无 FIN）下 onreadystatechange/onerror 都不触发，
+  // 此时 XHR 哑死 → 强制 abort+重连，避免指令通道静默失活
+  if (this._watchdog) clearInterval(this._watchdog);
+  this._watchdog = setInterval(function () {
+    if (self._closed) return;
+    if (Date.now() - self._lastData > 30000) {
+      try { if (self._xhr) self._xhr.abort(); } catch (e) {}
+      self._xhr = null;
+      self._consumed = 0;
+      self._connect();
+    }
+  }, 5000);
+};
+LumaSSE.prototype._drain = function (text) {
+  this._lastData = Date.now();
+  if (typeof this._consumed !== 'number') this._consumed = 0;
+  if (text.length <= this._consumed) return;
+  var chunk = text.slice(this._consumed);          // 仅处理本次新增文本
+  var lastSep = chunk.lastIndexOf('\n\n');
+  if (lastSep === -1) return;                       // 还没有完整帧
+  var frameBlock = chunk.slice(0, lastSep);
+  this._consumed += lastSep + 2;
+  var frames = frameBlock.split('\n\n');
+  for (var i = 0; i < frames.length; i++) this._parseFrame(frames[i]);
+};
+LumaSSE.prototype._parseFrame = function (frame) {
+  var lines = frame.split('\n');
+  var type = 'message';
+  var dataLines = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.charAt(0) === ':') continue;           // 注释行（如 ": connected"）
+    if (line.indexOf('event:') === 0) type = line.slice(6).trim();
+    else if (line.indexOf('data:') === 0) dataLines.push(line.slice(5).replace(/^ /, ''));
+  }
+  if (!type && dataLines.length === 0) return;
+  var dataStr = dataLines.join('\n');
+  var data = null;
+  try { data = JSON.parse(dataStr); } catch (e) { data = dataStr; }
+  if (this.h.onEvent) this.h.onEvent(type, data);
+};
+LumaSSE.prototype._scheduleReconnect = function () {
+  if (this._closed || this._reconnectTimer) return;
+  this.readyState = 2;
+  var self = this;
+  this._backoff = Math.min((this._backoff || 0) + 1, 6);
+  var delay = Math.min(5000 * Math.pow(2, this._backoff - 1), 60000);
+  this._reconnectTimer = setTimeout(function () {
+    self._reconnectTimer = null;
+    if (self._closed) return;
+    try { if (self._xhr) self._xhr.abort(); } catch (e) {}
+    self._xhr = null;
+    self._consumed = 0;
+    self._connect();
+  }, delay);
+};
+LumaSSE.prototype.close = function () {
+  this._closed = true;
+  if (this._resetTimer) clearTimeout(this._resetTimer);
+  if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+  if (this._watchdog) clearInterval(this._watchdog);
+  try { if (this._xhr) this._xhr.abort(); } catch (e) {}
+  this._xhr = null;
+  this.readyState = 2;
+};
+
 // ★ 播放页 HTML 版本戳：必须与 index.html 的 ?v= 同步递增（改 index.html 时一起改这里）。
 //   4.4 WebView 会把旧 index.html 永久钉死在缓存里（无验证器跳过重验），引擎文件却因
 //   mtime 变化总能更新 —— 引擎一旦比 HTML 新，用 sessionStorage 戳检测并强制换新 URL，
 //   穿透死缓存。URL 带 _v 参数则不再跳（双保险防循环）。
-const HTML_V = '1455';
+const HTML_V = '1456';
 
 // ★ Chromium 33（Android 4.4 WebView）兼容层 —— 以下方法在 33 上不存在，全项目禁用：
 //   padStart/padEnd(ES2017)、Array.includes(ES2016)、startsWith/endsWith/find/findIndex/
@@ -1247,44 +1379,32 @@ class Player {
   }
 
   startCommands() {
-    if (this.es) try { this.es.close(); } catch {}
+    if (this._sse) try { this._sse.close(); } catch {}
     if (!this.terminalId) return;
     const url = `/api/t/events?terminalId=${encodeURIComponent(this.terminalId)}&token=${encodeURIComponent(this.token || '')}`;
-    const es = new EventSource(url);
-    this.es = es;
-    // ★ v1.3.54 诊断：把 SSE 连接建立/断开时刻与 readyState 上报到服务端 access log，
-    //   用于定位「每 15.1s 周期性重连」到底是谁先断开的。
-    const sseOpenedAt = Date.now();
-    // 退避档位：连续失败递增、成功 open 归零（避免服务端真 down 时每 5s 狂轰）
-    if (typeof this._sseBackoff !== 'number') this._sseBackoff = 0;
-    // 上次成功 open 时刻：用于判定「原生卡在 CONNECTING 永不恢复」的卡死态
-    this._sseLastOpen = 0;
-    try {
-      const report = (stage, extra) => {
-        try { fetch(`/api/t/ping?stage=${stage}${extra || ''}&t=${Date.now()}`).catch(() => {}); } catch (e) { }
-      };
-      es.addEventListener('open', () => { this._sseBackoff = 0; this._sseLastOpen = Date.now(); report('sse-open'); });
-      es.addEventListener('error', () => report('sse-err', '&rs=' + (es.readyState || 0) + '&alive=' + (Date.now() - sseOpenedAt)));
-    } catch (e) { }
-    es.addEventListener('command', ev => {
-      let cmd; try { cmd = JSON.parse(ev.data); } catch { return; }
-      this.handleCommand(cmd);
-    });
-    es.onerror = () => {
-      // ★ 修复 SSE 双重重连抖动（v1.3.55）：
-      //   原生 EventSource 在 CONNECTING(0) 时会自行退避重试；此前每次 error 都 close()+立即 5s 手动重开，
-      //   与原生重试叠加成「每 ~15s 一次」的开关抖动（实测 sse_open/sse_close 对称暴涨）。
-      //   策略：仅当原生已彻底放弃（CLOSED=2）或「卡在 CONNECTING 超 30s 未恢复」时才人工重开，
-      //   并采用指数退避（5/10/20/40/60s 封顶），避免对服务端/自身狂轰。每次重开都让新连接优先。
-      const now = Date.now();
-      const stuck = (es.readyState === 0) && (now - (this._sseLastOpen || 0) > 30000);
-      if (es.readyState === 2 || stuck) {
-        try { es.close(); } catch (e2) { /* ignore */ }
-        this._sseBackoff = Math.min((this._sseBackoff || 0) + 1, 6);
-        const delay = Math.min(5000 * Math.pow(2, this._sseBackoff - 1), 60000);
-        setTimeout(() => { if (this.terminalId && this.es === es) this.startCommands(); }, delay);
-      }
+    const self = this;
+    // ★ v1.3.56：以自管理 XHR 流式 SSE（LumaSSE）替代原生 EventSource，根除 15s 静默重连。
+    //   原生 EventSource 在 rk312x/Android4.4 上每 ~15.03s 周期性断开（空闲流超时，8s ping 无法重置，
+    //   且 close 不触发 error → 退避永不生效）。XHR 流式无此超时，自行管理重连/退避。
+    const report = (stage, extra) => {
+      try { fetch(`/api/t/ping?stage=${stage}${extra || ''}&t=${Date.now()}`).catch(() => {}); } catch (e) { /* ignore */ }
     };
+    if (typeof self._sseBackoff !== 'number') self._sseBackoff = 0;
+    self._sseLastOpen = 0;
+    const sse = new LumaSSE(url, {
+      onopen() {
+        self._sseBackoff = 0;
+        self._sseLastOpen = Date.now();
+        report('sse-open');
+      },
+      onerror(by) { report('sse-err', '&rs=' + (sse.readyState || 0) + '&by=' + by); },
+      onEvent(type, data) {
+        // 服务端 hello / ping 为保活与握手，无需处理（ping 已在 LumaSSE 内部记为活性）
+        if (type === 'command') { try { self.handleCommand(data); } catch (e) { /* ignore */ } }
+      },
+    });
+    this._sse = sse;
+    this.es = sse;   // 兼容 refreshTerm 的 !this.es 判断（连接存活期间不重复拉起）
   }
 
   async handleCommand(cmd) {
