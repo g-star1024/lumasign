@@ -28,6 +28,15 @@ export class Bus {
     // 取消待发的「离线」广播（说明是抖动重连，不是真离线）
     const t = this._offlineTimers.get(terminalId);
     if (t) { clearTimeout(t); this._offlineTimers.delete(terminalId); }
+    // 终端重连：消解该终端遗留的「失联」告警（若存在未消解项），避免告警列表堆积
+    try {
+      const acol = this.store.col('alerts');
+      const open = acol.find(r => r.type === 'terminal_offline' && r.terminalId === terminalId && !r.resolved);
+      for (const r of open) {
+        acol.update(r.id, { resolved: true, resolvedAt: Date.now() });
+        this.broadcastAdmin('alert:resolved', { id: r.id });
+      }
+    } catch {}
     // ★ v1.3.49：仅在状态真正翻转时广播在线（避免每次重连都弹一次「已连接」）
     if (this._linkState.get(terminalId) !== true) {
       this._linkState.set(terminalId, true);

@@ -509,7 +509,16 @@ function resolveTargets(store, b) {
 
 const alertThrottle = new Map();
 export function raiseAlert(store, bus, a) {
-  const row = store.col('alerts').insert({ id: uid('al_'), resolved: false, ...a });
+  const col = store.col('alerts');
+  // 同类型 + 同终端的未消解告警不再新建，改为刷新已有条目，避免告警 DB 无限膨胀
+  // （此前每次节流窗口都 insert 新行，单终端可堆积上千条离线告警）
+  const existing = col.find(r => r.type === a.type && r.terminalId === a.terminalId && !r.resolved);
+  if (existing.length) {
+    const row = col.update(existing[0].id, { title: a.title, message: a.message, level: a.level, updatedAt: Date.now(), resolved: false });
+    bus.broadcastAdmin('alert:update', row);
+    return row;
+  }
+  const row = col.insert({ id: uid('al_'), resolved: false, ...a });
   bus.broadcastAdmin('alert:new', row);
   return row;
 }

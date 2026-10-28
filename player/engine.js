@@ -1255,11 +1255,15 @@ class Player {
     // ★ v1.3.54 诊断：把 SSE 连接建立/断开时刻与 readyState 上报到服务端 access log，
     //   用于定位「每 15.1s 周期性重连」到底是谁先断开的。
     const sseOpenedAt = Date.now();
+    // 退避档位：连续失败递增、成功 open 归零（避免服务端真 down 时每 5s 狂轰）
+    if (typeof this._sseBackoff !== 'number') this._sseBackoff = 0;
+    // 上次成功 open 时刻：用于判定「原生卡在 CONNECTING 永不恢复」的卡死态
+    this._sseLastOpen = 0;
     try {
       const report = (stage, extra) => {
         try { fetch(`/api/t/ping?stage=${stage}${extra || ''}&t=${Date.now()}`).catch(() => {}); } catch (e) { }
       };
-      es.addEventListener('open', () => report('sse-open'));
+      es.addEventListener('open', () => { this._sseBackoff = 0; this._sseLastOpen = Date.now(); report('sse-open'); });
       es.addEventListener('error', () => report('sse-err', '&rs=' + (es.readyState || 0) + '&alive=' + (Date.now() - sseOpenedAt)));
     } catch (e) { }
     es.addEventListener('command', ev => {
@@ -1267,9 +1271,19 @@ class Player {
       this.handleCommand(cmd);
     });
     es.onerror = () => {
-      // 33 的 EventSource 放弃重连后必须自愈：5s 后人工重开（若已有更新连接则让位）
-      try { es.close(); } catch (e2) { /* ignore */ }
-      setTimeout(() => { if (this.terminalId && this.es === es) this.startCommands(); }, 5000);
+      // ★ 修复 SSE 双重重连抖动（v1.3.55）：
+      //   原生 EventSource 在 CONNECTING(0) 时会自行退避重试；此前每次 error 都 close()+立即 5s 手动重开，
+      //   与原生重试叠加成「每 ~15s 一次」的开关抖动（实测 sse_open/sse_close 对称暴涨）。
+      //   策略：仅当原生已彻底放弃（CLOSED=2）或「卡在 CONNECTING 超 30s 未恢复」时才人工重开，
+      //   并采用指数退避（5/10/20/40/60s 封顶），避免对服务端/自身狂轰。每次重开都让新连接优先。
+      const now = Date.now();
+      const stuck = (es.readyState === 0) && (now - (this._sseLastOpen || 0) > 30000);
+      if (es.readyState === 2 || stuck) {
+        try { es.close(); } catch (e2) { /* ignore */ }
+        this._sseBackoff = Math.min((this._sseBackoff || 0) + 1, 6);
+        const delay = Math.min(5000 * Math.pow(2, this._sseBackoff - 1), 60000);
+        setTimeout(() => { if (this.terminalId && this.es === es) this.startCommands(); }, delay);
+      }
     };
   }
 

@@ -4789,6 +4789,8 @@ function _unsupported_iterable_to_array(o, minLen) {
                     var es = new EventSource(url);
                     this.es = es;
                     var sseOpenedAt = Date.now();
+                    if (typeof this._sseBackoff !== "number") this._sseBackoff = 0;
+                    this._sseLastOpen = 0;
                     try {
                         var report = function report(stage, extra) {
                             try {
@@ -4796,7 +4798,9 @@ function _unsupported_iterable_to_array(o, minLen) {
                             } catch (e) {}
                         };
                         es.addEventListener("open", function() {
-                            return report("sse-open");
+                            _this._sseBackoff = 0;
+                            _this._sseLastOpen = Date.now();
+                            report("sse-open");
                         });
                         es.addEventListener("error", function() {
                             return report("sse-err", "&rs=" + (es.readyState || 0) + "&alive=" + (Date.now() - sseOpenedAt));
@@ -4812,12 +4816,18 @@ function _unsupported_iterable_to_array(o, minLen) {
                         _this.handleCommand(cmd);
                     });
                     es.onerror = function() {
-                        try {
-                            es.close();
-                        } catch (e2) {}
-                        setTimeout(function() {
-                            if (_this.terminalId && _this.es === es) _this.startCommands();
-                        }, 5e3);
+                        var now = Date.now();
+                        var stuck = es.readyState === 0 && now - (_this._sseLastOpen || 0) > 3e4;
+                        if (es.readyState === 2 || stuck) {
+                            try {
+                                es.close();
+                            } catch (e2) {}
+                            _this._sseBackoff = Math.min((_this._sseBackoff || 0) + 1, 6);
+                            var delay = Math.min(5e3 * Math.pow(2, _this._sseBackoff - 1), 6e4);
+                            setTimeout(function() {
+                                if (_this.terminalId && _this.es === es) _this.startCommands();
+                            }, delay);
+                        }
                     };
                 }
             },
